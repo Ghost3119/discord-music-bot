@@ -37,20 +37,23 @@ export const play: Command = {
       return;
     }
 
+    await interaction.deferReply();
+
     const rawQuery = interaction.options.getString('query', true);
-    const resolved = await resolveAppleMusic(rawQuery);
-
-    const displayQuery = resolved.isAppleMusic && resolved.artist && resolved.title
-      ? `${resolved.artist} - ${resolved.title}`
-      : resolved.query;
-
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder().setColor('#FFD700').setDescription(`🔍 Buscando: **${displayQuery}**...`),
-      ],
-    });
 
     try {
+      const resolved = await resolveAppleMusic(rawQuery);
+
+      const displayQuery = resolved.isAppleMusic && resolved.artist && resolved.title
+        ? `${resolved.artist} - ${resolved.title}`
+        : rawQuery;
+
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder().setColor('#FFD700').setDescription(`🔍 Buscando: **${displayQuery}**...`),
+        ],
+      });
+
       const distube = interaction.client.distube;
       await distube.play(voiceChannel, resolved.query, {
         textChannel: interaction.channel as any,
@@ -58,13 +61,18 @@ export const play: Command = {
       });
     } catch (error) {
       console.error('Error en /play:', error);
-      await interaction.editReply({
+      const content = {
         embeds: [
           new EmbedBuilder()
             .setColor('#FF0000')
             .setDescription('❌ No se pudo reproducir la canción. Verifica el enlace o el nombre.'),
         ],
-      });
+      };
+      if (interaction.deferred) {
+        await interaction.editReply(content);
+      } else {
+        await interaction.reply({ ...content, flags: MessageFlags.Ephemeral });
+      }
     }
   },
 };

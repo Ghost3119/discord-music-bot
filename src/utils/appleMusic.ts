@@ -1,10 +1,39 @@
+import { execFile } from 'child_process';
+import * as path from 'path';
+
 const APPLE_MUSIC_REGEX = /^https?:\/\/music\.apple\.com\/[a-z]{2}\/(?:album|song|playlist)\//;
+const YTDLP_PATH = path.join(__dirname, '..', '..', 'node_modules', '@distube', 'yt-dlp', 'bin', 'yt-dlp.exe');
 
 export interface AppleMusicResult {
   isAppleMusic: boolean;
   query: string;
   title?: string;
   artist?: string;
+}
+
+function searchYouTube(searchTerm: string): Promise<string> {
+  return new Promise((resolve) => {
+    const args = [
+      `ytsearch1:${searchTerm}`,
+      '--print', 'webpage_url',
+      '--no-warnings',
+    ];
+
+    execFile(YTDLP_PATH, args, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        console.error('yt-dlp search error:', error.message, stderr);
+        resolve('');
+        return;
+      }
+      const url = stdout.trim().split('\n')[0];
+      if (url.startsWith('http')) {
+        resolve(url);
+      } else {
+        console.error('yt-dlp search: URL inválida:', url);
+        resolve('');
+      }
+    });
+  });
 }
 
 export async function resolveAppleMusic(query: string): Promise<AppleMusicResult> {
@@ -41,11 +70,14 @@ async function lookupAppleMusic(id: string, originalQuery: string): Promise<Appl
     const title = track.trackName ?? '';
     const searchTerm = `${artist} ${title}`.trim();
 
-    const ytSearch = `ytsearch:${searchTerm}`;
+    const ytUrl = await searchYouTube(searchTerm);
+    if (!ytUrl) {
+      return { isAppleMusic: true, query: originalQuery, title, artist };
+    }
 
     return {
       isAppleMusic: true,
-      query: ytSearch || originalQuery,
+      query: ytUrl,
       title,
       artist,
     };
