@@ -9,6 +9,11 @@ export interface PlaybackMetadata {
   searchSource: SearchSource;
 }
 
+interface CacheEntry<T> {
+  expiresAt: number;
+  value: T;
+}
+
 interface YtDlpThumbnail {
   url?: string;
 }
@@ -41,6 +46,61 @@ const SEARCH_PREFIXES: Record<SearchSource, string> = {
   soundcloud: 'scsearch1:',
 };
 const YTDLP_SEARCH_PATTERN = /^(?:ytsearch|scsearch)\d*:/i;
+const SEARCH_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const STREAM_CACHE_TTL_MS = 25 * 60 * 1000;
+const SEARCH_CACHE_MAX_ITEMS = 500;
+const STREAM_CACHE_MAX_ITEMS = 200;
+const PLAYLIST_WARM_CONCURRENCY = 2;
+export const PLAYLIST_SEARCH_WARM_LIMIT = 25;
+
+class TtlCache<T> {
+  private readonly entries = new Map<string, CacheEntry<T>>();
+
+  constructor(
+    private readonly maxItems: number,
+    private readonly ttlMs: number,
+  ) {}
+
+  get(key: string): T | undefined {
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+
+    if (entry.expiresAt <= Date.now()) {
+      this.entries.delete(key);
+      return undefined;
+    }
+
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+    return entry.value;
+  }
+
+  set(key: string, value: T): void {
+    this.deleteExpired();
+    this.entries.set(key, {
+      expiresAt: Date.now() + this.ttlMs,
+      value,
+    });
+    this.trim();
+  }
+
+  private deleteExpired(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.entries) {
+      if (entry.expiresAt <= now) {
+        this.entries.delete(key);
+      }
+    }
+  }
+
+  private trim(): void {
+    while (this.entries.size > this.maxItems) {
+      const oldestKey = this.entries.keys().next().value;
+      if (!oldestKey) return;
+      this.entries.delete(oldestKey);
+    }
+  }
+}
 
 function isSearchSource(value: unknown): value is SearchSource {
   return value === 'youtube' || value === 'soundcloud';
@@ -50,6 +110,19 @@ function getSearchSource(metadata: unknown): SearchSource {
   if (typeof metadata !== 'object' || metadata === null) return 'youtube';
   const candidate = metadata as { searchSource?: unknown };
   return isSearchSource(candidate.searchSource) ? candidate.searchSource : 'youtube';
+}
+
+function toSearchQuery(query: string, source: SearchSource): string {
+  const trimmedQuery = query.trim();
+  return YTDLP_SEARCH_PATTERN.test(trimmedQuery) ? trimmedQuery : `${SEARCH_PREFIXES[source]}${trimmedQuery}`;
+}
+
+function normalizeSearchCacheKey(query: string): string {
+  return query.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normalizeUrlCacheKey(url: string): string {
+  return url.trim();
 }
 
 function toStringValue(value: unknown): string | undefined {
@@ -75,7 +148,32 @@ function getPlayableUrl(info: YtDlpInfo): string | undefined {
   return info.webpage_url ?? info.original_url ?? info.url;
 }
 
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+  const workerCount = Math.min(concurrency, items.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      if (item !== undefined) {
+        await worker(item);
+      }
+    }
+  });
+
+  await Promise.all(workers);
+}
+
 export class YtDlpSearchPlugin extends ExtractorPlugin {
+  private readonly searchCache = new TtlCache<YtDlpInfo>(SEARCH_CACHE_MAX_ITEMS, SEARCH_CACHE_TTL_MS);
+  private readonly streamUrlCache = new TtlCache<string>(STREAM_CACHE_MAX_ITEMS, STREAM_CACHE_TTL_MS);
+  private readonly pendingSearches = new Map<string, Promise<YtDlpInfo | null>>();
+  private readonly pendingStreamUrls = new Map<string, Promise<string>>();
+
   override validate(url: string): boolean {
     return URL_PATTERN.test(url);
   }
@@ -91,10 +189,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
   }
 
   override async searchSong<T>(query: string, options: ResolveOptions<T>): Promise<Song<T> | null> {
-    const searchSource = getSearchSource(options.metadata);
-    const searchQuery = YTDLP_SEARCH_PATTERN.test(query) ? query : `${SEARCH_PREFIXES[searchSource]}${query}`;
-    const info = await this.fetchInfo(searchQuery);
-    const result = hasEntries(info) ? info.entries.find((entry) => getPlayableUrl(entry)) : info;
+    const result = await this.getSearchResult(query, options.metadata);
 
     return result ? this.createSong(result, options) : null;
   }
@@ -104,18 +199,81 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
       throw new Error('Cannot resolve a stream URL for a song without a source URL.');
     }
 
-    const info = await this.fetchInfo(song.url, { format: 'ba/ba*' });
-    const streamUrl = toStringValue(info.url);
+    const cacheKey = normalizeUrlCacheKey(song.url);
+    const cachedStreamUrl = this.streamUrlCache.get(cacheKey);
+    if (cachedStreamUrl) return cachedStreamUrl;
 
-    if (!streamUrl) {
-      throw new Error(`yt-dlp did not return a playable stream URL for ${song.url}.`);
-    }
+    const pendingStreamUrl = this.pendingStreamUrls.get(cacheKey);
+    if (pendingStreamUrl) return pendingStreamUrl;
 
+    const streamUrlPromise = this.fetchStreamUrl(song.url).finally(() => {
+      this.pendingStreamUrls.delete(cacheKey);
+    });
+    this.pendingStreamUrls.set(cacheKey, streamUrlPromise);
+
+    const streamUrl = await streamUrlPromise;
+    this.streamUrlCache.set(cacheKey, streamUrl);
     return streamUrl;
   }
 
   override getRelatedSongs(): Song[] {
     return [];
+  }
+
+  async warmSearchCache(queries: string[], metadata: unknown): Promise<void> {
+    const uniqueQueries = [...new Set(queries.map((query) => query.trim()).filter(Boolean))].slice(
+      0,
+      PLAYLIST_SEARCH_WARM_LIMIT,
+    );
+
+    await runWithConcurrency(uniqueQueries, PLAYLIST_WARM_CONCURRENCY, async (query) => {
+      try {
+        await this.getSearchResult(query, metadata);
+      } catch (error) {
+        console.warn(`No se pudo precachear "${query}":`, error);
+      }
+    });
+  }
+
+  private async fetchStreamUrl(url: string): Promise<string> {
+    const info = await this.fetchInfo(url, { format: 'ba/ba*' });
+    const streamUrl = toStringValue(info.url);
+
+    if (!streamUrl) {
+      throw new Error(`yt-dlp did not return a playable stream URL for ${url}.`);
+    }
+
+    return streamUrl;
+  }
+
+  private async getSearchResult(query: string, metadata: unknown): Promise<YtDlpInfo | null> {
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) return null;
+
+    const searchQuery = toSearchQuery(trimmedQuery, getSearchSource(metadata));
+    const cacheKey = normalizeSearchCacheKey(searchQuery);
+    const cachedResult = this.searchCache.get(cacheKey);
+    if (cachedResult) return cachedResult;
+
+    const pendingSearch = this.pendingSearches.get(cacheKey);
+    if (pendingSearch) return pendingSearch;
+
+    const searchPromise = this.fetchSearchResult(searchQuery).finally(() => {
+      this.pendingSearches.delete(cacheKey);
+    });
+    this.pendingSearches.set(cacheKey, searchPromise);
+
+    const result = await searchPromise;
+    if (result) {
+      this.searchCache.set(cacheKey, result);
+    }
+
+    return result;
+  }
+
+  private async fetchSearchResult(searchQuery: string): Promise<YtDlpInfo | null> {
+    const info = await this.fetchInfo(searchQuery);
+    return hasEntries(info) ? info.entries.find((entry) => getPlayableUrl(entry)) ?? null : info;
   }
 
   private async fetchInfo(input: string, extraFlags: YtDlpJsonFlags = {}): Promise<YtDlpInfo> {

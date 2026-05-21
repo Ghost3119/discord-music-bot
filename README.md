@@ -105,6 +105,18 @@ Spotify no entrega audio directo para este tipo de bot. Cuando pasas un enlace d
 
 Esto significa que puede haber diferencias entre la version de Spotify y el resultado encontrado, por ejemplo remixes, videos oficiales, versiones en vivo o subidas por otros usuarios.
 
+## Cache de busquedas
+
+El bot cachea resultados de busqueda para que playlists grandes de Spotify o Apple Music no repitan tanto trabajo.
+
+- Las busquedas se guardan por fuente y texto normalizado.
+- El cache de busquedas dura 12 horas y guarda hasta 500 resultados.
+- Los enlaces directos de stream se cachean por 25 minutos y guardan hasta 200 resultados.
+- Cuando entra una playlist, el bot precalienta en segundo plano las primeras canciones de la cola.
+- Durante la reproduccion, tambien precalienta las canciones siguientes.
+
+Esto ayuda especialmente cuando se repite una playlist, hay canciones duplicadas o varios usuarios piden musica parecida.
+
 ## Mejoras recomendadas
 
 Ideas buenas para seguir mejorando el bot:
@@ -119,7 +131,6 @@ Ideas buenas para seguir mejorando el bot:
 - Filtros de audio como bass boost, nightcore o vaporwave.
 - Validar que el usuario este en el mismo canal de voz que el bot antes de controlar la musica.
 - Mejorar la resolucion de Spotify/Apple Music para reducir resultados incorrectos.
-- Cachear busquedas para playlists grandes.
 - Guardar colas favoritas por servidor.
 
 ## Scripts
