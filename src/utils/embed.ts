@@ -1,4 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { Song } from 'distube';
 
 export enum ButtonId {
   PauseResume = 'btn_pause_resume',
@@ -20,6 +21,8 @@ export function createPlayerButtons(paused = false): ActionRowBuilder<ButtonBuil
 }
 
 export function createProgressBar(currentMs: number, totalMs: number, barLength = 15): string {
+  if (totalMs <= 0) return '`En vivo`';
+
   const progress = Math.min(currentMs / totalMs, 1);
   const filled = Math.round(progress * barLength);
   const empty = barLength - filled;
@@ -37,18 +40,21 @@ export function formatDuration(ms: number): string {
   return `${pad(minutes)}:${pad(seconds)}`;
 }
 
-export function createNowPlayingEmbed(song: any, currentMs?: number): EmbedBuilder {
+export function createNowPlayingEmbed(song: Song, currentMs?: number): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor('#00FF00')
     .setTitle('🎵 Reproduciendo')
-    .setDescription(`**${song.name}**`)
+    .setDescription(`**${song.name ?? 'Canción sin título'}**`)
     .addFields(
       { name: 'Duración', value: song.formattedDuration, inline: true },
       { name: 'Solicitada por', value: song.member?.displayName ?? 'Desconocido', inline: true },
     )
     .setThumbnail(song.thumbnail ?? null)
-    .setURL(song.url)
     .setTimestamp();
+
+  if (song.url) {
+    embed.setURL(song.url);
+  }
 
   if (currentMs !== undefined && song.duration > 0) {
     embed.addFields({
@@ -61,8 +67,8 @@ export function createNowPlayingEmbed(song: any, currentMs?: number): EmbedBuild
   return embed;
 }
 
-export function createAddQueueEmbed(song: any): EmbedBuilder {
+export function createAddQueueEmbed(song: Song): EmbedBuilder {
   return new EmbedBuilder()
     .setColor('#5865F2')
-    .setDescription(`📥 Añadida a la cola: **${song.name}** — \`${song.formattedDuration}\``);
+    .setDescription(`📥 Añadida a la cola: **${song.name ?? 'Canción sin título'}** — \`${song.formattedDuration}\``);
 }

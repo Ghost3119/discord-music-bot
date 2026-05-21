@@ -22,6 +22,17 @@ export const queue: Command = {
 
     const songs = queue.songs;
     const nowPlaying = songs[0];
+
+    if (!nowPlaying) {
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder().setColor('#FF0000').setDescription('❌ No hay cola de reproducción.'),
+        ],
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
     const upcoming = songs.slice(1, 11);
 
     const description = upcoming

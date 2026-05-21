@@ -1,13 +1,34 @@
-import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
+import { GuildTextBasedChannel, SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
+import { PlayOptions } from 'distube';
 import { Command } from './command.types';
 import { resolveAppleMusic } from '../utils/appleMusic';
+import { PlaybackMetadata, SearchSource } from '../music/ytDlpSearchPlugin';
+
+function isGuildTextChannel(channel: unknown): channel is GuildTextBasedChannel {
+  if (typeof channel !== 'object' || channel === null) return false;
+  const candidate = channel as { guild?: unknown; send?: unknown };
+  return candidate.guild !== undefined && typeof candidate.send === 'function';
+}
+
+function parseSearchSource(value: string | null): SearchSource {
+  return value === 'soundcloud' ? 'soundcloud' : 'youtube';
+}
 
 export const play: Command = {
   data: new SlashCommandBuilder()
     .setName('play')
-    .setDescription('Reproduce música de YouTube, Spotify, SoundCloud o Apple Music')
+    .setDescription('Reproduce YouTube, SoundCloud, Spotify, Apple Music y URLs compatibles')
     .addStringOption((opt) =>
       opt.setName('query').setDescription('URL o nombre de la canción').setRequired(true),
+    )
+    .addStringOption((opt) =>
+      opt
+        .setName('fuente')
+        .setDescription('Fuente para búsquedas por nombre o enlaces de metadata')
+        .addChoices(
+          { name: 'YouTube', value: 'youtube' },
+          { name: 'SoundCloud', value: 'soundcloud' },
+        ),
     ) as SlashCommandBuilder,
 
   async execute(interaction) {
@@ -40,6 +61,7 @@ export const play: Command = {
     await interaction.deferReply();
 
     const rawQuery = interaction.options.getString('query', true);
+    const searchSource = parseSearchSource(interaction.options.getString('fuente'));
 
     try {
       const resolved = await resolveAppleMusic(rawQuery);
@@ -55,10 +77,17 @@ export const play: Command = {
       });
 
       const distube = interaction.client.distube;
-      await distube.play(voiceChannel, resolved.query, {
-        textChannel: interaction.channel as any,
+      const playOptions: PlayOptions<PlaybackMetadata> = {
         member: member!,
-      });
+        metadata: { searchSource },
+      };
+      const textChannel = isGuildTextChannel(interaction.channel) ? interaction.channel : undefined;
+
+      if (textChannel) {
+        playOptions.textChannel = textChannel;
+      }
+
+      await distube.play<PlaybackMetadata>(voiceChannel, resolved.query, playOptions);
     } catch (error) {
       console.error('Error en /play:', error);
       const content = {

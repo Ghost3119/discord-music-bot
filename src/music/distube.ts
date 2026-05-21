@@ -1,13 +1,18 @@
-import { DisTube } from 'distube';
-import { YtDlpPlugin } from '@distube/yt-dlp';
+import { DisTube, DisTubeOptions } from 'distube';
 import { SpotifyPlugin } from '@distube/spotify';
 import { Client } from 'discord.js';
 import ffmpeg from 'ffmpeg-static';
+import { YtDlpSearchPlugin } from './ytDlpSearchPlugin';
 
 export function createDisTube(client: Client): DisTube {
-  return new DisTube(client as any, {
-    plugins: [new SpotifyPlugin(), new YtDlpPlugin({ update: false })],
+  const options: DisTubeOptions = {
+    plugins: [new SpotifyPlugin(), new YtDlpSearchPlugin()],
     emitNewSongOnly: true,
-    ffmpeg: { path: ffmpeg ?? undefined },
-  });
+  };
+
+  if (ffmpeg) {
+    options.ffmpeg = { path: ffmpeg };
+  }
+
+  return new DisTube(client, options);
 }

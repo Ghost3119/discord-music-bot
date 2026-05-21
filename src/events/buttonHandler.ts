@@ -1,5 +1,5 @@
-import { ButtonInteraction, EmbedBuilder } from 'discord.js';
-import { ButtonId, createPlayerButtons, createNowPlayingEmbed } from '../utils/embed';
+import { ButtonInteraction, EmbedBuilder, MessageFlags } from 'discord.js';
+import { ButtonId, createPlayerButtons } from '../utils/embed';
 
 export async function handleButton(interaction: ButtonInteraction) {
   if (!interaction.guild) return;
@@ -12,7 +12,7 @@ export async function handleButton(interaction: ButtonInteraction) {
   if (!member?.voice.channel) {
     await interaction.reply({
       embeds: [new EmbedBuilder().setColor('#FF0000').setDescription('❌ Debes estar en un canal de voz.')],
-      flags: 'Ephemeral' as any,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -20,17 +20,16 @@ export async function handleButton(interaction: ButtonInteraction) {
   switch (interaction.customId) {
     case ButtonId.PauseResume: {
       if (!queue) {
-        await interaction.reply({ content: '❌ No hay cola.', flags: ['Ephemeral'] as any });
+        await interaction.reply({ content: '❌ No hay cola.', flags: MessageFlags.Ephemeral });
         return;
       }
       if (queue.paused) {
-        distube.resume(interaction.guild.id);
+        await queue.resume();
         await interaction.reply({ embeds: [new EmbedBuilder().setColor('#00FF00').setDescription('▶️ Música reanudada.')] });
       } else {
-        distube.pause(interaction.guild.id);
+        await queue.pause();
         await interaction.reply({ embeds: [new EmbedBuilder().setColor('#FFA500').setDescription('⏸️ Música pausada.')] });
       }
-      const song = queue.songs[0];
       const row = createPlayerButtons(queue.paused);
       await interaction.message.edit({ components: [row] }).catch(() => {});
       break;
@@ -38,7 +37,7 @@ export async function handleButton(interaction: ButtonInteraction) {
 
     case ButtonId.Skip: {
       if (!queue) {
-        await interaction.reply({ content: '❌ No hay cola.', flags: ['Ephemeral'] as any });
+        await interaction.reply({ content: '❌ No hay cola.', flags: MessageFlags.Ephemeral });
         return;
       }
       try {
@@ -49,7 +48,7 @@ export async function handleButton(interaction: ButtonInteraction) {
       } catch {
         await interaction.reply({
           embeds: [new EmbedBuilder().setColor('#FF0000').setDescription('❌ No hay más canciones.')],
-          flags: 'Ephemeral' as any,
+          flags: MessageFlags.Ephemeral,
         });
       }
       break;
@@ -57,10 +56,10 @@ export async function handleButton(interaction: ButtonInteraction) {
 
     case ButtonId.Stop: {
       if (!queue) {
-        await interaction.reply({ content: '❌ No hay cola.', flags: ['Ephemeral'] as any });
+        await interaction.reply({ content: '❌ No hay cola.', flags: MessageFlags.Ephemeral });
         return;
       }
-      distube.stop(interaction.guild.id);
+      await queue.stop();
       await interaction.reply({
         embeds: [new EmbedBuilder().setColor('#FF0000').setDescription('⏹️ Música detenida.')],
       });
@@ -71,12 +70,21 @@ export async function handleButton(interaction: ButtonInteraction) {
       if (!queue) {
         await interaction.reply({
           embeds: [new EmbedBuilder().setColor('#FF0000').setDescription('❌ No hay cola.')],
-          flags: 'Ephemeral' as any,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
       const songs = queue.songs;
       const nowPlaying = songs[0];
+
+      if (!nowPlaying) {
+        await interaction.reply({
+          embeds: [new EmbedBuilder().setColor('#FF0000').setDescription('❌ No hay cola.')],
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
       const upcoming = songs.slice(1, 11);
       const description = upcoming
         .map((s, i) => `${i + 1}. **${s.name}** — \`${s.formattedDuration}\``)
@@ -90,7 +98,7 @@ export async function handleButton(interaction: ButtonInteraction) {
         )
         .setFooter({ text: `Total: ${songs.length} canciones` })
         .setTimestamp();
-      await interaction.reply({ embeds: [embed], flags: 'Ephemeral' as any });
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       break;
     }
   }

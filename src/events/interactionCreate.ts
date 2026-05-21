@@ -1,4 +1,4 @@
-import { Events, Interaction, MessageFlags } from 'discord.js';
+import { Interaction, MessageFlags, InteractionReplyOptions } from 'discord.js';
 import { commands } from '../commands';
 
 export async function handleInteraction(interaction: Interaction) {
@@ -16,7 +16,10 @@ export async function handleInteraction(interaction: Interaction) {
   } catch (error) {
     console.error(`Error ejecutando /${interaction.commandName}:`, error);
 
-    const reply: any = { content: '❌ Hubo un error al ejecutar el comando.', flags: MessageFlags.Ephemeral };
+    const reply: InteractionReplyOptions = {
+      content: '❌ Hubo un error al ejecutar el comando.',
+      flags: MessageFlags.Ephemeral,
+    };
 
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp(reply);

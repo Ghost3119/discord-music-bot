@@ -1,5 +1,6 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { Command } from './command.types';
+import { createNowPlayingEmbed, createPlayerButtons } from '../utils/embed';
 
 export const nowplaying: Command = {
   data: new SlashCommandBuilder()
@@ -20,8 +21,6 @@ export const nowplaying: Command = {
 
     const song = queue.songs[0];
     const currentTime = queue.currentTime ?? 0;
-    const { createNowPlayingEmbed } = require('../utils/embed');
-    const { createPlayerButtons } = require('../utils/embed');
 
     const embed = createNowPlayingEmbed(song, currentTime * 1000);
     const row = createPlayerButtons(queue.paused);
