@@ -31,6 +31,20 @@ registerDisTubeEvents(client.distube);
 client.once(Events.ClientReady, (c) => {
   console.log(`✅ Bot conectado como ${c.user?.tag}`);
 });
+
+// Logs de diagnóstico para eventos de voz de Discord Gateway
+client.on(Events.Raw, (packet: { t?: string }) => {
+  if (packet.t === 'VOICE_STATE_UPDATE' || packet.t === 'VOICE_SERVER_UPDATE') {
+    console.log(`[Gateway Voice Packet] ${packet.t}`);
+  }
+});
+
+client.on(Events.VoiceStateUpdate, (_oldState, newState) => {
+  if (newState.member?.id === client.user?.id) {
+    console.log(`[Bot Voice State] Canal: ${newState.channel?.name ?? 'desconectado'} (${newState.channelId ?? 'ninguno'})`);
+  }
+});
+
 client.on(Events.InteractionCreate, handleInteraction);
 client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isButton()) await handleButton(interaction);

@@ -110,6 +110,12 @@ export function registerDisTubeEvents(distube: DisTube) {
     });
   });
 
+  distube.on(Events.DEBUG, (msg) => {
+    if (msg.includes('QueueManager') || msg.includes('Voice') || msg.includes('voice') || msg.includes('join')) {
+      console.log(`[DisTube Debug] ${msg}`);
+    }
+  });
+
   distube.on(Events.NO_RELATED, (queue) => {
     queue.textChannel?.send({
       embeds: [new EmbedBuilder().setColor(BotColors.Warning).setDescription('🔇 No se encontraron canciones relacionadas.')],

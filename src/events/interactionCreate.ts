@@ -2,6 +2,18 @@ import { Interaction, MessageFlags, InteractionReplyOptions } from 'discord.js';
 import { commands } from '../commands';
 
 export async function handleInteraction(interaction: Interaction) {
+  if (interaction.isAutocomplete()) {
+    const command = commands.find((cmd) => cmd.data.name === interaction.commandName);
+    if (!command?.autocomplete) return;
+
+    try {
+      await command.autocomplete(interaction);
+    } catch (error) {
+      console.error(`Error en autocomplete para /${interaction.commandName}:`, error);
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const command = commands.find((cmd) => cmd.data.name === interaction.commandName);

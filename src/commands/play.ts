@@ -5,6 +5,7 @@ import { resolveAppleMusic } from '../utils/appleMusic';
 import { PlaybackMetadata, SearchSource } from '../music/ytDlpSearchPlugin';
 import { ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
+import { fetchSearchSuggestions } from '../utils/suggestions';
 
 function isGuildTextChannel(channel: unknown): channel is GuildTextBasedChannel {
   if (typeof channel !== 'object' || channel === null) return false;
@@ -21,7 +22,11 @@ export const play: Command = {
     .setName('play')
     .setDescription('Reproduce YouTube, SoundCloud, Spotify, Apple Music y URLs compatibles')
     .addStringOption((opt) =>
-      opt.setName('query').setDescription('URL o nombre de la canción').setRequired(true),
+      opt
+        .setName('query')
+        .setDescription('URL o nombre de la canción')
+        .setRequired(true)
+        .setAutocomplete(true),
     )
     .addStringOption((opt) =>
       opt
@@ -32,6 +37,22 @@ export const play: Command = {
           { name: 'SoundCloud', value: 'soundcloud' },
         ),
     ) as SlashCommandBuilder,
+
+  async autocomplete(interaction) {
+    const focusedValue = interaction.options.getFocused();
+    if (!focusedValue || focusedValue.trim().length < 2) {
+      await interaction.respond([]);
+      return;
+    }
+
+    const suggestions = await fetchSearchSuggestions(focusedValue);
+    await interaction.respond(
+      suggestions.map((s) => ({
+        name: s.slice(0, 100),
+        value: s.slice(0, 100),
+      })),
+    );
+  },
 
   async execute(interaction) {
     const guild = await ensureGuild(interaction);
@@ -93,13 +114,24 @@ export const play: Command = {
       }
 
       await distube.play<PlaybackMetadata>(voiceChannel, resolved.query, playOptions);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error en /play:', error);
+
+      const isVoiceTimeout =
+        typeof error === 'object' &&
+        error !== null &&
+        'errorCode' in error &&
+        (error as { errorCode?: string }).errorCode === 'VOICE_CONNECT_FAILED';
+
+      const description = isVoiceTimeout
+        ? '❌ **No se pudo conectar al canal de voz (tiempo de espera agotado).**\n\n💡 **Solución rápida en Discord:**\n1. Clic derecho en el canal de voz ➔ **Editar canal** ➔ **Resumen**.\n2. Busca **Anulación de región (Region Override)** y cámbiala de *Automático* a otra región (ej. *US Central* o *US East*).\n3. Verifica que el bot tenga permisos de **Conectar** y **Hablar** en ese canal.'
+        : '❌ No se pudo reproducir la canción. Verifica el enlace o el nombre.';
+
       const content = {
         embeds: [
           new EmbedBuilder()
             .setColor(BotColors.Error)
-            .setDescription('❌ No se pudo reproducir la canción. Verifica el enlace o el nombre.'),
+            .setDescription(description),
         ],
       };
       if (interaction.deferred) {

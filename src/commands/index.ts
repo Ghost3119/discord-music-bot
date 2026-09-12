@@ -10,5 +10,6 @@ import { shuffle } from './shuffle';
 import { loop } from './loop';
 import { seek } from './seek';
 import { remove } from './remove';
+import { search } from './search';
 
-export const commands = [play, skip, stop, queue, nowplaying, pause, resume, volume, shuffle, loop, seek, remove];
+export const commands = [play, skip, stop, queue, nowplaying, pause, resume, volume, shuffle, loop, seek, remove, search];
