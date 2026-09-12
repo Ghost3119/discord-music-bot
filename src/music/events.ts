@@ -1,7 +1,10 @@
 import { DisTube, Events, InfoExtractorPlugin, Playlist, Queue, Song } from 'distube';
 import { EmbedBuilder } from 'discord.js';
 import { createNowPlayingEmbed, createAddQueueEmbed, createPlayerButtons } from '../utils/embed';
+import { BotColors } from '../utils/colors';
 import { PLAYLIST_SEARCH_WARM_LIMIT, YtDlpSearchPlugin } from './ytDlpSearchPlugin';
+
+const EMPTY_TIMEOUT_MS = 60_000;
 
 function findSearchPlugin(distube: DisTube): YtDlpSearchPlugin | undefined {
   return distube.plugins.find((plugin): plugin is YtDlpSearchPlugin => plugin instanceof YtDlpSearchPlugin);
@@ -41,11 +44,19 @@ function warmPlaylistSearchCache(distube: DisTube, playlist: Playlist): void {
 }
 
 export function registerDisTubeEvents(distube: DisTube) {
+  const emptyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   distube.on(Events.PLAY_SONG, (queue, song) => {
     const embed = createNowPlayingEmbed(song);
     const row = createPlayerButtons(false);
     queue.textChannel?.send({ embeds: [embed], components: [row] });
     warmUpcomingSearchCache(distube, queue, song);
+
+    const timer = emptyTimers.get(queue.id);
+    if (timer) {
+      clearTimeout(timer);
+      emptyTimers.delete(queue.id);
+    }
   });
 
   distube.on(Events.ADD_SONG, (queue, song) => {
@@ -56,7 +67,7 @@ export function registerDisTubeEvents(distube: DisTube) {
     queue.textChannel?.send({
       embeds: [
         new EmbedBuilder()
-          .setColor('#5865F2')
+          .setColor(BotColors.Info)
           .setDescription(`📚 Añadida playlist: **${playlist.name ?? 'Playlist'}** — \`${playlist.songs.length} canciones\``),
       ],
     });
@@ -65,20 +76,43 @@ export function registerDisTubeEvents(distube: DisTube) {
 
   distube.on(Events.DISCONNECT, (queue) => {
     queue.textChannel?.send({
-      embeds: [new EmbedBuilder().setColor('#FF0000').setDescription('🔌 Desconectado del canal de voz.')],
+      embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription('🔌 Desconectado del canal de voz.')],
     });
+    const timer = emptyTimers.get(queue.id);
+    if (timer) {
+      clearTimeout(timer);
+      emptyTimers.delete(queue.id);
+    }
+  });
+
+  (distube as DisTube).on('empty' as keyof import('distube').DisTubeEvents, (queue: Queue) => {
+    const timer = setTimeout(() => {
+      emptyTimers.delete(queue.id);
+      const currentQueue = distube.getQueue(queue.id);
+      if (currentQueue) {
+        currentQueue.stop();
+        queue.textChannel?.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(BotColors.Warning)
+              .setDescription('🔇 Canal vacío por 1 minuto — desconectando.'),
+          ],
+        });
+      }
+    }, EMPTY_TIMEOUT_MS);
+    emptyTimers.set(queue.id, timer);
   });
 
   distube.on(Events.ERROR, (error, queue) => {
     console.error('DisTube Error:', error);
     queue.textChannel?.send({
-      embeds: [new EmbedBuilder().setColor('#FF0000').setDescription(`❌ Error: ${error.message ?? 'Error desconocido'}`)],
+      embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription(`❌ Error: ${error.message ?? 'Error desconocido'}`)],
     });
   });
 
   distube.on(Events.NO_RELATED, (queue) => {
     queue.textChannel?.send({
-      embeds: [new EmbedBuilder().setColor('#FFA500').setDescription('🔇 No se encontraron canciones relacionadas.')],
+      embeds: [new EmbedBuilder().setColor(BotColors.Warning).setDescription('🔇 No se encontraron canciones relacionadas.')],
     });
   });
 }

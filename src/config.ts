@@ -1,8 +1,16 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+function requireEnv(key: string): string {
+  const value = process.env[key];
+  if (!value) {
+    throw new Error(`❌ Variable de entorno requerida no encontrada: ${key}`);
+  }
+  return value;
+}
+
 export const config = {
-  token: process.env['DISCORD_TOKEN'] ?? '',
-  guildId: process.env['GUILD_ID'] ?? '',
-  clientId: process.env['CLIENT_ID'] ?? '',
+  token: requireEnv('DISCORD_TOKEN'),
+  guildId: requireEnv('GUILD_ID'),
+  clientId: requireEnv('CLIENT_ID'),
 };

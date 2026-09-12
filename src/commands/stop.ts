@@ -1,5 +1,7 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { Command } from './command.types';
+import { ensureGuild } from '../utils/guard';
+import { BotColors } from '../utils/colors';
 
 export const stop: Command = {
   data: new SlashCommandBuilder()
@@ -7,23 +9,26 @@ export const stop: Command = {
     .setDescription('Detiene la música y desconecta al bot del canal'),
 
   async execute(interaction) {
+    const guild = await ensureGuild(interaction);
+    if (!guild) return;
+
     const distube = interaction.client.distube;
-    const queue = distube.getQueue(interaction.guild!.id);
+    const queue = distube.getQueue(guild.id);
 
     if (!queue) {
       await interaction.reply({
         embeds: [
-          new EmbedBuilder().setColor('#FF0000').setDescription('❌ No hay música reproduciéndose.'),
+          new EmbedBuilder().setColor(BotColors.Error).setDescription('❌ No hay música reproduciéndose.'),
         ],
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
-    distube.stop(interaction.guild!.id);
+    distube.stop(guild.id);
     await interaction.reply({
       embeds: [
-        new EmbedBuilder().setColor('#FF0000').setDescription('⏹️ Música detenida. ¡Hasta luego!'),
+        new EmbedBuilder().setColor(BotColors.Error).setDescription('⏹️ Música detenida. ¡Hasta luego!'),
       ],
     });
   },

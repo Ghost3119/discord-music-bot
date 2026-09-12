@@ -22,9 +22,9 @@ export async function handleInteraction(interaction: Interaction) {
     };
 
     if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(reply);
+      await interaction.followUp(reply).catch(() => {});
     } else {
-      await interaction.reply(reply);
+      await interaction.reply(reply).catch(() => {});
     }
   }
 }

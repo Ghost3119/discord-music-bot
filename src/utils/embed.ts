@@ -1,5 +1,6 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
-import { Song } from 'distube';
+import { Queue, Song } from 'distube';
+import { BotColors } from './colors';
 
 export enum ButtonId {
   PauseResume = 'btn_pause_resume',
@@ -42,7 +43,7 @@ export function formatDuration(ms: number): string {
 
 export function createNowPlayingEmbed(song: Song, currentMs?: number): EmbedBuilder {
   const embed = new EmbedBuilder()
-    .setColor('#00FF00')
+    .setColor(BotColors.Success)
     .setTitle('🎵 Reproduciendo')
     .setDescription(`**${song.name ?? 'Canción sin título'}**`)
     .addFields(
@@ -69,6 +70,30 @@ export function createNowPlayingEmbed(song: Song, currentMs?: number): EmbedBuil
 
 export function createAddQueueEmbed(song: Song): EmbedBuilder {
   return new EmbedBuilder()
-    .setColor('#5865F2')
+    .setColor(BotColors.Info)
     .setDescription(`📥 Añadida a la cola: **${song.name ?? 'Canción sin título'}** — \`${song.formattedDuration}\``);
+}
+
+export function createQueueEmbed(queue: Queue): EmbedBuilder {
+  const songs = queue.songs;
+  const nowPlaying = songs[0];
+
+  if (!nowPlaying) {
+    return new EmbedBuilder().setColor(BotColors.Error).setDescription('❌ No hay cola de reproducción.');
+  }
+
+  const upcoming = songs.slice(1, 11);
+  const description = upcoming
+    .map((song, i) => `${i + 1}. **${song.name}** — \`${song.formattedDuration}\``)
+    .join('\n');
+  const remaining = songs.length - 1 > 10 ? `\n...y ${songs.length - 11} más.` : '';
+
+  return new EmbedBuilder()
+    .setColor(BotColors.Info)
+    .setTitle('🎵 Cola de Reproducción')
+    .setDescription(
+      `**Reproduciendo:** ${nowPlaying.name} — \`${nowPlaying.formattedDuration}\`\n\n${description || '_No hay canciones en espera._'}${remaining}`,
+    )
+    .setFooter({ text: `Total: ${songs.length} canciones` })
+    .setTimestamp();
 }

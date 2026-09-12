@@ -3,6 +3,8 @@ import { PlayOptions } from 'distube';
 import { Command } from './command.types';
 import { resolveAppleMusic } from '../utils/appleMusic';
 import { PlaybackMetadata, SearchSource } from '../music/ytDlpSearchPlugin';
+import { ensureGuild } from '../utils/guard';
+import { BotColors } from '../utils/colors';
 
 function isGuildTextChannel(channel: unknown): channel is GuildTextBasedChannel {
   if (typeof channel !== 'object' || channel === null) return false;
@@ -32,13 +34,16 @@ export const play: Command = {
     ) as SlashCommandBuilder,
 
   async execute(interaction) {
-    const member = interaction.guild!.members.cache.get(interaction.user.id);
+    const guild = await ensureGuild(interaction);
+    if (!guild) return;
+
+    const member = guild.members.cache.get(interaction.user.id);
     const voiceChannel = member?.voice.channel;
 
     if (!voiceChannel) {
       await interaction.reply({
         embeds: [
-          new EmbedBuilder().setColor('#FF0000').setDescription('❌ Debes estar en un canal de voz.'),
+          new EmbedBuilder().setColor(BotColors.Error).setDescription('❌ Debes estar en un canal de voz.'),
         ],
         flags: MessageFlags.Ephemeral,
       });
@@ -50,7 +55,7 @@ export const play: Command = {
       await interaction.reply({
         embeds: [
           new EmbedBuilder()
-            .setColor('#FF0000')
+            .setColor(BotColors.Error)
             .setDescription('❌ No tengo permisos para unirme o hablar en ese canal.'),
         ],
         flags: MessageFlags.Ephemeral,
@@ -72,7 +77,7 @@ export const play: Command = {
 
       await interaction.editReply({
         embeds: [
-          new EmbedBuilder().setColor('#FFD700').setDescription(`🔍 Buscando: **${displayQuery}**...`),
+          new EmbedBuilder().setColor(BotColors.Gold).setDescription(`🔍 Buscando: **${displayQuery}**...`),
         ],
       });
 
@@ -93,7 +98,7 @@ export const play: Command = {
       const content = {
         embeds: [
           new EmbedBuilder()
-            .setColor('#FF0000')
+            .setColor(BotColors.Error)
             .setDescription('❌ No se pudo reproducir la canción. Verifica el enlace o el nombre.'),
         ],
       };
