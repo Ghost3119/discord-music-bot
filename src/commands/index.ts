@@ -11,5 +11,7 @@ import { loop } from './loop';
 import { seek } from './seek';
 import { remove } from './remove';
 import { search } from './search';
+import { autoplay } from './autoplay';
+import { recommend } from './recommend';
 
-export const commands = [play, skip, stop, queue, nowplaying, pause, resume, volume, shuffle, loop, seek, remove, search];
+export const commands = [play, skip, stop, queue, nowplaying, pause, resume, volume, shuffle, loop, seek, remove, search, autoplay, recommend];

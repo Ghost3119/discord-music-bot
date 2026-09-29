@@ -25,7 +25,7 @@ export const stop: Command = {
       return;
     }
 
-    distube.stop(guild.id);
+    await queue.stop();
     await interaction.reply({
       embeds: [
         new EmbedBuilder().setColor(BotColors.Error).setDescription('⏹️ Música detenida. ¡Hasta luego!'),

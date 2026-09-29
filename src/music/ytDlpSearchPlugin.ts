@@ -48,8 +48,11 @@ const SEARCH_PREFIXES: Record<SearchSource, string> = {
 const YTDLP_SEARCH_PATTERN = /^(?:ytsearch|scsearch)\d*:/i;
 const SEARCH_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const STREAM_CACHE_TTL_MS = 25 * 60 * 1000;
+const MIX_CACHE_TTL_MS = 30 * 60 * 1000;
 const SEARCH_CACHE_MAX_ITEMS = 500;
 const STREAM_CACHE_MAX_ITEMS = 200;
+const MIX_CACHE_MAX_ITEMS = 100;
+const MIX_CANDIDATE_LIMIT = 60;
 const PLAYLIST_WARM_CONCURRENCY = 2;
 export const PLAYLIST_SEARCH_WARM_LIMIT = 25;
 
@@ -171,8 +174,10 @@ async function runWithConcurrency<T>(
 export class YtDlpSearchPlugin extends ExtractorPlugin {
   private readonly searchCache = new TtlCache<YtDlpInfo>(SEARCH_CACHE_MAX_ITEMS, SEARCH_CACHE_TTL_MS);
   private readonly streamUrlCache = new TtlCache<string>(STREAM_CACHE_MAX_ITEMS, STREAM_CACHE_TTL_MS);
+  private readonly mixCache = new TtlCache<YtDlpInfo[]>(MIX_CACHE_MAX_ITEMS, MIX_CACHE_TTL_MS);
   private readonly pendingSearches = new Map<string, Promise<YtDlpInfo | null>>();
   private readonly pendingStreamUrls = new Map<string, Promise<string>>();
+  private readonly pendingMixes = new Map<string, Promise<YtDlpInfo[]>>();
 
   override validate(url: string): boolean {
     return URL_PATTERN.test(url);
@@ -216,8 +221,31 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     return streamUrl;
   }
 
-  override getRelatedSongs(): Song[] {
-    return [];
+  override async getRelatedSongs(song: Song): Promise<Song[]> {
+    return this.getRecommendations(song);
+  }
+
+  async getRecommendations(seed: Song): Promise<Song[]> {
+    const videoId = await this.getYouTubeVideoId(seed);
+    if (!videoId) return [];
+
+    const entries = await this.getMixEntries(videoId);
+    const seen = new Set<string>([videoId]);
+    return entries.flatMap((entry) => {
+      const id = toStringValue(entry.id);
+      if (!id || !/^[\w-]{11}$/.test(id) || seen.has(id)) return [];
+      seen.add(id);
+
+      const info: YtDlpInfo = {
+        ...entry,
+        id,
+        extractor: 'youtube',
+        webpage_url: `https://www.youtube.com/watch?v=${id}`,
+      };
+      const options: ResolveOptions<PlaybackMetadata> = { metadata: { searchSource: 'youtube' } };
+      if (seed.member) options.member = seed.member;
+      return [this.createSong(info, options)];
+    });
   }
 
   async warmSearchCache(queries: string[], metadata: unknown): Promise<void> {
@@ -244,6 +272,45 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     }
 
     return streamUrl;
+  }
+
+  private async getYouTubeVideoId(song: Song): Promise<string | null> {
+    if (!song.stream.playFromSource && song.stream.song) {
+      return this.getYouTubeVideoId(song.stream.song);
+    }
+
+    if (song.source.toLowerCase().includes('youtube') && /^[\w-]{11}$/.test(song.id)) {
+      return song.id;
+    }
+
+    const query = [song.name, song.uploader.name].filter(Boolean).join(' ');
+    if (!query) return null;
+
+    const result = await this.getSearchResult(query, { searchSource: 'youtube' });
+    const id = result && toStringValue(result.id);
+    return id && /^[\w-]{11}$/.test(id) ? id : null;
+  }
+
+  private async getMixEntries(videoId: string): Promise<YtDlpInfo[]> {
+    const cached = this.mixCache.get(videoId);
+    if (cached) return cached;
+
+    const pending = this.pendingMixes.get(videoId);
+    if (pending) return pending;
+
+    const promise = this.fetchInfo(
+      `https://www.youtube.com/watch?v=${videoId}&list=RD${videoId}`,
+      { flatPlaylist: true, playlistEnd: MIX_CANDIDATE_LIMIT },
+    ).then((info) => {
+      const entries = hasEntries(info) ? info.entries : [];
+      if (entries.length > 0) this.mixCache.set(videoId, entries);
+      return entries;
+    }).finally(() => {
+      this.pendingMixes.delete(videoId);
+    });
+
+    this.pendingMixes.set(videoId, promise);
+    return promise;
   }
 
   private async getSearchResult(query: string, metadata: unknown): Promise<YtDlpInfo | null> {

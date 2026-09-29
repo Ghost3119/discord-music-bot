@@ -90,9 +90,13 @@ Ejemplos:
 /queue
 /nowplaying
 /volume valor:50
+/autoplay
+/recommend cantidad:5
 ```
 
 Tambien hay botones en el embed de reproduccion para pausar/reanudar, saltar, detener y ver la cola.
+
+`/autoplay` alterna la radio para la cola actual: al terminar, intenta añadir otra canción del YouTube Mix. `/recommend` añade de 1 a 20 sugerencias (5 por defecto) usando la canción actual y, si hace falta, la última de la cola. Evita repetir canciones que ya están en cola o en el historial reciente. Ambos dependen de que YouTube Mix esté disponible; no garantizan música infinita.
 
 ## Como funciona Spotify
 
@@ -127,7 +131,6 @@ Ideas buenas para seguir mejorando el bot:
 - `/loop`: repetir cancion o cola.
 - `/seek`: saltar a un minuto/segundo especifico.
 - `/lyrics`: buscar letra de la cancion actual.
-- `/autoplay`: agregar canciones relacionadas automaticamente.
 - Filtros de audio como bass boost, nightcore o vaporwave.
 - Validar que el usuario este en el mismo canal de voz que el bot antes de controlar la musica.
 - Mejorar la resolucion de Spotify/Apple Music para reducir resultados incorrectos.

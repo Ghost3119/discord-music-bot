@@ -3,6 +3,7 @@ import { EmbedBuilder } from 'discord.js';
 import { createNowPlayingEmbed, createAddQueueEmbed, createPlayerButtons } from '../utils/embed';
 import { BotColors } from '../utils/colors';
 import { PLAYLIST_SEARCH_WARM_LIMIT, YtDlpSearchPlugin } from './ytDlpSearchPlugin';
+import { observeStreamErrors } from './streamErrors';
 
 const EMPTY_TIMEOUT_MS = 60_000;
 
@@ -47,6 +48,7 @@ export function registerDisTubeEvents(distube: DisTube) {
   const emptyTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   distube.on(Events.PLAY_SONG, (queue, song) => {
+    if (queue.voice.stream) observeStreamErrors(queue.voice.stream);
     const embed = createNowPlayingEmbed(song);
     const row = createPlayerButtons(false);
     queue.textChannel?.send({ embeds: [embed], components: [row] });
@@ -90,14 +92,15 @@ export function registerDisTubeEvents(distube: DisTube) {
       emptyTimers.delete(queue.id);
       const currentQueue = distube.getQueue(queue.id);
       if (currentQueue) {
-        currentQueue.stop();
-        queue.textChannel?.send({
-          embeds: [
-            new EmbedBuilder()
-              .setColor(BotColors.Warning)
-              .setDescription('🔇 Canal vacío por 1 minuto — desconectando.'),
-          ],
-        });
+        void currentQueue.stop()
+          .then(() => queue.textChannel?.send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(BotColors.Warning)
+                .setDescription('🔇 Canal vacío por 1 minuto — desconectando.'),
+            ],
+          }))
+          .catch((error: unknown) => console.error('Error al desconectar del canal vacío:', error));
       }
     }, EMPTY_TIMEOUT_MS);
     emptyTimers.set(queue.id, timer);
