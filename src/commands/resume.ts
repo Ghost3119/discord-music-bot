@@ -31,7 +31,7 @@ export const resume: Command = {
       return;
     }
 
-    distube.resume(guild.id);
+    await queue.resume();
     await interaction.reply({
       embeds: [new EmbedBuilder().setColor(BotColors.Success).setDescription('▶️ Música reanudada.')],
     });

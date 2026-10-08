@@ -11,6 +11,7 @@ const { YtDlpSearchPlugin, rankSearchCandidates } = require('../dist/music/ytDlp
 const { PlaybackRecovery } = require('../dist/music/playbackRecovery');
 const { ExtractionPool, retryTransient, runYtDlp } = require('../dist/music/ytDlpRunner');
 const { registerEmptyVoice } = require('../dist/music/emptyVoice');
+const { PlayerPanels } = require('../dist/music/playerPanel');
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 function song(plugin, id = 'AAAAAAAAAAA') {
@@ -29,13 +30,21 @@ test('event boundaries absorb synchronous throws and rejected async handlers', a
 test('a failed button and a failed error reply never escape the interaction boundary', async (t) => {
   t.mock.method(console, 'error', () => {});
   let replies = 0;
-  const queue = { paused: false, voiceChannel: { id: 'voice-1' }, pause: async () => { throw new Error('pause failed'); } };
+  const message = { id: 'player-1', edit: async () => {} };
+  const queue = { id: 'guild-1', songs: [song(null)], currentTime: 0, paused: false, voiceChannel: { id: 'voice-1' },
+    textChannel: { id: 'text-1', send: async () => message }, pause: async () => { throw new Error('pause failed'); } };
+  const distube = { getQueue: () => queue };
+  const panels = new PlayerPanels(distube, 0);
+  t.after(() => panels.dispose());
+  await panels.show(queue);
   const interaction = {
     isButton: () => true, isRepliable: () => true,
     guild: { id: 'guild-1', members: { cache: new Map([['user-1', { voice: { channel: { id: 'voice-1' } } }]]) } },
-    client: { distube: { getQueue: () => queue } }, member: { voice: {} }, user: { id: 'user-1' }, customId: 'btn_pause_resume',
+    client: { distube }, member: { voice: {} }, user: { id: 'user-1' }, customId: 'btn_pause_resume', message,
     replied: false, deferred: false,
     reply: async () => { replies += 1; throw new Error('Missing Permissions'); },
+    deferReply: async () => { interaction.deferred = true; },
+    editReply: async () => { replies += 1; throw new Error('Missing Permissions'); },
   };
   await assert.doesNotReject(handleInteraction(interaction));
   assert.equal(replies, 1);
@@ -46,16 +55,19 @@ test('every playback notification handles missing Discord permissions', async (t
   t.mock.method(console, 'error', (...args) => errors.push(args));
   const distube = new EventEmitter();
   distube.plugins = [];
-  registerDisTubeEvents(distube);
-  const queue = { voice: {}, songs: [], textChannel: { send: async () => { throw new Error('Missing Permissions'); } } };
+  const dispose = registerDisTubeEvents(distube);
+  t.after(dispose);
   const current = song(null);
+  const queue = { id: 'guild-1', voice: {}, songs: [current], textChannel: { id: 'text-1', send: async () => { throw new Error('Missing Permissions'); } } };
   for (const [event, args] of [
     ['playSong', [queue, current]], ['addSong', [queue, current]],
     ['addList', [queue, { songs: [], name: 'List' }]], ['disconnect', [queue]],
     ['noRelated', [queue]], ['error', [new Error('audio failed'), queue, current]],
-  ]) distube.emit(event, ...args);
-  await tick();
-  assert.equal(errors.filter(([label]) => String(label).startsWith('[DisTube')).length, 6);
+  ]) {
+    distube.emit(event, ...args);
+    await tick();
+  }
+  assert.equal(errors.filter(([label]) => String(label).startsWith('[DisTube') || label === '[Panel de reproducción]').length, 6);
 });
 
 test('streams get a permanent error observer before voice playback can fail', async (t) => {

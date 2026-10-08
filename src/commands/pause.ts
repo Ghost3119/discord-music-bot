@@ -31,7 +31,7 @@ export const pause: Command = {
       return;
     }
 
-    distube.pause(guild.id);
+    await queue.pause();
     await interaction.reply({
       embeds: [new EmbedBuilder().setColor(BotColors.Warning).setDescription('⏸️ Música pausada. Usa `/resume` para reanudar.')],
     });

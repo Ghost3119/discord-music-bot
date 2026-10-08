@@ -1,12 +1,13 @@
 import { DisTube, DisTubeEvents, TypedDisTubeEvents, Events, InfoExtractorPlugin, Playlist, Queue, Song } from 'distube';
 import { EmbedBuilder } from 'discord.js';
-import { createNowPlayingEmbed, createAddQueueEmbed, createPlayerButtons } from '../utils/embed';
+import { createAddQueueEmbed } from '../utils/embed';
 import { BotColors } from '../utils/colors';
 import { PLAYLIST_SEARCH_WARM_LIMIT, YtDlpSearchPlugin } from './ytDlpSearchPlugin';
-import { observeStreamErrors } from './streamErrors';
+import { getStreamDiagnostics, observeStreamErrors } from './streamErrors';
 import { describeMusicError } from './errors';
 import { PlaybackRecovery } from './playbackRecovery';
 import { guardedEvent } from '../runtime/safety';
+import { PlayerPanels } from './playerPanel';
 
 function findSearchPlugin(distube: DisTube): YtDlpSearchPlugin | undefined {
   return distube.plugins?.find((plugin): plugin is YtDlpSearchPlugin => plugin instanceof YtDlpSearchPlugin);
@@ -27,8 +28,9 @@ function warmSearchCache(distube: DisTube, songs: Song[], metadata: unknown): vo
   })();
 }
 
-export function registerDisTubeEvents(distube: DisTube): void {
+export function registerDisTubeEvents(distube: DisTube): () => void {
   const recovery = new PlaybackRecovery();
+  const panels = new PlayerPanels(distube);
   const observedVoices = new WeakSet<Queue['voice']>();
   function on<E extends keyof DisTubeEvents>(event: E, handler: (...args: DisTubeEvents[E]) => unknown): void {
     distube.on(event, guardedEvent(`DisTube ${event}`, handler) as TypedDisTubeEvents[E]);
@@ -48,25 +50,33 @@ export function registerDisTubeEvents(distube: DisTube): void {
     recovery.markStarted(queue, song);
     if (queue.voice.stream) observeStreamErrors(queue.voice.stream);
     warmSearchCache(distube, queue.songs.slice(1), song.metadata);
-    await queue.textChannel?.send({ embeds: [createNowPlayingEmbed(song)], components: [createPlayerButtons(false)] });
+    await panels.show(queue, song);
   });
 
   on(Events.ADD_SONG, async (queue, song) => {
+    await panels.refresh(queue);
     await queue.textChannel?.send({ embeds: [createAddQueueEmbed(song)] });
   });
 
   on(Events.ADD_LIST, async (queue, playlist: Playlist) => {
     warmSearchCache(distube, playlist.songs, playlist.metadata);
+    await panels.refresh(queue);
     await queue.textChannel?.send({ embeds: [new EmbedBuilder().setColor(BotColors.Info)
       .setDescription(`📚 Añadida playlist: **${playlist.name ?? 'Playlist'}** — ${playlist.songs.length} canciones`)] });
   });
 
   on(Events.DISCONNECT, async (queue) => {
+    await panels.close(queue, '🔌 Desconectado');
     await queue.textChannel?.send({ embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription('🔌 Desconectado del canal de voz.')] });
   });
 
+  on(Events.FINISH, (queue) => panels.close(queue, '✓ Cola terminada'));
+  on(Events.DELETE_QUEUE, (queue) => panels.close(queue));
+
   on(Events.ERROR, async (error, queue: Queue, song) => {
     console.error('DisTube Error:', error);
+    const diagnostics = getStreamDiagnostics(error);
+    if (diagnostics.length) console.error('[FFmpeg]', diagnostics.join('\n'));
     // Must run before the first await: DisTube decides whether to stop immediately after emit.
     const retry = recovery.retry(queue, song, error, findSearchPlugin(distube));
     const description = describeMusicError(error, song?.name ? { songName: song.name } : {});
@@ -83,4 +93,5 @@ export function registerDisTubeEvents(distube: DisTube): void {
     await queue.textChannel?.send({ embeds: [new EmbedBuilder().setColor(BotColors.Warning)
       .setDescription('🔇 No se encontraron canciones relacionadas. Puedes añadir otra con /play.')] });
   });
+  return () => panels.dispose();
 }

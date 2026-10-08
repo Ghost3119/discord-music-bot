@@ -108,6 +108,11 @@ const ERROR_DESCRIPTIONS: Record<string, ErrorDescription> = {
     detail: 'El bot no tiene acceso o permisos suficientes para completar la acción.',
     hint: 'Revisa el rol del bot y los permisos del canal, incluidos Ver canal, Enviar mensajes e Insertar enlaces.',
   },
+  DISCORD_INVALID_PAYLOAD: {
+    title: 'Discord rechazó el formato del mensaje del bot',
+    detail: 'El bot generó una respuesta con campos o componentes inválidos.',
+    hint: 'Vuelve a abrir la cola con /queue. Si se repite, informa este código para corregir el formato de la respuesta.',
+  },
   EMPTY_PLAYLIST: {
     title: 'La playlist no contiene canciones reproducibles',
     detail: 'La lista está vacía o sus canciones no están disponibles para el bot.',
@@ -184,7 +189,27 @@ const CODE_ALIASES: Record<string, string> = {
   EAI_AGAIN: 'NETWORK_ERROR',
   '50013': 'DISCORD_MISSING_PERMS',
   '50001': 'DISCORD_MISSING_PERMS',
+  '50035': 'DISCORD_INVALID_PAYLOAD',
 };
+
+// FFmpeg's negative AVERROR tags arrive as unsigned 32-bit exit codes on Windows.
+// https://ffmpeg.org/doxygen/trunk/group__lavu__error.html
+const FFMPEG_HTTP_ERRORS: Record<number, string> = {
+  [-0x333034f8]: 'SOURCE_BLOCKED', // HTTP 403
+  [-0x313034f8]: 'PRIVATE_CONTENT', // HTTP 401
+  [-0x343034f8]: 'UNAVAILABLE_VIDEO', // HTTP 404
+  [-0x393234f8]: 'SOURCE_RATE_LIMITED', // HTTP 429
+  [-0x585835f8]: 'SOURCE_UNAVAILABLE', // HTTP 5xx
+};
+
+function classifyFFmpegExit(message: unknown): string | undefined {
+  if (typeof message !== 'string') return undefined;
+  const match = /^ffmpeg exited with code (-?\d+)$/i.exec(message);
+  if (!match) return undefined;
+  const exitCode = Number(match[1]);
+  if (!Number.isInteger(exitCode) || exitCode < -0x80000000 || exitCode > 0xffffffff) return undefined;
+  return FFMPEG_HTTP_ERRORS[exitCode | 0];
+}
 
 export function classifyMusicError(error: unknown): string {
   const messages: string[] = [];
@@ -201,6 +226,10 @@ export function classifyMusicError(error: unknown): string {
     const rawCode = candidate.errorCode ?? candidate.code;
     const code = typeof rawCode === 'string' || typeof rawCode === 'number' ? String(rawCode) : '';
     const knownCode = Object.hasOwn(CODE_ALIASES, code) ? CODE_ALIASES[code]! : code;
+    if (knownCode === 'FFMPEG_EXITED') {
+      const httpError = classifyFFmpegExit(candidate.message);
+      if (httpError) return httpError;
+    }
     if (Object.hasOwn(ERROR_DESCRIPTIONS, knownCode)) return knownCode;
     if (/^[A-Z0-9_]{1,64}$/.test(code)) fallbackCode = code;
     if (typeof candidate.message === 'string') messages.push(candidate.message);

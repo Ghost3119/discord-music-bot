@@ -2,6 +2,7 @@ import { Interaction, MessageFlags, InteractionReplyOptions } from 'discord.js';
 import { commands } from '../commands';
 import { describeMusicError } from '../music/errors';
 import { handleButton } from './buttonHandler';
+import { getPlayerPanels } from '../music/playerPanel';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   try {
@@ -53,6 +54,8 @@ async function handleCommand(interaction: Interaction) {
 
   try {
     await command.execute(interaction);
+    const queue = interaction.guildId ? interaction.client.distube.getQueue(interaction.guildId) : undefined;
+    if (queue) await getPlayerPanels(interaction.client.distube)?.refresh(queue);
   } catch (error) {
     console.error(`Error ejecutando /${interaction.commandName}:`, error);
 

@@ -2,7 +2,8 @@ import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { Command } from './command.types';
 import { ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
-import { createQueueEmbed } from '../utils/embed';
+import { createQueueButtons, createQueueEmbed } from '../utils/embed';
+import { getPlayerPanels } from '../music/playerPanel';
 
 export const queue: Command = {
   data: new SlashCommandBuilder()
@@ -26,6 +27,8 @@ export const queue: Command = {
       return;
     }
 
-    await interaction.reply({ embeds: [createQueueEmbed(queue)] });
+    const session = getPlayerPanels(distube)?.session(queue);
+    await interaction.reply({ embeds: [createQueueEmbed(queue)], components: session ? createQueueButtons(queue, session) : [],
+      flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   },
 };

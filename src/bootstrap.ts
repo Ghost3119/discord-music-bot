@@ -32,9 +32,10 @@ const heartbeat = setInterval(() => {
 }, 10_000);
 heartbeat.unref();
 
-void import('./index').then(({ client, queueRecovery, startBot, stopEmptyVoice }) => {
+void import('./index').then(({ client, queueRecovery, startBot, stopEmptyVoice, stopPlayerPanels }) => {
   stopBot = () => {
     stopEmptyVoice();
+    stopPlayerPanels();
     queueRecovery.stop();
     void client.destroy().catch((error: unknown) => console.error('Error al cerrar Discord:', error));
   };

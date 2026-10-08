@@ -5,8 +5,10 @@ import ffmpeg from 'ffmpeg-static';
 import { YtDlpSearchPlugin } from './ytDlpSearchPlugin';
 
 export function createDisTube(client: Client): DisTube {
+  const clientId = process.env['SPOTIFY_CLIENT_ID'];
+  const clientSecret = process.env['SPOTIFY_CLIENT_SECRET'];
   const options: DisTubeOptions = {
-    plugins: [new SpotifyPlugin(), new YtDlpSearchPlugin()],
+    plugins: [new SpotifyPlugin(clientId && clientSecret ? { api: { clientId, clientSecret } } : {}), new YtDlpSearchPlugin()],
     emitNewSongOnly: true,
   };
 
@@ -14,5 +16,9 @@ export function createDisTube(client: Client): DisTube {
     options.ffmpeg = { path: ffmpeg };
   }
 
-  return new DisTube(client, options);
+  const distube = new DisTube(client, options);
+  // DisTube defaults to one listener, but playback, persistence and empty-channel
+  // cleanup each observe some of the same events. Keep a finite leak warning limit.
+  distube.setMaxListeners(10);
+  return distube;
 }

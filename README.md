@@ -33,6 +33,15 @@ CLIENT_ID=id_de_la_aplicacion
 GUILD_ID=id_del_servidor
 ```
 
+Spotify admite credenciales opcionales, distintas de las de Discord:
+
+```env
+SPOTIFY_CLIENT_ID=id_de_tu_aplicacion_de_spotify
+SPOTIFY_CLIENT_SECRET=secreto_de_tu_aplicacion_de_spotify
+```
+
+Sin ellas, el plugin intenta leer los datos públicos. Si no consigue un token, avisa que puede recuperar como máximo 100 canciones de una playlist o álbum. Las credenciales no garantizan acceso a listas privadas ni eliminan las restricciones de la API; el bot sigue buscando el audio en YouTube o SoundCloud. No publiques el archivo `.env`.
+
 ## Instalacion
 
 ```powershell
@@ -94,7 +103,13 @@ Ejemplos:
 /recommend cantidad:5
 ```
 
-Tambien hay botones en el embed de reproduccion para pausar/reanudar, saltar, detener y ver la cola.
+El reproductor muestra la portada grande cuando está disponible, progreso, volumen, fuente de audio y siguiente canción. Usa botones con texto para pausar/reanudar, saltar, ver la cola y detener.
+
+- Cada sesión mantiene un solo panel y lo edita al cambiar la canción o sus ajustes. El progreso se actualiza cada 20 segundos; no se repiten ediciones si el contenido sigue igual, por ejemplo durante una pausa.
+- `/nowplaying` responde solo al usuario con un enlace al panel actual. Si el mensaje fue eliminado, intenta recrearlo; si no puede publicarlo, muestra una vista sin controles.
+- `/queue` y el botón Cola muestran una lista privada, con páginas de diez canciones, posiciones y duración de las canciones en espera. Los botones de las páginas caducan cuando termina su sesión.
+- Al detenerse o terminar la cola, el panel queda marcado como finalizado y sus controles se desactivan. Los controles de mensajes anteriores al reinicio también se rechazan y se retiran al pulsarlos.
+- Los cambios del panel se realizan en orden. Los fallos de Discord se registran sin detener el audio y dejan una espera de un minuto antes de volver a intentarlo; solo un mensaje confirmado como eliminado permite crear un reemplazo.
 
 `/autoplay` alterna la radio para la cola actual: al terminar, intenta añadir otra canción del YouTube Mix. `/recommend` añade de 1 a 20 sugerencias (5 por defecto) usando la canción actual y, si hace falta, la última de la cola. Evita repetir canciones que ya están en cola o en el historial reciente. Ambos dependen de que YouTube Mix esté disponible; no garantizan música infinita.
 
@@ -169,6 +184,8 @@ Ideas buenas para seguir mejorando el bot:
 ## Notas
 
 - Los errores de `/play`, `/search` y reproducción incluyen una causa, una sugerencia y un código de diagnóstico. Distinguen búsquedas vacías, restricciones de acceso o región, límites de solicitudes, fallos de red, voz y audio. El error completo se conserva en la consola.
+- El código de FFmpeg `3436169992` en Windows equivale a HTTP 403: la fuente rechazó el acceso al audio. Se renueva el enlace con los reintentos limitados existentes; después se continúa con la siguiente canción. No indica por sí solo que FFmpeg esté mal instalado. Los últimos mensajes de FFmpeg se conservan en memoria y se imprimen al fallar, con enlaces y cabeceras sensibles ocultos. Un mismo fallo activo no se registra de nuevo como error tardío.
+- DisTube limita sus eventos a un listener por defecto. El bot usa un límite finito de diez porque reproducción, guardado de colas y desconexión automática comparten eventos; los avisos por superar ese límite siguen habilitados.
 - Si cambias opciones de comandos slash, corre `npm run deploy` otra vez.
 - Si una plataforma falla, revisa si `yt-dlp` soporta ese enlace.
 - Para playlists grandes, la resolucion puede tardar porque cada cancion necesita buscar una fuente reproducible.

@@ -1,8 +1,9 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { Command } from './command.types';
-import { createNowPlayingEmbed, createPlayerButtons } from '../utils/embed';
+import { createNowPlayingEmbed } from '../utils/embed';
 import { ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
+import { getPlayerPanels } from '../music/playerPanel';
 
 export const nowplaying: Command = {
   data: new SlashCommandBuilder()
@@ -24,12 +25,19 @@ export const nowplaying: Command = {
       return;
     }
 
-    const song = queue.songs[0];
-    const currentTime = queue.currentTime ?? 0;
-
-    const embed = createNowPlayingEmbed(song, currentTime * 1000);
-    const row = createPlayerButtons(queue.paused);
-
-    await interaction.reply({ embeds: [embed], components: [row] });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const panels = getPlayerPanels(distube);
+    await panels?.show(queue, queue.songs[0], true);
+    if (distube.getQueue(guild.id) !== queue || queue.stopped || !queue.songs[0]) {
+      await interaction.editReply({ content: '⌛ La sesión terminó. Usa `/nowplaying` para consultar la cola actual.' });
+      return;
+    }
+    const url = panels?.url(queue);
+    await interaction.editReply(url
+      ? { content: `🎵 [Abrir el reproductor actual](${url})` }
+      : { embeds: [createNowPlayingEmbed(queue.songs[0], queue.currentTime * 1000, {
+        paused: queue.paused, volume: queue.volume, nextSong: queue.songs[1], queued: queue.songs.length - 1,
+        autoplay: queue.autoplay, repeatMode: queue.repeatMode,
+      })] });
   },
 };

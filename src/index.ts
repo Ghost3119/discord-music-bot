@@ -12,7 +12,7 @@ export const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 client.distube = createDisTube(client);
-registerDisTubeEvents(client.distube);
+export const stopPlayerPanels = registerDisTubeEvents(client.distube);
 export const stopEmptyVoice = registerEmptyVoice(client, client.distube);
 export const queueRecovery = new QueueRecovery(client, client.distube);
 

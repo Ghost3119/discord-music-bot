@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
-const { describeMusicError } = require('../dist/music/errors');
+const { describeMusicError, classifyMusicError } = require('../dist/music/errors');
 const { registerDisTubeEvents } = require('../dist/music/events');
 
 test('known errors explain the cause and suggest a next step', () => {
@@ -21,6 +21,7 @@ test('known errors explain the cause and suggest a next step', () => {
     ['UNPLAYABLE_FORMATS', /formato de audio compatible/],
     ['FFMPEG_NOT_INSTALLED', /FFmpeg/],
     ['FFMPEG_EXITED', /motor de audio se detuvo/],
+    ['DISCORD_INVALID_PAYLOAD', /Discord rechazó el formato/],
     ['ERR_STREAM_PREMATURE_CLOSE', /audio se interrumpió/],
     ['NO_EXTRACTOR_PLUGIN', /buscador de música no está configurado/],
     ['NO_QUEUE', /Usa \/play/],
@@ -58,6 +59,7 @@ test('network and Discord codes work through nested causes', () => {
     ['ENOTFOUND', 'NETWORK_ERROR'],
     ['ECONNRESET', 'NETWORK_ERROR'],
     [50013, 'DISCORD_MISSING_PERMS'],
+    [50035, 'DISCORD_INVALID_PAYLOAD'],
   ]) {
     const cause = Object.assign(new Error('Connection failed'), { code });
     assert.ok(describeMusicError(new Error('fetch failed', { cause })).includes(`Código: \`${expected}\``));
@@ -67,6 +69,22 @@ test('network and Discord codes work through nested causes', () => {
 test('a known DisTube code is not reclassified by text in the query', () => {
   const message = describeMusicError({ errorCode: 'NO_RESULT', message: 'Cannot find any song (Sign in HTTP Error 403)' });
   assert.match(message, /Código: `NO_RESULT`/);
+});
+
+test('FFmpeg HTTP exit tags are recognized in Windows unsigned and signed form', () => {
+  for(const [tag,expected] of [
+    [0x333034f8,'SOURCE_BLOCKED'],[0x313034f8,'PRIVATE_CONTENT'],[0x343034f8,'UNAVAILABLE_VIDEO'],
+    [0x393234f8,'SOURCE_RATE_LIMITED'],[0x585835f8,'SOURCE_UNAVAILABLE'],
+  ]) {
+    for(const exit of [-tag,(-tag)>>>0]) {
+      assert.equal(classifyMusicError({errorCode:'FFMPEG_EXITED',message:`ffmpeg exited with code ${exit}`}),expected);
+    }
+  }
+  assert.match(describeMusicError({errorCode:'FFMPEG_EXITED',message:'ffmpeg exited with code 3436169992'}),/HTTP 403/);
+  for(const message of ['ffmpeg exited with code 1','ffmpeg exited with code 9999999999999999','song ffmpeg exited with code 3436169992']) {
+    assert.equal(classifyMusicError({errorCode:'FFMPEG_EXITED',message}),'FFMPEG_EXITED');
+  }
+  assert.equal(classifyMusicError({errorCode:'NO_RESULT',message:'ffmpeg exited with code 3436169992'}),'NO_RESULT');
 });
 
 test('unknown errors keep raw URLs, credentials and stack traces out of Discord', () => {
