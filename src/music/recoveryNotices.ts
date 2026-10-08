@@ -2,6 +2,7 @@ import { EmbedBuilder, Message, escapeMarkdown } from 'discord.js';
 import { Queue, Song } from 'distube';
 import { RecoveryStatus } from './playbackRecovery';
 import { musicErrorTitle } from './errors';
+import { getPlaybackState } from './playbackState';
 
 interface Notice {
   latest: RecoveryStatus;
@@ -26,8 +27,12 @@ export function createRecoveryNotice(status: RecoveryStatus): EmbedBuilder {
     case 'cancelled': color = '#949BA4'; text = `⏹ **Recuperación cancelada**\n${title}\nLa sesión terminó o se cambió de canción.`; break;
     case 'failed': color = '#ED4245'; text = `⏭ **No pude reproducir esta canción**\n${title}\n${musicErrorTitle({ errorCode: status.code })}.\n${status.queue.songs.length ? 'Continuaré con la siguiente.' : 'No quedan canciones. Añade otra con /play.'}`; break;
   }
-  return new EmbedBuilder().setColor(color as `#${string}`).setDescription(text).setFooter({ text: `${status.code} · ${source}`.slice(0, 2048) });
+  const state = getPlaybackState(status.queue);
+  if (stageBlocked(status)) text = `🛑 **Cola pausada por fallos**\n${title}\n${musicErrorTitle({ errorCode: status.code })}.\nUsa Reintentar en el reproductor o /resume. Las canciones pendientes se conservan.`;
+  return new EmbedBuilder().setColor(color as `#${string}`).setDescription(text).setFooter({ text: `${status.code} · ${source}${state?.lastError ? ` · Ref. ${state.lastError.reference}` : ''}`.slice(0, 2048) });
 }
+
+function stageBlocked(status: RecoveryStatus): boolean { return status.stage === 'failed' && Boolean(getPlaybackState(status.queue)?.blocked); }
 
 /** One small, serialized message per recovery; Discord failures do not affect audio. */
 export class RecoveryNotices {

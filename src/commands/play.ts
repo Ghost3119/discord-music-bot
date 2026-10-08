@@ -1,12 +1,13 @@
-import { GuildTextBasedChannel, SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
+import { ButtonInteraction, ChatInputCommandInteraction, GuildTextBasedChannel, SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { DisTubeError, isURL, PlayOptions, Song } from 'distube';
 import { Command } from './command.types';
 import { resolveAppleMusic } from '../utils/appleMusic';
 import { PlaybackMetadata, SearchSource, YtDlpSearchPlugin } from '../music/ytDlpSearchPlugin';
 import { describeMusicError } from '../music/errors';
-import { ensureGuild } from '../utils/guard';
+import { ensureControlChannel, ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
 import { fetchSearchSuggestions } from '../utils/suggestions';
+import { getPlaybackState } from '../music/playbackState';
 
 function isGuildTextChannel(channel: unknown): channel is GuildTextBasedChannel {
   if (typeof channel !== 'object' || channel === null) return false;
@@ -56,6 +57,11 @@ export const play: Command = {
   },
 
   async execute(interaction) {
+    await playRequest(interaction, interaction.options.getString('query', true), parseSearchSource(interaction.options.getString('fuente')));
+  },
+};
+
+export async function playRequest(interaction: ChatInputCommandInteraction | ButtonInteraction, rawQuery: string, searchSource: SearchSource, privateReply = false): Promise<void> {
     const guild = await ensureGuild(interaction);
     if (!guild) return;
 
@@ -91,10 +97,11 @@ export const play: Command = {
       return;
     }
 
-    await interaction.deferReply();
-
-    const rawQuery = interaction.options.getString('query', true);
-    const searchSource = parseSearchSource(interaction.options.getString('fuente'));
+    const distube = interaction.client.distube;
+    const initialQueue = distube.getQueue(guild.id);
+    if (initialQueue && !await ensureControlChannel(interaction, initialQueue)) return;
+    const revision = initialQueue ? getPlaybackState(initialQueue)?.revision : undefined;
+    if (!interaction.deferred && !interaction.replied) await interaction.deferReply(privateReply ? { flags: MessageFlags.Ephemeral } : {});
 
     try {
       const resolved = await resolveAppleMusic(rawQuery);
@@ -109,7 +116,6 @@ export const play: Command = {
         ],
       });
 
-      const distube = interaction.client.distube;
       const playOptions: PlayOptions<PlaybackMetadata> = {
         member: member!,
         metadata: { searchSource },
@@ -131,6 +137,11 @@ export const play: Command = {
         input = song;
       }
 
+      if (distube.getQueue(guild.id) !== initialQueue || initialQueue?.stopped || (initialQueue && getPlaybackState(initialQueue)?.closing) ||
+        (initialQueue && getPlaybackState(initialQueue)?.revision !== revision) || member?.voice.channel?.id !== voiceChannel.id) {
+        await interaction.editReply({ content: 'La sesión, la cola o tu canal de voz cambió mientras buscaba. Vuelve a intentarlo.', embeds: [], components: [] });
+        return;
+      }
       await distube.play<PlaybackMetadata>(voiceChannel, input, playOptions);
     } catch (error: unknown) {
       console.error('Error en /play:', error);
@@ -150,5 +161,4 @@ export const play: Command = {
         await interaction.reply({ ...content, flags: MessageFlags.Ephemeral });
       }
     }
-  },
-};
+}

@@ -65,4 +65,9 @@ function supervise(options = {}) {
 }
 
 module.exports = { supervise };
-if (require.main === module) supervise();
+if (require.main === module) {
+  require('dotenv/config');
+  const logs = require('./logger.cjs').installConsole({ name: 'supervisor' });
+  process.once('beforeExit', () => { void logs.close(); });
+  supervise();
+}

@@ -7,12 +7,15 @@ import { registerDisTubeEvents } from './music/events';
 import { guardedEvent } from './runtime/safety';
 import { QueueRecovery } from './music/queueRecovery';
 import { registerEmptyVoice } from './music/emptyVoice';
+import { HistoryStore } from './music/history';
+import { resolve } from 'node:path';
 
 export const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 client.distube = createDisTube(client);
-export const stopPlayerPanels = registerDisTubeEvents(client.distube);
+export const history = new HistoryStore(resolve('data/history.json'));
+export const stopPlayerPanels = registerDisTubeEvents(client.distube, history);
 export const stopEmptyVoice = registerEmptyVoice(client, client.distube);
 export const queueRecovery = new QueueRecovery(client, client.distube);
 

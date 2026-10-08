@@ -14,7 +14,7 @@ function makeInteraction(plugin, query = 'la mafia del amor multiorgasmica', mis
   const interaction = {
     guild: { id: 'guild-1', members: { cache: new Map([['user-1', member]]) } },
     user: { id: 'user-1' },
-    client: { user: { id: 'bot-1' }, distube: { plugins: [plugin], play: async (...args) => { played.push(args); } } },
+    client: { user: { id: 'bot-1' }, distube: { getQueue: () => undefined, plugins: [plugin], play: async (...args) => { played.push(args); } } },
     options: { getString: (key) => key === 'query' ? query : 'youtube' },
     deferred: false,
     deferReply: async () => { interaction.deferred = true; },

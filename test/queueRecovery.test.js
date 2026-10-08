@@ -7,6 +7,8 @@ const os = require('node:os');
 const { Collection, ChannelType } = require('discord.js');
 const { Song } = require('distube');
 const { QueueRecovery } = require('../dist/music/queueRecovery');
+const { registerDisTubeEvents } = require('../dist/music/events');
+const { getPlaybackState } = require('../dist/music/playbackState');
 
 const guildId = '1082065100111872170';
 const voiceId = '1082065100569059471';
@@ -79,6 +81,42 @@ test('manually stopped queues are removed from the recovery file', (t) => {
   distube.emit('playSong', queue, queue.songs[0]);
   distube.emit('deleteQueue', queue);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), []);
+});
+
+test('blocked checkpoints restore pending songs without requesting a stream or starting radio', async t => {
+  t.mock.method(console, 'log', () => {});
+  const file = workspace(t), original = distubeMock(), queue = makeQueue();
+  original.queues.collection.set(guildId, queue);
+  const store = new QueueRecovery({}, original, file); store.stop();
+  const data = JSON.parse(fs.readFileSync(file, 'utf8')); data[0].blocked = true;
+  fs.writeFileSync(file, JSON.stringify(data));
+  const distube = distubeMock(); let started = 0;
+  distube.queues.playSong = async () => { started++; };
+  const dispose = registerDisTubeEvents(distube, undefined, { interval: 0 }); t.after(dispose);
+  const voice = { id: voiceId, guildId, type: ChannelType.GuildVoice, joinable: true, speakable: true,
+    members: new Collection([['user', { user: { bot: false } }]]) };
+  distube.play = async (_voice, playlist) => {
+    const restored = { ...makeQueue(), songs: playlist.songs, paused: false, voice: { play: async () => {}, pause() {} },
+      textChannel: { id: textId, send: async () => ({ id: 'panel', edit: async () => {} }) } };
+    restored.play = () => distube.queues.playSong(restored);
+    distube.queues.collection.set(guildId, restored);
+    distube.emit('initQueue', restored);
+    await restored.play();
+  };
+  const restoredStore = new QueueRecovery({ channels: { fetch: async id => id === voiceId ? voice : null } }, distube, file);
+  t.after(() => restoredStore.stop()); await restoredStore.restore();
+  const restored = distube.getQueue(guildId);
+  assert.equal(started, 0); assert.equal(getPlaybackState(restored).blocked, true); assert.equal(restored.paused, true);
+  assert.deepEqual(restored.songs.map(song => song.id), ['AAAAAAAAAAA', 'BBBBBBBBBBB']);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8'))[0].blocked, true);
+});
+
+test('late deletion of an old queue cannot erase its successor checkpoint', t => {
+  const file = workspace(t), distube = distubeMock(), old = makeQueue(), current = makeQueue();
+  current.songs = [makeSong('CCCCCCCCCCC')]; distube.queues.collection.set(guildId, current);
+  const store = new QueueRecovery({}, distube, file); t.after(() => store.stop());
+  distube.emit('playSong', current, current.songs[0]); distube.emit('deleteQueue', old);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8'))[0].songs[0].id, 'CCCCCCCCCCC');
 });
 
 test('a new process restores the queue, position, pause, repeat and volume', async (t) => {

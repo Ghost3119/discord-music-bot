@@ -3,11 +3,37 @@ import { ButtonId, createQueueButtons, createQueueEmbed } from '../utils/embed';
 import { BotColors } from '../utils/colors';
 import { describeMusicError } from '../music/errors';
 import { getPlayerPanels } from '../music/playerPanel';
+import { getPlaybackHealth } from '../music/playbackHealth';
+import { historyView } from '../music/historyView';
+import { playRequest } from '../commands/play';
+import { checkpointQueue } from '../music/queueChanges';
+import { ensureControlChannel } from '../utils/guard';
 
 export async function handleButton(interaction: ButtonInteraction) {
   if (!interaction.guild) return;
 
   const distube = interaction.client.distube;
+  const historyMatch = /^hist_(page|retry):(\d{15,22}):([a-f0-9]{16}|\d{1,3})$/.exec(interaction.customId);
+  if (historyMatch) {
+    const history = getPlaybackHealth(distube)?.history;
+    if (!history || historyMatch[2] !== interaction.guild.id) {
+      await interaction.reply({ content: 'Este historial no está disponible para este servidor.', flags: MessageFlags.Ephemeral }); return;
+    }
+    if (historyMatch[1] === 'page') {
+      await interaction.deferUpdate();
+      await interaction.editReply(historyView(history, interaction.guild.id, Number(historyMatch[3])));
+    } else {
+      const current = distube.getQueue(interaction.guild.id);
+      if (current && !await ensureControlChannel(interaction, current)) return;
+      if (!interaction.guild.members.cache.get(interaction.user.id)?.voice.channel) {
+        await interaction.reply({ content: 'Debes estar en un canal de voz para volver a intentarlo.', flags: MessageFlags.Ephemeral }); return;
+      }
+      const entry = history.claim(interaction.guild.id, historyMatch[3]!);
+      if (!entry?.url) { await interaction.reply({ content: 'La entrada venció o ya se intentó hace menos de 30 segundos.', flags: MessageFlags.Ephemeral }); return; }
+      await playRequest(interaction, entry.url, entry.searchSource, true);
+    }
+    return;
+  }
   const queue = distube.getQueue(interaction.guild.id);
   const panels = getPlayerPanels(distube);
   const pageMatch = /^queue_page:([a-f0-9]{16}):(\d{1,6})$/.exec(interaction.customId);
@@ -54,6 +80,18 @@ export async function handleButton(interaction: ButtonInteraction) {
   }
 
   switch (interaction.customId) {
+    case ButtonId.History: {
+      const history = getPlaybackHealth(distube)?.history;
+      if (history) await interaction.editReply(historyView(history, interaction.guild.id));
+      else await interaction.editReply({ content: 'El historial todavía no está disponible.' });
+      break;
+    }
+    case ButtonId.Retry: {
+      await getPlaybackHealth(distube)?.retryBlocked(queue);
+      checkpointQueue(distube, queue); await panels.refresh(queue);
+      await interaction.editReply({ content: '🔄 Iniciada una prueba de recuperación de la cola.' });
+      break;
+    }
     case ButtonId.PauseResume: {
       if (queue.paused) {
         await queue.resume();

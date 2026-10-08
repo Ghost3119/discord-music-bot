@@ -1,27 +1,32 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, escapeMarkdown } from 'discord.js';
 import { Queue, RepeatMode, Song } from 'distube';
 import { BotColors } from './colors';
+import { getPlaybackState, playbackLabel } from '../music/playbackState';
 
 export enum ButtonId {
   PauseResume = 'btn_pause_resume',
   Skip = 'btn_skip',
   Stop = 'btn_stop',
   Queue = 'btn_queue',
+  History = 'btn_history',
+  Retry = 'btn_retry',
 }
 
-export function createPlayerButtons(paused = false, disabled = false, skipDisabled = false): ActionRowBuilder<ButtonBuilder> {
+export function createPlayerButtons(paused = false, disabled = false, skipDisabled = false, blocked = false): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(ButtonId.PauseResume)
-      .setEmoji(paused ? '▶️' : '⏸️')
-      .setLabel(paused ? 'Reanudar' : 'Pausar')
+      .setCustomId(blocked ? ButtonId.Retry : ButtonId.PauseResume)
+      .setEmoji(blocked ? '🔄' : paused ? '▶️' : '⏸️')
+      .setLabel(blocked ? 'Reintentar' : paused ? 'Reanudar' : 'Pausar')
       .setStyle(ButtonStyle.Primary).setDisabled(disabled),
     new ButtonBuilder().setCustomId(ButtonId.Skip).setEmoji('⏭️').setLabel('Siguiente')
-      .setStyle(ButtonStyle.Secondary).setDisabled(disabled || skipDisabled),
+      .setStyle(ButtonStyle.Secondary).setDisabled(disabled || skipDisabled || blocked),
     new ButtonBuilder().setCustomId(ButtonId.Queue).setEmoji('📋').setLabel('Cola')
       .setStyle(ButtonStyle.Secondary).setDisabled(disabled),
     new ButtonBuilder().setCustomId(ButtonId.Stop).setEmoji('⏹️').setLabel('Detener')
       .setStyle(ButtonStyle.Danger).setDisabled(disabled),
+    new ButtonBuilder().setCustomId(ButtonId.History).setEmoji('🕘').setLabel('Historial')
+      .setStyle(ButtonStyle.Secondary).setDisabled(disabled),
   );
 }
 
@@ -46,6 +51,8 @@ export function formatDuration(ms: number): string {
 }
 
 interface PlayerDetails {
+  status?: string | undefined;
+  remaining?: string | undefined;
   paused?: boolean;
   volume?: number;
   nextSong?: Song | undefined;
@@ -63,7 +70,7 @@ function httpUrl(value: string | undefined): string | null {
 }
 
 export function createNowPlayingEmbed(song: Song, currentMs = 0, details: PlayerDetails = {}): EmbedBuilder {
-  const status = details.ended ?? (details.paused ? '⏸ En pausa' : '▶ Reproduciendo');
+  const status = details.ended ?? details.status ?? (details.paused ? '⏸ En pausa' : '▶ Reproduciendo');
   const audioSource = (song.stream.playFromSource ? song.source : song.stream.song?.source) ?? song.source;
   const source = ({ youtube: 'YouTube', soundcloud: 'SoundCloud', spotify: 'Spotify', apple_music: 'Apple Music' } as Record<string, string>)[audioSource] ?? audioSource;
   const repeat = details.repeatMode === RepeatMode.SONG ? ' · Repetir canción' : details.repeatMode === RepeatMode.QUEUE ? ' · Repetir cola' : '';
@@ -80,6 +87,7 @@ export function createNowPlayingEmbed(song: Song, currentMs = 0, details: Player
     .setURL(httpUrl(song.url))
     .setFooter({ text: `${source} · ${details.ended ? 0 : details.queued ?? 0} en espera · Radio ${details.autoplay ? 'activada' : 'desactivada'}${repeat}`.slice(0, 2048) });
   if (!details.ended) {
+    if (details.remaining) embed.addFields({ name: 'Tiempo restante de la cola actual', value: details.remaining });
     embed.addFields({ name: 'A continuación', value: details.nextSong
       ? `${escapeMarkdown((details.nextSong.name || 'Canción sin título').slice(0, 180))} · \`${details.nextSong.formattedDuration}\``
       : details.autoplay ? 'Buscaré una canción relacionada al terminar.' : 'No hay canciones en espera.' });
@@ -95,6 +103,27 @@ export function createAddQueueEmbed(song: Song): EmbedBuilder {
 }
 
 export const QUEUE_PAGE_SIZE = 10;
+
+export function queueEstimates(queue: Queue): (number | null)[] {
+  const state = getPlaybackState(queue);
+  const unavailable = state && ['preparing', 'recovering', 'alternative', 'blocked', 'disconnected'].includes(state.mode);
+  let seconds: number | null = unavailable || queue.repeatMode === RepeatMode.SONG ? null : 0;
+  return queue.songs.map((song, index) => {
+    const start = seconds;
+    if (!song.duration || !Number.isFinite(song.duration) || song.isLive) seconds = null;
+    else if (seconds !== null) seconds += index === 0 ? Math.max(0, song.duration - (Number.isFinite(queue.currentTime) ? queue.currentTime : 0)) : song.duration;
+    return start;
+  });
+}
+
+export function queueRemaining(queue: Queue): string {
+  if (queue.repeatMode === RepeatMode.SONG) return 'Repetición de canción · sin estimación';
+  const state = getPlaybackState(queue);
+  if (state && ['preparing', 'recovering', 'alternative', 'blocked', 'disconnected'].includes(state.mode)) return 'Estimación no disponible';
+  if (queue.songs.some(song => !song.duration || !Number.isFinite(song.duration) || song.isLive)) return 'Duración desconocida o emisión en vivo';
+  const seconds = queue.songs.reduce((sum, song, index) => sum + (index ? song.duration : Math.max(0, song.duration - (queue.currentTime || 0))), 0);
+  return `≈ ${formatDuration(seconds * 1000)}${queue.paused ? ' desde la reanudación' : ''}${queue.repeatMode === RepeatMode.QUEUE ? ' · ciclo actual' : ''}`;
+}
 
 export function queuePage(queue: Queue, requested = 0): { page: number; pages: number } {
   const pages = Math.max(1, Math.ceil(Math.max(0, queue.songs.length - 1) / QUEUE_PAGE_SIZE));
@@ -128,8 +157,10 @@ export function createQueueEmbed(queue: Queue, requested = 0): EmbedBuilder {
   const { page, pages } = queuePage(queue, requested);
   const offset = 1 + page * QUEUE_PAGE_SIZE;
   const upcoming = songs.slice(offset, offset + QUEUE_PAGE_SIZE);
+  const estimates = queueEstimates(queue);
   const description = upcoming
-    .map((song, i) => `${offset + i}. **${escapeMarkdown((song.name || 'Canción sin título').slice(0, 150))}** — \`${song.formattedDuration}\``)
+    .map((song, i) => `${offset + i}. **${escapeMarkdown((song.name || 'Canción sin título').slice(0, 150))}** — \`${song.formattedDuration}\`\n` +
+      (estimates[offset + i] == null ? 'Inicio sin estimación' : `≈ ${formatDuration(estimates[offset + i]! * 1000)} ${queue.paused ? 'al reanudar' : 'para empezar'}`))
     .join('\n');
   const remainingTime = songs.slice(1).reduce((total, song) => total + (Number.isFinite(song.duration) ? song.duration : 0), 0);
   const remaining = songs.slice(1).some((song) => song.isLive) ? 'Incluye emisiones en vivo' : `${formatDuration(remainingTime * 1000)} en espera`;
@@ -138,7 +169,7 @@ export function createQueueEmbed(queue: Queue, requested = 0): EmbedBuilder {
     .setColor(BotColors.Info)
     .setTitle('🎵 Cola de Reproducción')
     .setDescription(
-      `**${queue.paused ? 'En pausa' : 'Reproduciendo'}:** ${escapeMarkdown((nowPlaying.name || 'Canción sin título').slice(0, 150))} — \`${nowPlaying.formattedDuration}\`\n\n${description || '_No hay canciones en espera._'}`,
+      `**${playbackLabel(queue)}:** ${escapeMarkdown((nowPlaying.name || 'Canción sin título').slice(0, 150))} — \`${nowPlaying.formattedDuration}\`\n\n${description || '_No hay canciones en espera._'}`,
     )
     .setFooter({ text: `${songs.length - 1} en espera · ${remaining} · Página ${page + 1}/${pages}` });
 }

@@ -40,6 +40,17 @@ SPOTIFY_CLIENT_ID=id_de_tu_aplicacion_de_spotify
 SPOTIFY_CLIENT_SECRET=secreto_de_tu_aplicacion_de_spotify
 ```
 
+Opciones de operación (se aplican al siguiente arranque):
+
+```env
+AUDIO_WATCHDOG_ENABLED=true
+AUDIO_BREAKER_ENABLED=true
+LOG_MAX_BYTES=10485760
+LOG_BACKUPS=5
+```
+
+El detector y el freno se pueden desactivar por separado con `false`. Los logs admiten tamaños de 1 a 104857600 bytes y de 1 a 20 archivos anteriores por proceso; valores inválidos usan los valores predeterminados. El bot y el supervisor escriben en archivos separados.
+
 Sin ellas, el plugin intenta leer los datos públicos. Si no consigue un token, avisa que puede recuperar como máximo 100 canciones de una playlist o álbum. Las credenciales no garantizan acceso a listas privadas ni eliminan las restricciones de la API; el bot sigue buscando el audio en YouTube o SoundCloud. No publiques el archivo `.env`.
 
 ## Instalacion
@@ -101,15 +112,29 @@ Ejemplos:
 /volume valor:50
 /autoplay
 /recommend cantidad:5
+/estado
+/historial
+/shuffle
+/remove posicion:1
+/clear
+/move origen:3 destino:1
+/loop modo:off
+/seek segundos:90
 ```
 
-El reproductor muestra la portada grande cuando está disponible, progreso, volumen, fuente de audio y siguiente canción. Usa botones con texto para pausar/reanudar, saltar, ver la cola y detener.
+El reproductor muestra la portada grande cuando está disponible, progreso, volumen, fuente de audio, estado y siguiente canción. Usa botones con texto para pausar/reanudar, saltar, ver la cola, detener y abrir el historial. Cuando la cola queda bloqueada por fallos, aparece Reintentar y se deshabilita Siguiente.
 
 - Cada sesión mantiene un solo panel y lo edita al cambiar la canción o sus ajustes. El progreso se actualiza cada 20 segundos; no se repiten ediciones si el contenido sigue igual, por ejemplo durante una pausa.
 - `/nowplaying` responde solo al usuario con un enlace al panel actual. Si el mensaje fue eliminado, intenta recrearlo; si no puede publicarlo, muestra una vista sin controles.
-- `/queue` y el botón Cola muestran una lista privada, con páginas de diez canciones, posiciones y duración de las canciones en espera. Los botones de las páginas caducan cuando termina su sesión.
+- `/queue` y el botón Cola muestran una lista privada, con páginas de diez canciones, posiciones, duración e inicio aproximado de cada canción. Con pausa, la espera se mide desde la reanudación. No se estima durante una recuperación, una repetición de canción ni después de audio de duración desconocida o en vivo. La repetición de cola muestra el ciclo actual; la radio no incluye canciones futuras.
 - Al detenerse o terminar la cola, el panel queda marcado como finalizado y sus controles se desactivan. Los controles de mensajes anteriores al reinicio también se rechazan y se retiran al pulsarlos.
 - Los cambios del panel se realizan en orden. Los fallos de Discord se registran sin detener el audio y dejan una espera de un minuto antes de volver a intentarlo; solo un mensaje confirmado como eliminado permite crear un reemplazo.
+
+Los comandos que alteran la música y los controles del reproductor requieren estar en el canal de voz del bot. `/clear` retira únicamente las pendientes y conserva la canción actual; si la radio está activada seguirá buscando canciones. `/remove` y `/move` usan la numeración de `/queue`: la primera pendiente es la 1. Los cambios se ordenan con las demás operaciones de la cola y se guardan. Una recomendación o búsqueda terminada después de un cambio de sesión o de cola se descarta.
+
+`/estado` responde en privado con conexión, tiempo activo, voz, fuente real, recuperación, racha de fallos, último avance de audio y último código con referencia. Consulta el estado local y funciona sin cola.
+
+`/historial` muestra en privado canciones completadas, saltadas y fallidas, con fecha, fuente real y referencia de error. Guarda una entrada final por solicitud, incluyendo su versión alternativa, en `data/history.json`: hasta 100 por servidor durante siete días, 2000 en total y 2.5 MB. Un archivo dañado o un fallo de disco no detiene la música. Volver a intentar añade una nueva solicitud con audio fresco; requiere un enlace público de origen reconocido y estar en el canal del bot, o en un canal de voz si todavía no hay cola. Dos clics sobre la misma entrada se limitan a un reintento cada 30 segundos.
 
 `/autoplay` alterna la radio para la cola actual: al terminar, intenta añadir otra canción del YouTube Mix. `/recommend` añade de 1 a 20 sugerencias (5 por defecto) usando la canción actual y, si hace falta, la última de la cola. Evita repetir canciones que ya están en cola o en el historial reciente. Ambos dependen de que YouTube Mix esté disponible; no garantizan música infinita.
 
@@ -148,29 +173,32 @@ Este comando no vigila los archivos ni recarga cambios: compilar mientras está 
 - Los fallos temporales de red o HTTP 5xx tienen como máximo dos reintentos con espera. No se insiste en contenido privado, eliminado o restringido, ni en HTTP 429. Los bloqueos 403/429 ponen esa fuente en pausa por un minuto y permiten probar otra.
 - Cada intento de yt-dlp tiene 20 segundos de límite; una operación tiene 60 segundos y una búsqueda completa 90 segundos. Los procesos agotados se cancelan. Hay un máximo de tres extracciones simultáneas y 50 consultas esperando. Las playlists extraídas con yt-dlp se limitan a 500 entradas.
 - Si falla el stream por red, HTTP 403/5xx o un error del motor de audio, el bot invalida el enlace cacheado y reintenta hasta dos veces, intentando retomar cerca del punto de interrupción. Después busca una alternativa, empezando por otra plataforma y permitiendo otra subida de la misma plataforma. Esa búsqueda dura como máximo 45 segundos y consulta hasta seis candidatos completos. Excluye la subida que falló, compara título, artista cuando la entrada lo identifica y duración, y descarta covers, remixes u otras variantes que no se pidieron. Una alternativa comienza desde cero; si no existe o también falla, continúa con la siguiente canción o termina la cola vacía. No vuelve a iniciar otro ciclo de reintentos para esa alternativa.
+- El detector comprueba el avance del recurso de audio cada dos segundos. Ocho segundos sin avance del audio que ya había comenzado inician la recuperación existente (aproximadamente entre ocho y diez segundos según el sondeo). Una canción nueva o un seek tienen doce segundos de margen para el primer audio. Las pausas manuales, las desconexiones y las extracciones pendientes no disparan otra recuperación. Este plazo detecta el atasco; los reintentos pueden necesitar más tiempo.
+- Tres solicitudes fallidas dentro de cinco minutos bloquean el avance automático y la radio, conservando la canción fallida y las pendientes. Una canción completada o 30 segundos de audio continuo cortan la racha. Reintentar o `/resume` hacen una prueba con un presupuesto nuevo y limitado; si se agota, la cola vuelve a bloquearse. Detener sigue disponible. El bloqueo se guarda y se restaura antes de solicitar audio para evitar recorrer otra vez una playlist que está fallando.
 - Cada recuperación usa un aviso compacto: amarillo durante el intento, verde cuando el recurso de audio avanza y rojo si se agotan las opciones. Se edita el mismo mensaje. Si pasan 30 segundos sin audio, descontando las pausas, el aviso indica que la recuperación todavía no se confirmó. Los fallos al enviar o editar el aviso se capturan sin generar mensajes de reemplazo repetidos.
 - Siguiente y Detener cancelan la búsqueda pendiente antes de esperar el bloqueo interno de la cola. Un resultado tardío no reemplaza la siguiente canción ni revive una sesión terminada. Si Siguiente rechaza la operación después de cancelar la búsqueda, la canción fallida se retira para evitar dejarla bloqueada.
 - Los registros `[Recuperación]` incluyen servidor, canción, fuente, intento, código y resultado, además de la canción alternativa cuando se seleccionó. Los errores tardíos de streams cerrados mantienen un listener para no convertirse en errores no controlados.
 - La cola y su progreso se guardan en `data/queues.json` al cambiar canciones y cada diez segundos. Al reiniciar se recuperan hasta 500 canciones, volumen, repetición, radio y pausa, con una posición aproximada. No se guardan enlaces temporales de audio. Se descartan estados con más de 24 horas y solo se recuperan canales de voz accesibles que tengan personas conectadas. `/stop` elimina el estado de esa cola.
 - Un archivo de estado dañado o un fallo al escribirlo se registra sin interrumpir la reproducción. Conserva el directorio `data` entre despliegues para recuperar las colas. Si corres el bot en un contenedor, monta ese directorio en almacenamiento persistente.
-- Token, variables requeridas o intents inválidos detienen el supervisor con código 78: requieren corregir la configuración. Los registros completos salen por la consola; el servicio que lance el supervisor debe conservarlos.
+- Token, variables requeridas o intents inválidos detienen el supervisor con código 78: requieren corregir la configuración.
+- Los registros salen por consola y por `logs/bot.jsonl` y `logs/supervisor.jsonl`, con fecha y nivel. Los incidentes incluyen servidor, sesión, canción, código, intento y referencia para relacionarlos con `/estado` y el historial. Se ocultan enlaces, tokens y cabeceras sensibles. Por defecto se conservan 10 MiB por archivo y cinco anteriores por proceso (unos 120 MiB entre ambos). Las escrituras son asíncronas, con una cola limitada; si falla el disco, se conserva la consola y se espera un minuto antes de volver a escribir.
 
 El supervisor funciona mientras `npm run start` siga activo. Para arrancar después de reiniciar la máquina, configura ese comando en el servicio de tu entorno; en una PC, evita la suspensión mientras el bot deba estar disponible.
 
 yt-dlp ya no se descarga al arrancar: evita que una actualización o una descarga fallida bloquee el inicio. Actualízalo durante mantenimiento con `npm run update:ytdlp` y reinicia el bot después de verificarlo.
 
-## Mejoras recomendadas
+## Activación y vuelta a la versión anterior
+
+La implementación y las pruebas se pueden preparar mientras el bot está en uso. **No hay recarga automática** y los comandos nuevos requieren registro. La guía detallada está en [docs/OPERACION.md](docs/OPERACION.md); el alcance y la validación están en [docs/PLAN_MEJORAS.md](docs/PLAN_MEJORAS.md).
+
+Durante mantenimiento, guarda la versión anterior y una copia de `data`, ejecuta `npm test`, registra los comandos con `npm run deploy` y reinicia una sola instancia con `npm run start`. Comprueba `/estado`, reproducción, Cola, historial, Siguiente y Detener. Si necesitas volver atrás, usa la versión anterior y su copia de datos: una versión antigua no entiende el freno nuevo aunque pueda leer la cola. La prueba prolongada en un servidor de Discord sigue siendo una comprobación de activación; las simulaciones locales no la sustituyen.
+
+## Otras mejoras posibles
 
 Ideas buenas para seguir mejorando el bot:
 
-- `/shuffle`: mezclar la cola.
-- `/remove`: quitar una cancion por posicion.
-- `/clear`: limpiar la cola.
-- `/loop`: repetir cancion o cola.
-- `/seek`: saltar a un minuto/segundo especifico.
 - `/lyrics`: buscar letra de la cancion actual.
 - Filtros de audio como bass boost, nightcore o vaporwave.
-- Validar que el usuario este en el mismo canal de voz que el bot antes de controlar la musica.
 - Mejorar la resolucion de Spotify/Apple Music para reducir resultados incorrectos.
 - Guardar colas favoritas por servidor.
 

@@ -3,3 +3,4 @@ dist/
 .env
 cookies.json
 data/
+logs/

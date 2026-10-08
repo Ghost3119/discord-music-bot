@@ -2,7 +2,7 @@ import { Queue, Song } from 'distube';
 import { classifyMusicError } from './errors';
 import { YtDlpSearchPlugin } from './ytDlpSearchPlugin';
 
-const RECOVERABLE = new Set(['FFMPEG_EXITED', 'ERR_STREAM_PREMATURE_CLOSE', 'NETWORK_ERROR', 'NETWORK_TIMEOUT', 'SOURCE_UNAVAILABLE', 'SOURCE_BLOCKED']);
+const RECOVERABLE = new Set(['AUDIO_STALLED', 'FFMPEG_EXITED', 'ERR_STREAM_PREMATURE_CLOSE', 'NETWORK_ERROR', 'NETWORK_TIMEOUT', 'SOURCE_UNAVAILABLE', 'SOURCE_BLOCKED']);
 export type RecoveryStage = 'renew' | 'alternative' | 'recovered' | 'failed' | 'cancelled' | 'unconfirmed';
 export interface RecoveryStatus {
   queue: Queue;
@@ -109,6 +109,7 @@ export class PlaybackRecovery {
       queue._beginTime = 0;
       state.song = alternative;
       this.states.set(alternative, state);
+      this.publish(state, 'alternative');
       return true;
     } catch (error) {
       if (this.disposed || state.controller.signal.aborted || queue.stopped || queue.songs[0] !== song) { this.cancel(state); return false; }

@@ -3,6 +3,9 @@ import { dirname, resolve } from 'node:path';
 import { Client, ChannelType } from 'discord.js';
 import { DisTube, Events, Playlist, Queue, Song, SongInfo } from 'distube';
 import { guardedEvent } from '../runtime/safety';
+import { getPlaybackState } from './playbackState';
+import { getPlaybackHealth } from './playbackHealth';
+import { registerCheckpoint } from './queueChanges';
 
 interface SavedSong {
   id: string;
@@ -17,6 +20,7 @@ interface SavedSong {
 }
 
 interface SavedQueue {
+  blocked?: boolean;
   guildId: string;
   voiceChannelId: string;
   textChannelId?: string;
@@ -34,6 +38,7 @@ function isSavedQueue(value: unknown): value is SavedQueue {
   const queue = value as SavedQueue;
   const id = (value: unknown) => typeof value === 'string' && /^\d{15,22}$/.test(value);
   return id(queue.guildId) && id(queue.voiceChannelId) && (queue.textChannelId === undefined || id(queue.textChannelId)) &&
+    (queue.blocked === undefined || typeof queue.blocked === 'boolean') &&
     Number.isFinite(queue.position) && queue.position >= 0 && Number.isFinite(queue.volume) && queue.volume >= 0 && queue.volume <= 200 &&
     typeof queue.paused === 'boolean' && typeof queue.autoplay === 'boolean' && [0, 1, 2].includes(queue.repeatMode) &&
     Number.isFinite(queue.updatedAt) && Array.isArray(queue.songs) && queue.songs.length > 0 && queue.songs.length <= 500 &&
@@ -49,13 +54,16 @@ export class QueueRecovery {
   private readonly saved = new Map<string, SavedQueue>();
   private readonly restoring = new Set<string>();
   private suspended = false;
+  private readonly unregister: () => void;
   private readonly timer: ReturnType<typeof setInterval>;
 
   constructor(private readonly client: Client, private readonly distube: DisTube, private readonly path = resolve('data/queues.json')) {
+    this.unregister = registerCheckpoint(distube, queue => this.capture(queue));
     this.load();
     distube.on(Events.INIT_QUEUE, guardedEvent('Restaurar ajustes de la cola', (queue) => {
       const snapshot = this.restoring.has(queue.id) ? this.saved.get(queue.id) : undefined;
       if (!snapshot) return;
+      if (snapshot.blocked) getPlaybackHealth(distube)?.restoreBlocked(queue);
       queue.setVolume(snapshot.volume);
       queue.setRepeatMode(snapshot.repeatMode);
       if (snapshot.autoplay !== queue.autoplay) queue.toggleAutoplay();
@@ -65,6 +73,8 @@ export class QueueRecovery {
     }
     distube.on(Events.DELETE_QUEUE, guardedEvent('Eliminar cola guardada', (queue) => {
       if (this.suspended || this.restoring.has(queue.id)) return;
+      const current = distube.getQueue(queue.id);
+      if (current && current !== queue) return;
       this.saved.delete(queue.id);
       this.write();
     }));
@@ -110,6 +120,7 @@ export class QueueRecovery {
     if (!songs.length) return;
     this.saved.set(queue.id, {
       guildId: queue.id, voiceChannelId: queue.voiceChannel.id,
+      blocked: Boolean(getPlaybackState(queue)?.blocked),
       ...(queue.textChannel ? { textChannelId: queue.textChannel.id } : {}),
       songs, position: queue.currentTime, volume: queue.volume, paused: queue.paused,
       autoplay: queue.autoplay, repeatMode: queue.repeatMode, updatedAt: Date.now(),
@@ -122,6 +133,7 @@ export class QueueRecovery {
   }
 
   stop(): void {
+    this.unregister();
     clearInterval(this.timer);
     this.captureAll();
     // Discord teardown emits DELETE_QUEUE. Keep the checkpoint for the next boot.
@@ -166,8 +178,8 @@ export class QueueRecovery {
         queue.setVolume(snapshot.volume);
         queue.setRepeatMode(snapshot.repeatMode);
         if (snapshot.autoplay !== queue.autoplay) queue.toggleAutoplay();
-        if (queue.songs[0] === first && snapshot.position > 0 && first.duration > snapshot.position + 5) await queue.seek(snapshot.position);
-        if (snapshot.paused && !queue.paused) queue.pause();
+        if (!snapshot.blocked && queue.songs[0] === first && snapshot.position > 0 && first.duration > snapshot.position + 5) await queue.seek(snapshot.position);
+        if (snapshot.paused && !queue.paused) await queue.pause();
         console.log(`✅ Cola recuperada para ${snapshot.guildId}: ${queue.songs.length} canciones`);
       } catch (error) {
         console.error(`No se pudo recuperar la cola de ${snapshot.guildId}; el bot sigue disponible:`, error);

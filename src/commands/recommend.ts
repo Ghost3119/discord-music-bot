@@ -4,6 +4,7 @@ import { Command } from './command.types';
 import { ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
 import { YtDlpSearchPlugin } from '../music/ytDlpSearchPlugin';
+import { getPlaybackState } from '../music/playbackState';
 
 const MAX_RECOMMENDATIONS = 20;
 
@@ -61,6 +62,7 @@ export const recommend: Command = {
 
     const amount = interaction.options.getInteger('cantidad') ?? 5;
     await interaction.deferReply();
+    const revision = getPlaybackState(queue)?.revision;
 
     try {
       const seeds = [current, queue.songs[queue.songs.length - 1]]
@@ -77,9 +79,10 @@ export const recommend: Command = {
         if (selectRecommendations(candidates, [...queue.songs, ...queue.previousSongs], amount).length >= amount) break;
       }
 
-      if (interaction.client.distube.getQueue(guild.id) !== queue || queue.stopped) {
+      if (interaction.client.distube.getQueue(guild.id) !== queue || queue.stopped || getPlaybackState(queue)?.closing ||
+        getPlaybackState(queue)?.revision !== revision || member.voice.channel?.id !== queue.voiceChannel?.id) {
         await interaction.editReply({
-          embeds: [new EmbedBuilder().setColor(BotColors.Warning).setDescription('La cola terminó mientras buscaba recomendaciones.')],
+          embeds: [new EmbedBuilder().setColor(BotColors.Warning).setDescription('La cola terminó o cambió, o cambiaste de canal de voz mientras buscaba recomendaciones.')],
         });
         return;
       }

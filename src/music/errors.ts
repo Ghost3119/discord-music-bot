@@ -13,6 +13,26 @@ interface ErrorDescription {
 }
 
 const ERROR_DESCRIPTIONS: Record<string, ErrorDescription> = {
+  INVALID_QUEUE_POSITION: {
+    title: 'Posición de cola no válida', detail: 'La posición indicada ya no existe o corresponde a la canción actual.',
+    hint: 'Abre /queue y usa sus posiciones: la primera canción pendiente es la 1.',
+  },
+  SESSION_CHANGED: {
+    title: 'La sesión de música cambió', detail: 'La cola terminó o fue reemplazada mientras esperaba la acción.',
+    hint: 'Abre el reproductor actual con /nowplaying y vuelve a intentarlo.',
+  },
+  CONTROL_CHANNEL_REQUIRED: {
+    title: 'Debes estar en el canal de voz del bot', detail: 'Tu canal de voz cambió mientras esperaba la acción.',
+    hint: 'Entra al mismo canal de voz que el bot para controlar la música.',
+  },
+  QUEUE_BLOCKED: {
+    title: 'La cola está pausada por fallos', detail: 'Varias canciones agotaron su recuperación; las pendientes se conservan.',
+    hint: 'Usa Reintentar o /resume para hacer una prueba, o Detener para cerrar la sesión.',
+  },
+  AUDIO_STALLED: {
+    title: 'El audio dejó de avanzar', detail: 'No llegaron nuevos frames de audio dentro del tiempo permitido.',
+    hint: 'El bot intentará recuperar la fuente dentro del límite de reintentos.',
+  },
   MUSIC_BUSY: {
     title: 'El buscador está ocupado',
     detail: 'Hay demasiadas consultas de música pendientes.',

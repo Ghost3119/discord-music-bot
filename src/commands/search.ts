@@ -11,7 +11,8 @@ import {
 import { PlayOptions } from 'distube';
 import { Command } from './command.types';
 import { PlaybackMetadata, SearchSource } from '../music/ytDlpSearchPlugin';
-import { ensureGuild } from '../utils/guard';
+import { ensureControlChannel, ensureGuild } from '../utils/guard';
+import { getPlaybackState } from '../music/playbackState';
 import { BotColors } from '../utils/colors';
 import { formatDuration } from '../utils/embed';
 import { searchSongs } from '../utils/searchHelper';
@@ -101,6 +102,9 @@ export const search: Command = {
       return;
     }
 
+    const initialQueue = interaction.client.distube.getQueue?.(guild.id);
+    if (initialQueue && !await ensureControlChannel(interaction, initialQueue)) return;
+    const revision = initialQueue ? getPlaybackState(initialQueue)?.revision : undefined;
     await interaction.deferReply();
 
     const query = interaction.options.getString('query', true);
@@ -184,6 +188,11 @@ export const search: Command = {
       const selectedItem = results[selectedIndex] ?? results[0];
 
       if (!selectedItem) return;
+      if (interaction.client.distube.getQueue?.(guild.id) !== initialQueue || initialQueue?.stopped ||
+        (initialQueue && (getPlaybackState(initialQueue)?.revision !== revision || getPlaybackState(initialQueue)?.closing)) || member?.voice.channel?.id !== voiceChannel.id) {
+        await selectInteraction.update({ content: 'La cola o tu canal cambió. Vuelve a buscar para elegir una canción.', embeds: [], components: [] });
+        return;
+      }
 
       await selectInteraction.update({
         embeds: [

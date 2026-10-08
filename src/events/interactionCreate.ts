@@ -3,6 +3,8 @@ import { commands } from '../commands';
 import { describeMusicError } from '../music/errors';
 import { handleButton } from './buttonHandler';
 import { getPlayerPanels } from '../music/playerPanel';
+import { ensureControlChannel } from '../utils/guard';
+import { checkpointQueue } from '../music/queueChanges';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   try {
@@ -53,9 +55,12 @@ async function handleCommand(interaction: Interaction) {
   }
 
   try {
+    const controlled = new Set(['play', 'search', 'skip', 'stop', 'pause', 'resume', 'volume', 'shuffle', 'remove', 'clear', 'move', 'seek', 'loop', 'autoplay', 'recommend']);
+    const existing = interaction.guildId ? interaction.client.distube.getQueue(interaction.guildId) : undefined;
+    if (existing && controlled.has(interaction.commandName) && !await ensureControlChannel(interaction, existing)) return;
     await command.execute(interaction);
     const queue = interaction.guildId ? interaction.client.distube.getQueue(interaction.guildId) : undefined;
-    if (queue) await getPlayerPanels(interaction.client.distube)?.refresh(queue);
+    if (queue) { checkpointQueue(interaction.client.distube, queue); await getPlayerPanels(interaction.client.distube)?.refresh(queue); }
   } catch (error) {
     console.error(`Error ejecutando /${interaction.commandName}:`, error);
 
@@ -64,7 +69,9 @@ async function handleCommand(interaction: Interaction) {
       flags: MessageFlags.Ephemeral,
     };
 
-    if (interaction.replied || interaction.deferred) {
+    if (interaction.deferred && !interaction.replied) {
+      await interaction.editReply({ content: describeMusicError(error), embeds: [], components: [], allowedMentions: { parse: [] } }).catch(() => {});
+    } else if (interaction.replied) {
       await interaction.followUp(reply).catch(() => {});
     } else {
       await interaction.reply(reply).catch(() => {});

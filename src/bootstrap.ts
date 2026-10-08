@@ -1,6 +1,9 @@
+import 'dotenv/config';
 import { guardedEvent, installProcessHandlers } from './runtime/safety';
+import { installLogs } from './runtime/logger';
+const logs = installLogs();
 
-let stopBot: (() => void) | undefined;
+let stopBot: (() => Promise<void>) | undefined;
 let stopping = false;
 function shutdown(code: number): void {
   if (stopping) {
@@ -10,12 +13,8 @@ function shutdown(code: number): void {
   stopping = true;
   // Shutdown cannot wait indefinitely for Discord or another dependency.
   setTimeout(() => process.exit(code), 5_000).unref();
-  try {
-    stopBot?.();
-  } catch (error) {
-    console.error('Error durante el cierre:', error);
-  }
-  process.exit(code);
+  void Promise.resolve().then(() => stopBot?.()).catch(error => console.error('Error durante el cierre:', error))
+    .finally(() => { void logs.close().finally(() => process.exit(code)); });
 }
 
 installProcessHandlers(shutdown);
@@ -32,12 +31,12 @@ const heartbeat = setInterval(() => {
 }, 10_000);
 heartbeat.unref();
 
-void import('./index').then(({ client, queueRecovery, startBot, stopEmptyVoice, stopPlayerPanels }) => {
-  stopBot = () => {
+void import('./index').then(({ client, queueRecovery, startBot, stopEmptyVoice, stopPlayerPanels, history }) => {
+  stopBot = async () => {
     stopEmptyVoice();
     stopPlayerPanels();
     queueRecovery.stop();
-    void client.destroy().catch((error: unknown) => console.error('Error al cerrar Discord:', error));
+    await Promise.allSettled([history.flush(), client.destroy()]);
   };
   return startBot();
 }).catch(guardedEvent('Inicio del bot', (error: unknown) => {

@@ -13,5 +13,7 @@ import { remove } from './remove';
 import { search } from './search';
 import { autoplay } from './autoplay';
 import { recommend } from './recommend';
+import { clear, move } from './queueManagement';
+import { estado, historial } from './diagnostics';
 
-export const commands = [play, skip, stop, queue, nowplaying, pause, resume, volume, shuffle, loop, seek, remove, search, autoplay, recommend];
+export const commands = [play, skip, stop, queue, nowplaying, pause, resume, volume, shuffle, loop, seek, remove, search, autoplay, recommend, clear, move, estado, historial];

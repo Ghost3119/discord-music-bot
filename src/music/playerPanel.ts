@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { Message, MessageCreateOptions } from 'discord.js';
 import { DisTube, Queue, Song } from 'distube';
-import { createNowPlayingEmbed, createPlayerButtons } from '../utils/embed';
+import { createNowPlayingEmbed, createPlayerButtons, queueRemaining } from '../utils/embed';
+import { getPlaybackState, playbackLabel } from './playbackState';
 
 interface Panel {
   queue: Queue;
@@ -99,17 +100,19 @@ export class PlayerPanels {
     if (panel.running) return panel.pending;
     panel.running = true;
     panel.pending = panel.pending.then(async () => {
-      // Coalesce updates while a Discord request is pending; never overlap message writes.
-      while (panel.dirty && !this.disposed) {
-        panel.dirty = false;
-        try {
-          await this.write(panel);
-        } catch (error) {
-          panel.retryAt = Date.now() + 60_000;
-          console.error('[Panel de reproducción]', error);
+      try {
+        // Coalesce updates while a Discord request is pending; never overlap message writes.
+        while (panel.dirty && !this.disposed) {
+          panel.dirty = false;
+          try {
+            await this.write(panel);
+          } catch (error) {
+            panel.retryAt = Date.now() + 60_000;
+            console.error('[Panel de reproducción]', error);
+          }
         }
-      }
-    }).finally(() => { panel.running = false; });
+      } finally { panel.running = false; }
+    });
     return panel.pending;
   }
 
@@ -122,9 +125,10 @@ export class PlayerPanels {
     const payload = {
       embeds: [createNowPlayingEmbed(panel.song, ended ? 0 : (queue.currentTime || 0) * 1000, {
         paused: queue.paused, volume: queue.volume, nextSong: queue.songs[1],
+        status: playbackLabel(queue), remaining: queueRemaining(queue),
         queued: Math.max(0, queue.songs.length - 1), autoplay: queue.autoplay, repeatMode: queue.repeatMode, ended,
       })],
-      components: [createPlayerButtons(queue.paused, Boolean(ended), queue.songs.length < 2 && !queue.autoplay)],
+      components: [createPlayerButtons(queue.paused, Boolean(ended), queue.songs.length < 2 && !queue.autoplay, Boolean(getPlaybackState(queue)?.blocked))],
       allowedMentions: { parse: [] },
     } satisfies MessageCreateOptions;
     const fingerprint = JSON.stringify(payload);
