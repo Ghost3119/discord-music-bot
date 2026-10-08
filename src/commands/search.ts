@@ -16,6 +16,7 @@ import { BotColors } from '../utils/colors';
 import { formatDuration } from '../utils/embed';
 import { searchSongs } from '../utils/searchHelper';
 import { fetchSearchSuggestions } from '../utils/suggestions';
+import { describeMusicError } from '../music/errors';
 
 function isGuildTextChannel(channel: unknown): channel is GuildTextBasedChannel {
   if (typeof channel !== 'object' || channel === null) return false;
@@ -82,12 +83,18 @@ export const search: Command = {
     }
 
     const permissions = voiceChannel.permissionsFor(interaction.client.user!.id);
-    if (!permissions?.has(['ViewChannel', 'Connect', 'Speak'])) {
+    const missingPermissions = [
+      { flag: 'ViewChannel', label: 'Ver canal' },
+      { flag: 'Connect', label: 'Conectar' },
+      { flag: 'Speak', label: 'Hablar' },
+    ] as const;
+    const missing = missingPermissions.filter(({ flag }) => !permissions?.has(flag));
+    if (missing.length > 0) {
       await interaction.reply({
         embeds: [
           new EmbedBuilder()
             .setColor(BotColors.Error)
-            .setDescription('❌ No tengo permisos para unirme o hablar en ese canal.'),
+            .setDescription(`❌ **Faltan permisos en el canal de voz:** ${missing.map(({ label }) => label).join(', ')}.\n💡 Revisa el rol del bot y las excepciones de ese canal.`),
         ],
         flags: MessageFlags.Ephemeral,
       });
@@ -107,14 +114,23 @@ export const search: Command = {
       ],
     });
 
-    const results = await searchSongs(query, 5, source);
+    let results: Awaited<ReturnType<typeof searchSongs>>;
+    try {
+      results = await searchSongs(query, 5, source);
+    } catch (error) {
+      console.error('Error buscando canciones en /search:', error);
+      await interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription(describeMusicError(error, { source }))],
+      });
+      return;
+    }
 
     if (results.length === 0) {
       await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(BotColors.Error)
-            .setDescription(`❌ No se encontraron resultados para **${query}**.`),
+            .setDescription(describeMusicError({ errorCode: 'CANNOT_RESOLVE_SONG' }, { source })),
         ],
       });
       return;
@@ -192,21 +208,11 @@ export const search: Command = {
         await distube.play<PlaybackMetadata>(voiceChannel, selectedItem.url, playOptions);
       } catch (playError: unknown) {
         console.error('Error reproduciendo selección en /search:', playError);
-        const isVoiceTimeout =
-          typeof playError === 'object' &&
-          playError !== null &&
-          'errorCode' in playError &&
-          (playError as { errorCode?: string }).errorCode === 'VOICE_CONNECT_FAILED';
-
         await interaction.followUp({
           embeds: [
             new EmbedBuilder()
               .setColor(BotColors.Error)
-              .setDescription(
-                isVoiceTimeout
-                  ? '❌ **No se pudo conectar al canal de voz (tiempo agotado).**\n💡 Cambia la **Anulación de región (Region Override)** del canal de voz a otra región.'
-                  : '❌ Error al intentar reproducir la canción seleccionada.',
-              ),
+              .setDescription(describeMusicError(playError, { source, songName: selectedItem.title })),
           ],
           flags: MessageFlags.Ephemeral,
         }).catch(() => {});

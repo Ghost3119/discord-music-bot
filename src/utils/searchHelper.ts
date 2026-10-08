@@ -39,43 +39,38 @@ export async function searchSongs(
   const prefix = source === 'soundcloud' ? `scsearch${limit}:` : `ytsearch${limit}:`;
   const searchQuery = `${prefix}${trimmed}`;
 
-  try {
-    const raw = (await json(searchQuery, {
-      dumpSingleJson: true,
-      noWarnings: true,
-      flatPlaylist: true,
-      skipDownload: true,
-      simulate: true,
-    })) as RawSearchOutput;
+  const raw = (await json(searchQuery, {
+    dumpSingleJson: true,
+    noWarnings: true,
+    flatPlaylist: true,
+    skipDownload: true,
+    simulate: true,
+  })) as RawSearchOutput;
 
-    if (!raw) return [];
+  if (!raw) return [];
 
-    const entries: RawEntry[] = Array.isArray(raw.entries)
-      ? raw.entries
-      : raw.title && (raw.webpage_url || raw.url)
-        ? [raw]
-        : [];
+  const entries: RawEntry[] = Array.isArray(raw.entries)
+    ? raw.entries
+    : raw.title && (raw.webpage_url || raw.url)
+      ? [raw]
+      : [];
 
-    return entries
-      .filter((entry): entry is RawEntry & { title: string } => {
-        return typeof entry.title === 'string' && entry.title.trim().length > 0 && !!(entry.webpage_url || entry.url);
-      })
-      .slice(0, limit)
-      .map((entry) => {
-        const item: SearchResultItem = {
-          title: entry.title,
-          url: entry.webpage_url ?? entry.url!,
-        };
-        if (typeof entry.duration === 'number' && entry.duration > 0) {
-          item.duration = entry.duration;
-        }
-        if (entry.uploader) {
-          item.uploader = entry.uploader;
-        }
-        return item;
-      });
-  } catch (error) {
-    console.error('Error buscando canciones con yt-dlp:', error);
-    return [];
-  }
+  return entries
+    .filter((entry): entry is RawEntry & { title: string } => {
+      return typeof entry.title === 'string' && entry.title.trim().length > 0 && !!(entry.webpage_url || entry.url);
+    })
+    .slice(0, limit)
+    .map((entry) => {
+      const item: SearchResultItem = {
+        title: entry.title,
+        url: entry.webpage_url ?? entry.url!,
+      };
+      if (typeof entry.duration === 'number' && entry.duration > 0) {
+        item.duration = entry.duration;
+      }
+      if (entry.uploader) {
+        item.uploader = entry.uploader;
+      }
+      return item;
+    });
 }

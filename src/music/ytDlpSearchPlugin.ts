@@ -1,7 +1,8 @@
 import { ExtractorPlugin, Playlist, ResolveOptions, Song, SongInfo, PlaylistInfo } from 'distube';
 import { json } from '@distube/yt-dlp';
 
-type YtDlpJsonFlags = NonNullable<Parameters<typeof json>[1]>;
+// The wrapper's types predate yt-dlp's JavaScript runtime option.
+type YtDlpJsonFlags = NonNullable<Parameters<typeof json>[1]> & { jsRuntimes?: string };
 
 export type SearchSource = 'youtube' | 'soundcloud';
 
@@ -340,7 +341,16 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
 
   private async fetchSearchResult(searchQuery: string): Promise<YtDlpInfo | null> {
     const info = await this.fetchInfo(searchQuery);
-    return hasEntries(info) ? info.entries.find((entry) => getPlayableUrl(entry)) ?? null : info;
+    const result = hasEntries(info) ? info.entries.find((entry) => getPlayableUrl(entry)) ?? null : info;
+    if (result) return result;
+
+    const youtubeQuery = /^ytsearch\d*:(.+)$/i.exec(searchQuery)?.[1];
+    if (!youtubeQuery) return null;
+
+    // YouTube's video search can be empty for a track available in its music catalog.
+    const musicSearchUrl = `https://music.youtube.com/search?${new URLSearchParams({ q: youtubeQuery })}#songs`;
+    const musicInfo = await this.fetchInfo(musicSearchUrl, { playlistEnd: 1 });
+    return hasEntries(musicInfo) ? musicInfo.entries.find((entry) => getPlayableUrl(entry)) ?? null : musicInfo;
   }
 
   private async fetchInfo(input: string, extraFlags: YtDlpJsonFlags = {}): Promise<YtDlpInfo> {
@@ -350,6 +360,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
       preferFreeFormats: true,
       skipDownload: true,
       simulate: true,
+      jsRuntimes: `node:${process.execPath}`,
       ...extraFlags,
     };
 

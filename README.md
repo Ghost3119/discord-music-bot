@@ -8,7 +8,7 @@ El bot puede reproducir musica usando enlaces directos y busquedas por nombre.
 
 | Plataforma | Soporte | Notas |
 | --- | --- | --- |
-| YouTube | Si | Fuente principal para busquedas por defecto. |
+| YouTube | Si | Fuente principal para busquedas por defecto; prueba YouTube Music si no hay resultados. |
 | SoundCloud | Si | Soporta URLs directas y busqueda usando la opcion `fuente: SoundCloud`. |
 | Spotify | Parcial | Lee metadata de canciones, albums y playlists, pero no reproduce audio directo desde Spotify. Busca una version reproducible en YouTube o SoundCloud. |
 | Apple Music | Parcial | Lee informacion del enlace y busca una version reproducible en YouTube o SoundCloud. |
@@ -147,6 +147,7 @@ Ideas buenas para seguir mejorando el bot:
 
 ## Notas
 
+- Los errores de `/play`, `/search` y reproducción incluyen una causa, una sugerencia y un código de diagnóstico. Distinguen búsquedas vacías, restricciones de acceso o región, límites de solicitudes, fallos de red, voz y audio. El error completo se conserva en la consola.
 - Si cambias opciones de comandos slash, corre `npm run deploy` otra vez.
 - Si una plataforma falla, revisa si `yt-dlp` soporta ese enlace.
 - Para playlists grandes, la resolucion puede tardar porque cada cancion necesita buscar una fuente reproducible.

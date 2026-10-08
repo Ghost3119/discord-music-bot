@@ -1,5 +1,6 @@
 import { Interaction, MessageFlags, InteractionReplyOptions } from 'discord.js';
 import { commands } from '../commands';
+import { describeMusicError } from '../music/errors';
 
 export async function handleInteraction(interaction: Interaction) {
   if (interaction.isAutocomplete()) {
@@ -29,7 +30,7 @@ export async function handleInteraction(interaction: Interaction) {
     console.error(`Error ejecutando /${interaction.commandName}:`, error);
 
     const reply: InteractionReplyOptions = {
-      content: '❌ Hubo un error al ejecutar el comando.',
+      content: describeMusicError(error),
       flags: MessageFlags.Ephemeral,
     };
 

@@ -1,8 +1,9 @@
 import { GuildTextBasedChannel, SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
-import { PlayOptions } from 'distube';
+import { DisTubeError, isURL, PlayOptions, Song } from 'distube';
 import { Command } from './command.types';
 import { resolveAppleMusic } from '../utils/appleMusic';
-import { PlaybackMetadata, SearchSource } from '../music/ytDlpSearchPlugin';
+import { PlaybackMetadata, SearchSource, YtDlpSearchPlugin } from '../music/ytDlpSearchPlugin';
+import { describeMusicError } from '../music/errors';
 import { ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
 import { fetchSearchSuggestions } from '../utils/suggestions';
@@ -72,12 +73,18 @@ export const play: Command = {
     }
 
     const permissions = voiceChannel.permissionsFor(interaction.client.user!.id);
-    if (!permissions?.has(['ViewChannel', 'Connect', 'Speak'])) {
+    const missingPermissions = [
+      { flag: 'ViewChannel', label: 'Ver canal' },
+      { flag: 'Connect', label: 'Conectar' },
+      { flag: 'Speak', label: 'Hablar' },
+    ] as const;
+    const missing = missingPermissions.filter(({ flag }) => !permissions?.has(flag));
+    if (missing.length > 0) {
       await interaction.reply({
         embeds: [
           new EmbedBuilder()
             .setColor(BotColors.Error)
-            .setDescription('❌ No tengo permisos para unirme o hablar en ese canal.'),
+            .setDescription(`❌ **Faltan permisos en el canal de voz:** ${missing.map(({ label }) => label).join(', ')}.\n💡 Revisa el rol del bot y las excepciones de ese canal.`),
         ],
         flags: MessageFlags.Ephemeral,
       });
@@ -113,19 +120,22 @@ export const play: Command = {
         playOptions.textChannel = textChannel;
       }
 
-      await distube.play<PlaybackMetadata>(voiceChannel, resolved.query, playOptions);
+      // DisTube replaces search errors with NO_RESULT, discarding the actual cause.
+      // Resolve text here so network and platform errors reach the user intact.
+      let input: string | Song<PlaybackMetadata> = resolved.query;
+      if (!isURL(input)) {
+        const plugin = distube.plugins.find((item): item is YtDlpSearchPlugin => item instanceof YtDlpSearchPlugin);
+        if (!plugin) throw new DisTubeError('NO_EXTRACTOR_PLUGIN');
+        const song = await plugin.searchSong(input, playOptions);
+        if (!song) throw new DisTubeError('CANNOT_RESOLVE_SONG', input);
+        input = song;
+      }
+
+      await distube.play<PlaybackMetadata>(voiceChannel, input, playOptions);
     } catch (error: unknown) {
       console.error('Error en /play:', error);
 
-      const isVoiceTimeout =
-        typeof error === 'object' &&
-        error !== null &&
-        'errorCode' in error &&
-        (error as { errorCode?: string }).errorCode === 'VOICE_CONNECT_FAILED';
-
-      const description = isVoiceTimeout
-        ? '❌ **No se pudo conectar al canal de voz (tiempo de espera agotado).**\n\n💡 **Solución rápida en Discord:**\n1. Clic derecho en el canal de voz ➔ **Editar canal** ➔ **Resumen**.\n2. Busca **Anulación de región (Region Override)** y cámbiala de *Automático* a otra región (ej. *US Central* o *US East*).\n3. Verifica que el bot tenga permisos de **Conectar** y **Hablar** en ese canal.'
-        : '❌ No se pudo reproducir la canción. Verifica el enlace o el nombre.';
+      const description = describeMusicError(error, { source: searchSource });
 
       const content = {
         embeds: [

@@ -4,6 +4,7 @@ import { createNowPlayingEmbed, createAddQueueEmbed, createPlayerButtons } from 
 import { BotColors } from '../utils/colors';
 import { PLAYLIST_SEARCH_WARM_LIMIT, YtDlpSearchPlugin } from './ytDlpSearchPlugin';
 import { observeStreamErrors } from './streamErrors';
+import { describeMusicError } from './errors';
 
 const EMPTY_TIMEOUT_MS = 60_000;
 
@@ -106,11 +107,13 @@ export function registerDisTubeEvents(distube: DisTube) {
     emptyTimers.set(queue.id, timer);
   });
 
-  distube.on(Events.ERROR, (error, queue) => {
+  distube.on(Events.ERROR, (error, queue, song) => {
     console.error('DisTube Error:', error);
-    queue.textChannel?.send({
-      embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription(`❌ Error: ${error.message ?? 'Error desconocido'}`)],
-    });
+    void queue.textChannel?.send({
+      embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription(
+        describeMusicError(error, song?.name ? { songName: song.name } : {}),
+      )],
+    }).catch((sendError: unknown) => console.error('No se pudo enviar el error de reproducción:', sendError));
   });
 
   distube.on(Events.DEBUG, (msg) => {
