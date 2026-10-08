@@ -1,130 +1,86 @@
-import { DisTube, Events, InfoExtractorPlugin, Playlist, Queue, Song } from 'distube';
+import { DisTube, DisTubeEvents, TypedDisTubeEvents, Events, InfoExtractorPlugin, Playlist, Queue, Song } from 'distube';
 import { EmbedBuilder } from 'discord.js';
 import { createNowPlayingEmbed, createAddQueueEmbed, createPlayerButtons } from '../utils/embed';
 import { BotColors } from '../utils/colors';
 import { PLAYLIST_SEARCH_WARM_LIMIT, YtDlpSearchPlugin } from './ytDlpSearchPlugin';
 import { observeStreamErrors } from './streamErrors';
 import { describeMusicError } from './errors';
-
-const EMPTY_TIMEOUT_MS = 60_000;
+import { PlaybackRecovery } from './playbackRecovery';
+import { guardedEvent } from '../runtime/safety';
 
 function findSearchPlugin(distube: DisTube): YtDlpSearchPlugin | undefined {
-  return distube.plugins.find((plugin): plugin is YtDlpSearchPlugin => plugin instanceof YtDlpSearchPlugin);
+  return distube.plugins?.find((plugin): plugin is YtDlpSearchPlugin => plugin instanceof YtDlpSearchPlugin);
 }
 
 async function getSearchQuery(song: Song): Promise<string | null> {
   if (song.stream.playFromSource) return null;
-  if (song.plugin instanceof InfoExtractorPlugin) {
-    return song.plugin.createSearchQuery(song);
-  }
+  if (song.plugin instanceof InfoExtractorPlugin) return song.plugin.createSearchQuery(song);
   return song.name ?? null;
 }
 
-function warmSongSearchCache(distube: DisTube, songs: Song[], metadata: unknown): void {
-  const searchPlugin = findSearchPlugin(distube);
-  if (!searchPlugin || songs.length === 0) return;
-
-  void (async () => {
-    try {
-      const queries = await Promise.all(songs.slice(0, PLAYLIST_SEARCH_WARM_LIMIT).map(getSearchQuery));
-      await searchPlugin.warmSearchCache(
-        queries.filter((query): query is string => typeof query === 'string' && query.trim().length > 0),
-        metadata,
-      );
-    } catch (error) {
-      console.warn('No se pudo precalentar el cache de busquedas:', error);
-    }
+function warmSearchCache(distube: DisTube, songs: Song[], metadata: unknown): void {
+  const plugin = findSearchPlugin(distube);
+  if (!plugin || !songs.length) return;
+  guardedEvent('Precalentamiento de búsquedas', async () => {
+    const queries = await Promise.all(songs.slice(0, PLAYLIST_SEARCH_WARM_LIMIT).map(getSearchQuery));
+    await plugin.warmSearchCache(queries.filter((query): query is string => Boolean(query?.trim())), metadata);
   })();
 }
 
-function warmUpcomingSearchCache(distube: DisTube, queue: Queue, currentSong: Song): void {
-  warmSongSearchCache(distube, queue.songs.slice(1), currentSong.metadata);
-}
+export function registerDisTubeEvents(distube: DisTube): void {
+  const recovery = new PlaybackRecovery();
+  const observedVoices = new WeakSet<Queue['voice']>();
+  function on<E extends keyof DisTubeEvents>(event: E, handler: (...args: DisTubeEvents[E]) => unknown): void {
+    distube.on(event, guardedEvent(`DisTube ${event}`, handler) as TypedDisTubeEvents[E]);
+  }
 
-function warmPlaylistSearchCache(distube: DisTube, playlist: Playlist): void {
-  warmSongSearchCache(distube, playlist.songs, playlist.metadata);
-}
+  on(Events.INIT_QUEUE, (queue) => {
+    if (observedVoices.has(queue.voice)) return;
+    observedVoices.add(queue.voice);
+    const playStream = queue.voice.play.bind(queue.voice);
+    queue.voice.play = (stream) => {
+      observeStreamErrors(stream);
+      return playStream(stream);
+    };
+  });
 
-export function registerDisTubeEvents(distube: DisTube) {
-  const emptyTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-  distube.on(Events.PLAY_SONG, (queue, song) => {
+  on(Events.PLAY_SONG, async (queue, song) => {
+    recovery.markStarted(queue, song);
     if (queue.voice.stream) observeStreamErrors(queue.voice.stream);
-    const embed = createNowPlayingEmbed(song);
-    const row = createPlayerButtons(false);
-    queue.textChannel?.send({ embeds: [embed], components: [row] });
-    warmUpcomingSearchCache(distube, queue, song);
-
-    const timer = emptyTimers.get(queue.id);
-    if (timer) {
-      clearTimeout(timer);
-      emptyTimers.delete(queue.id);
-    }
+    warmSearchCache(distube, queue.songs.slice(1), song.metadata);
+    await queue.textChannel?.send({ embeds: [createNowPlayingEmbed(song)], components: [createPlayerButtons(false)] });
   });
 
-  distube.on(Events.ADD_SONG, (queue, song) => {
-    queue.textChannel?.send({ embeds: [createAddQueueEmbed(song)] });
+  on(Events.ADD_SONG, async (queue, song) => {
+    await queue.textChannel?.send({ embeds: [createAddQueueEmbed(song)] });
   });
 
-  distube.on(Events.ADD_LIST, (queue, playlist) => {
-    queue.textChannel?.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(BotColors.Info)
-          .setDescription(`📚 Añadida playlist: **${playlist.name ?? 'Playlist'}** — \`${playlist.songs.length} canciones\``),
-      ],
-    });
-    warmPlaylistSearchCache(distube, playlist);
+  on(Events.ADD_LIST, async (queue, playlist: Playlist) => {
+    warmSearchCache(distube, playlist.songs, playlist.metadata);
+    await queue.textChannel?.send({ embeds: [new EmbedBuilder().setColor(BotColors.Info)
+      .setDescription(`📚 Añadida playlist: **${playlist.name ?? 'Playlist'}** — ${playlist.songs.length} canciones`)] });
   });
 
-  distube.on(Events.DISCONNECT, (queue) => {
-    queue.textChannel?.send({
-      embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription('🔌 Desconectado del canal de voz.')],
-    });
-    const timer = emptyTimers.get(queue.id);
-    if (timer) {
-      clearTimeout(timer);
-      emptyTimers.delete(queue.id);
-    }
+  on(Events.DISCONNECT, async (queue) => {
+    await queue.textChannel?.send({ embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription('🔌 Desconectado del canal de voz.')] });
   });
 
-  (distube as DisTube).on('empty' as keyof import('distube').DisTubeEvents, (queue: Queue) => {
-    const timer = setTimeout(() => {
-      emptyTimers.delete(queue.id);
-      const currentQueue = distube.getQueue(queue.id);
-      if (currentQueue) {
-        void currentQueue.stop()
-          .then(() => queue.textChannel?.send({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(BotColors.Warning)
-                .setDescription('🔇 Canal vacío por 1 minuto — desconectando.'),
-            ],
-          }))
-          .catch((error: unknown) => console.error('Error al desconectar del canal vacío:', error));
-      }
-    }, EMPTY_TIMEOUT_MS);
-    emptyTimers.set(queue.id, timer);
-  });
-
-  distube.on(Events.ERROR, (error, queue, song) => {
+  on(Events.ERROR, async (error, queue: Queue, song) => {
     console.error('DisTube Error:', error);
-    void queue.textChannel?.send({
-      embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription(
-        describeMusicError(error, song?.name ? { songName: song.name } : {}),
-      )],
-    }).catch((sendError: unknown) => console.error('No se pudo enviar el error de reproducción:', sendError));
+    // Must run before the first await: DisTube decides whether to stop immediately after emit.
+    const retry = recovery.retry(queue, song, error, findSearchPlugin(distube));
+    const description = describeMusicError(error, song?.name ? { songName: song.name } : {});
+    await queue.textChannel?.send({ embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription(
+      `${description}\n\n${retry ? `🔄 Renovando el audio y reintentando (${retry}/2).` : 'Si quedan canciones en cola, continuaré con la siguiente.'}`,
+    )] });
   });
 
-  distube.on(Events.DEBUG, (msg) => {
-    if (msg.includes('QueueManager') || msg.includes('Voice') || msg.includes('voice') || msg.includes('join')) {
-      console.log(`[DisTube Debug] ${msg}`);
-    }
+  on(Events.DEBUG, (message) => {
+    if (/QueueManager|voice|join/i.test(message)) console.log(`[DisTube Debug] ${message}`);
   });
 
-  distube.on(Events.NO_RELATED, (queue) => {
-    queue.textChannel?.send({
-      embeds: [new EmbedBuilder().setColor(BotColors.Warning).setDescription('🔇 No se encontraron canciones relacionadas.')],
-    });
+  on(Events.NO_RELATED, async (queue) => {
+    await queue.textChannel?.send({ embeds: [new EmbedBuilder().setColor(BotColors.Warning)
+      .setDescription('🔇 No se encontraron canciones relacionadas. Puedes añadir otra con /play.')] });
   });
 }

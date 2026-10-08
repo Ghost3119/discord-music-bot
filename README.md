@@ -8,7 +8,7 @@ El bot puede reproducir musica usando enlaces directos y busquedas por nombre.
 
 | Plataforma | Soporte | Notas |
 | --- | --- | --- |
-| YouTube | Si | Fuente principal para busquedas por defecto; prueba YouTube Music si no hay resultados. |
+| YouTube | Si | Fuente inicial por defecto; prueba YouTube Music y SoundCloud si no encuentra una versión reproducible. |
 | SoundCloud | Si | Soporta URLs directas y busqueda usando la opcion `fuente: SoundCloud`. |
 | Spotify | Parcial | Lee metadata de canciones, albums y playlists, pero no reproduce audio directo desde Spotify. Busca una version reproducible en YouTube o SoundCloud. |
 | Apple Music | Parcial | Lee informacion del enlace y busca una version reproducible en YouTube o SoundCloud. |
@@ -67,7 +67,7 @@ Reproduce una cancion, album, playlist o busqueda.
 Opciones:
 
 - `query`: nombre de la cancion o URL.
-- `fuente`: fuente usada cuando el bot necesita buscar una version reproducible.
+- `fuente`: fuente preferida para buscar una version reproducible. Si falla, el bot prueba las otras fuentes.
 
 Ejemplos:
 
@@ -121,6 +121,24 @@ El bot cachea resultados de busqueda para que playlists grandes de Spotify o App
 
 Esto ayuda especialmente cuando se repite una playlist, hay canciones duplicadas o varios usuarios piden musica parecida.
 
+## Recuperación y operación en producción
+
+`npm run start` ejecuta un supervisor que reinicia el proceso si termina inesperadamente. Usa esperas crecientes de 1 a 30 segundos para evitar un bucle de reinicios rápidos. También comprueba una señal de actividad del bot y lo reinicia si deja de responder durante más de 60 segundos. `Ctrl+C` detiene el supervisor y el bot sin volver a iniciarlo.
+
+- Los errores de comandos, botones, eventos y notificaciones de Discord se capturan en su operación. Un mensaje rechazado por permisos o una interacción vencida no termina el proceso.
+- Una excepción o promesa rechazada que escape de esas protecciones se registra, guarda el estado disponible y cierra el proceso. El supervisor inicia un proceso limpio. Esto produce una interrupción breve; continuar después de una excepción no controlada puede dejar el proceso en un estado inconsistente, según la [documentación de Node.js](https://nodejs.org/docs/latest-v24.x/api/process.html#warning-using-uncaughtexception-correctly).
+- Las búsquedas prueban hasta cinco candidatos por fuente. Comparan título y artista y penalizan versiones en vivo, covers o remixes que no se pidieron. Las coincidencias débiles se descartan. El embed muestra la fuente que entrega el audio.
+- Los fallos temporales de red o HTTP 5xx tienen como máximo dos reintentos con espera. No se insiste en contenido privado, eliminado o restringido, ni en HTTP 429. Los bloqueos 403/429 ponen esa fuente en pausa por un minuto y permiten probar otra.
+- Cada intento de yt-dlp tiene 20 segundos de límite; una operación tiene 60 segundos y una búsqueda completa 90 segundos. Los procesos agotados se cancelan. Hay un máximo de tres extracciones simultáneas y 50 consultas esperando. Las playlists extraídas con yt-dlp se limitan a 500 entradas.
+- Si falla el stream, el bot invalida el enlace cacheado y reintenta hasta dos veces, intentando retomar cerca del punto de interrupción. Después continúa con la siguiente canción, si existe. Los errores tardíos de streams cerrados mantienen un listener para no convertirse en errores no controlados.
+- La cola y su progreso se guardan en `data/queues.json` al cambiar canciones y cada diez segundos. Al reiniciar se recuperan hasta 500 canciones, volumen, repetición, radio y pausa, con una posición aproximada. No se guardan enlaces temporales de audio. Se descartan estados con más de 24 horas y solo se recuperan canales de voz accesibles que tengan personas conectadas. `/stop` elimina el estado de esa cola.
+- Un archivo de estado dañado o un fallo al escribirlo se registra sin interrumpir la reproducción. Conserva el directorio `data` entre despliegues para recuperar las colas. Si corres el bot en un contenedor, monta ese directorio en almacenamiento persistente.
+- Token, variables requeridas o intents inválidos detienen el supervisor con código 78: requieren corregir la configuración. Los registros completos salen por la consola; el servicio que lance el supervisor debe conservarlos.
+
+El supervisor funciona mientras `npm run start` siga activo. Para arrancar después de reiniciar la máquina, configura ese comando en el servicio de tu entorno; en una PC, evita la suspensión mientras el bot deba estar disponible.
+
+yt-dlp ya no se descarga al arrancar: evita que una actualización o una descarga fallida bloquee el inicio. Actualízalo durante mantenimiento con `npm run update:ytdlp` y reinicia el bot después de verificarlo.
+
 ## Mejoras recomendadas
 
 Ideas buenas para seguir mejorando el bot:
@@ -142,7 +160,10 @@ Ideas buenas para seguir mejorando el bot:
 | --- | --- |
 | `npm run dev` | Ejecuta el bot con `ts-node`. |
 | `npm run build` | Compila TypeScript a `dist`. |
-| `npm run start` | Ejecuta la version compilada. |
+| `npm run start` | Ejecuta la versión compilada con supervisor y reinicio automático. |
+| `npm run start:once` | Ejecuta un solo proceso, para usar con un supervisor externo. |
+| `npm run update:ytdlp` | Actualiza yt-dlp durante mantenimiento, con un límite de 60 segundos. |
+| `npm test` | Compila y ejecuta las pruebas, incluidas recuperación y fallos simulados. |
 | `npm run deploy` | Registra comandos slash en el servidor configurado. |
 
 ## Notas

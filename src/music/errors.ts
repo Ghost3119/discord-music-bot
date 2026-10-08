@@ -13,6 +13,11 @@ interface ErrorDescription {
 }
 
 const ERROR_DESCRIPTIONS: Record<string, ErrorDescription> = {
+  MUSIC_BUSY: {
+    title: 'El buscador está ocupado',
+    detail: 'Hay demasiadas consultas de música pendientes.',
+    hint: 'Espera unos segundos antes de volver a intentar.',
+  },
   CANNOT_RESOLVE_SONG: {
     title: 'No se encontraron canciones',
     detail: 'La búsqueda no devolvió resultados en la fuente seleccionada.',
@@ -181,7 +186,7 @@ const CODE_ALIASES: Record<string, string> = {
   '50001': 'DISCORD_MISSING_PERMS',
 };
 
-function classifyMusicError(error: unknown): string {
+export function classifyMusicError(error: unknown): string {
   const messages: string[] = [];
   let fallbackCode = 'UNKNOWN';
   const visited = new Set<unknown>();
@@ -226,7 +231,7 @@ export function describeMusicError(error: unknown, context: MusicErrorContext = 
   const description = ERROR_DESCRIPTIONS[code] ?? ERROR_DESCRIPTIONS['UNKNOWN']!;
   const source = context.source === 'youtube' ? 'YouTube y YouTube Music' : 'SoundCloud';
   const detail = code === 'CANNOT_RESOLVE_SONG' && context.source
-    ? `La búsqueda no devolvió canciones en ${source}.`
+    ? `La búsqueda no devolvió canciones; se probaron YouTube, YouTube Music y SoundCloud empezando por ${source}.`
     : description.detail;
   const song = context.songName ? `\nCanción: **${escapeMarkdown(context.songName.slice(0, 160))}**` : '';
   return `❌ **${description.title}**${song}\n${detail}\n\n💡 ${description.hint}\n\nCódigo: \`${code}\``;

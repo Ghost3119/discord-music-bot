@@ -1,8 +1,35 @@
 import { Interaction, MessageFlags, InteractionReplyOptions } from 'discord.js';
 import { commands } from '../commands';
 import { describeMusicError } from '../music/errors';
+import { handleButton } from './buttonHandler';
 
-export async function handleInteraction(interaction: Interaction) {
+export async function handleInteraction(interaction: Interaction): Promise<void> {
+  try {
+    if (interaction.isButton()) {
+      await handleButton(interaction);
+      return;
+    }
+    await handleCommand(interaction);
+  } catch (error) {
+    console.error('Error procesando interacción:', error);
+    if (!interaction.isRepliable()) return;
+    // A failed error response (expired token, deleted channel, missing permissions)
+    // must not escape the interaction boundary either.
+    try {
+      if (interaction.deferred && !interaction.replied) {
+        await interaction.editReply({ content: describeMusicError(error), embeds: [], components: [] });
+      } else if (interaction.replied) {
+        await interaction.followUp({ content: describeMusicError(error), flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: describeMusicError(error), flags: MessageFlags.Ephemeral });
+      }
+    } catch (replyError) {
+      console.error('No se pudo informar el error de interacción:', replyError);
+    }
+  }
+}
+
+async function handleCommand(interaction: Interaction) {
   if (interaction.isAutocomplete()) {
     const command = commands.find((cmd) => cmd.data.name === interaction.commandName);
     if (!command?.autocomplete) return;

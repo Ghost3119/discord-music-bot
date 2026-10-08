@@ -53,7 +53,8 @@ export async function resolveAppleMusic(query: string): Promise<AppleMusicResult
 
 async function lookupAppleMusic(id: string, originalQuery: string): Promise<AppleMusicResult> {
   try {
-    const response = await fetch(`https://itunes.apple.com/lookup?id=${id}`);
+    const response = await fetch(`https://itunes.apple.com/lookup?id=${id}`, { signal: AbortSignal.timeout(8_000) });
+    if (!response.ok) throw new Error(`Apple Music devolvió HTTP ${response.status}`);
     const data: unknown = await response.json();
 
     if (!isLookupResponse(data) || data.results.length === 0) {

@@ -89,7 +89,7 @@ test('unexpected values and circular causes still get a readable error', () => {
 test('empty results identify the selected search source', () => {
   const error = { errorCode: 'CANNOT_RESOLVE_SONG' };
   assert.match(describeMusicError(error, { source: 'youtube' }), /YouTube y YouTube Music/);
-  assert.match(describeMusicError(error, { source: 'soundcloud' }), /canciones en SoundCloud/);
+  assert.match(describeMusicError(error, { source: 'soundcloud' }), /empezando por SoundCloud/);
 });
 
 test('playback events send a classified error and identify the affected song', async (t) => {

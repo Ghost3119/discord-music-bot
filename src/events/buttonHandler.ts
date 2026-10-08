@@ -1,6 +1,7 @@
 import { ButtonInteraction, EmbedBuilder, MessageFlags } from 'discord.js';
 import { ButtonId, createPlayerButtons, createQueueEmbed } from '../utils/embed';
 import { BotColors } from '../utils/colors';
+import { describeMusicError } from '../music/errors';
 
 export async function handleButton(interaction: ButtonInteraction) {
   if (!interaction.guild) return;
@@ -15,6 +16,11 @@ export async function handleButton(interaction: ButtonInteraction) {
       embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription('❌ Debes estar en un canal de voz.')],
       flags: MessageFlags.Ephemeral,
     });
+    return;
+  }
+
+  if (queue && member.voice.channel.id !== queue.voiceChannel?.id) {
+    await interaction.reply({ content: '❌ Debes estar en el mismo canal de voz que el bot.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -46,9 +52,9 @@ export async function handleButton(interaction: ButtonInteraction) {
         await interaction.reply({
           embeds: [new EmbedBuilder().setColor(BotColors.Success).setDescription(`⏭️ Saltando a: **${song.name}**`)],
         });
-      } catch {
+      } catch (error) {
         await interaction.reply({
-          embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription('❌ No hay más canciones.')],
+          embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription(describeMusicError(error))],
           flags: MessageFlags.Ephemeral,
         });
       }

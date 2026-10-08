@@ -49,6 +49,7 @@ export function createNowPlayingEmbed(song: Song, currentMs?: number): EmbedBuil
     .addFields(
       { name: 'Duración', value: song.formattedDuration, inline: true },
       { name: 'Solicitada por', value: song.member?.displayName ?? 'Desconocido', inline: true },
+      { name: 'Fuente', value: (song.stream.playFromSource ? song.source : song.stream.song?.source) ?? song.source, inline: true },
     )
     .setThumbnail(song.thumbnail ?? null)
     .setTimestamp();

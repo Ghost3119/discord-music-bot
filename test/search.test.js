@@ -21,7 +21,7 @@ test('a normal YouTube result does not need a music catalog search', async () =>
 
   const song = await plugin.searchSong(query, {});
   assert.equal(song.id, track.id);
-  assert.deepEqual(inputs, [`ytsearch1:${query}`]);
+  assert.deepEqual(inputs, [`ytsearch5:${query}`]);
 });
 
 test('an empty YouTube search resolves through Music with metadata and shares its cache', async () => {
@@ -35,7 +35,7 @@ test('an empty YouTube search resolves through Music with metadata and shares it
     assert.equal(url.origin, 'https://music.youtube.com');
     assert.equal(url.searchParams.get('q'), query);
     assert.equal(url.hash, '#songs');
-    assert.equal(flags.playlistEnd, 1);
+    assert.equal(flags.playlistEnd, 5);
     return { entries: [track] };
   };
 
@@ -70,7 +70,7 @@ test('Music fallback preserves special characters and explicit YouTube search pr
   assert.equal(song.id, track.id);
 });
 
-test('an empty SoundCloud search stays on the selected source', async () => {
+test('an empty SoundCloud search tries YouTube and Music after the preferred source', async () => {
   const plugin = new YtDlpSearchPlugin();
   const inputs = [];
   plugin.fetchInfo = async (input) => {
@@ -79,7 +79,7 @@ test('an empty SoundCloud search stays on the selected source', async () => {
   };
 
   assert.equal(await plugin.searchSong(query, { metadata: { searchSource: 'soundcloud' } }), null);
-  assert.deepEqual(inputs, [`scsearch1:${query}`]);
+  assert.deepEqual(inputs, [`scsearch5:${query}`, `ytsearch5:${query}`, `https://music.youtube.com/search?q=la+mafia+del+amor+multiorgasmica#songs`]);
 });
 
 test('empty results are not cached and can be retried', async () => {
@@ -92,7 +92,7 @@ test('empty results are not cached and can be retried', async () => {
 
   assert.equal(await plugin.searchSong(query, {}), null);
   assert.equal(await plugin.searchSong(query, {}), null);
-  assert.equal(calls, 4);
+  assert.equal(calls, 6);
 });
 
 test('a failed Music lookup propagates the error and allows a later retry', async () => {

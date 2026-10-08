@@ -43,7 +43,7 @@ test('a non-YouTube seed is resolved before requesting a Mix', async () => {
   const inputs = [];
   plugin.fetchInfo = async (input) => {
     inputs.push(input);
-    if (input.startsWith('ytsearch1:')) {
+    if (input.startsWith('ytsearch5:')) {
       return { entries: [{ id: 'AAAAAAAAAAA', title: 'Artist Track', webpage_url: 'https://www.youtube.com/watch?v=AAAAAAAAAAA' }] };
     }
     return { entries: [{ id: 'BBBBBBBBBBB', title: 'Recommended' }] };
@@ -51,7 +51,7 @@ test('a non-YouTube seed is resolved before requesting a Mix', async () => {
 
   const related = await plugin.getRelatedSongs(seed);
   assert.deepEqual(inputs, [
-    'ytsearch1:Artist Track Artist',
+    'ytsearch5:Artist Track Artist',
     'https://www.youtube.com/watch?v=AAAAAAAAAAA&list=RDAAAAAAAAAAA',
   ]);
   assert.deepEqual(related.map((song) => song.id), ['BBBBBBBBBBB']);

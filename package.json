@@ -6,8 +6,10 @@
   "scripts": {
     "build": "tsc",
     "test": "tsc && node --test \"test/*.test.js\"",
-    "start": "node --no-deprecation dist/index.js",
-    "dev": "ts-node src/index.ts",
+    "start": "node scripts/supervise.cjs",
+    "start:once": "node --no-deprecation dist/bootstrap.js",
+    "update:ytdlp": "node scripts/update-ytdlp.cjs",
+    "dev": "ts-node src/bootstrap.ts",
     "deploy": "ts-node src/deploy-commands.ts"
   },
   "dependencies": {
