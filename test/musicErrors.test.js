@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
+const { Song } = require('distube');
 const { describeMusicError, classifyMusicError } = require('../dist/music/errors');
 const { registerDisTubeEvents } = require('../dist/music/events');
 
@@ -112,13 +113,16 @@ test('empty results identify the selected search source', () => {
 
 test('playback events send a classified error and identify the affected song', async (t) => {
   t.mock.method(console, 'error', () => {});
+  t.mock.method(console, 'info', () => {});
   const distube = new EventEmitter();
-  registerDisTubeEvents(distube);
+  t.after(registerDisTubeEvents(distube));
   const messages = [];
-  const queue = { textChannel: { send: async (message) => { messages.push(message); } } };
-  distube.emit('error', Object.assign(new Error('audio failed'), { errorCode: 'FFMPEG_EXITED' }), queue, { name: 'Multiorgásmica' });
+  const queue = { songs: [], textChannel: { send: async (message) => { messages.push(message); } } };
+  const song = new Song({ plugin: null, source: 'youtube', playFromSource: true, id: 'test', name: 'Multiorgásmica' });
+  distube.emit('error', Object.assign(new Error('audio failed'), { errorCode: 'FFMPEG_EXITED' }), queue, song);
+  await new Promise((resolve) => setImmediate(resolve));
   assert.match(messages[0].embeds[0].data.description, /Multiorgásmica/);
-  assert.match(messages[0].embeds[0].data.description, /Código: `FFMPEG_EXITED`/);
+  assert.match(messages[0].embeds[0].data.footer.text, /FFMPEG_EXITED/);
   distube.emit('error', new Error('unknown'), {});
 
   const rejectedQueue = { textChannel: { send: async () => { throw new Error('Missing Permissions'); } } };

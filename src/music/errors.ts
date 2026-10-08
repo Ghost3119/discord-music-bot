@@ -255,6 +255,10 @@ export function classifyMusicError(error: unknown): string {
   return patterns.find(([pattern]) => pattern.test(message))?.[1] ?? fallbackCode;
 }
 
+export function musicErrorTitle(error: unknown): string {
+  return (ERROR_DESCRIPTIONS[classifyMusicError(error)] ?? ERROR_DESCRIPTIONS['UNKNOWN']!).title;
+}
+
 export function describeMusicError(error: unknown, context: MusicErrorContext = {}): string {
   const code = classifyMusicError(error);
   const description = ERROR_DESCRIPTIONS[code] ?? ERROR_DESCRIPTIONS['UNKNOWN']!;

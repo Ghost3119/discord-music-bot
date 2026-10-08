@@ -171,6 +171,26 @@ function matchesSearchQuery(query: string, result: YtDlpInfo): boolean {
   return wanted.length === 0 || wanted.filter((word) => words.includes(word)).length / wanted.length >= 0.8;
 }
 
+function recoveryQuery(name: string): string {
+  return name.replace(/\b(?:official(?: music)? video|official audio|lyric(?:s| video)|visualizer|HD|4K)\b/gi, ' ')
+    .replace(/[()[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function compatibleAlternative(query: string, requested: Song, reference: Song, info: YtDlpInfo): boolean {
+  if (!matchesSearchQuery(query, info) || info.is_live || (info.age_limit ?? 0) >= 18) return false;
+  // Metadata providers know the artist separately. A long matching title must
+  // not hide an artist mismatch when looking for a different upload.
+  if (!requested.stream.playFromSource && requested.uploader?.name && !matchesSearchQuery(requested.uploader.name, info)) return false;
+  if (!matchesSearchQuery(recoveryQuery(requested.name ?? ''), info)) return false;
+  const originalWords = searchTokens(query);
+  const candidateWords = searchTokens(info.title ?? '');
+  const variants = ['remix', 'live', 'cover', 'karaoke', 'nightcore', 'sped', 'slowed', 'instrumental'];
+  if (variants.some(word => candidateWords.includes(word) && !originalWords.includes(word))) return false;
+  const duration = requested.duration || reference.duration;
+  if (duration > 0 && (!info.duration || Math.abs(info.duration - duration) > Math.max(15, Math.min(45, duration * 0.15)))) return false;
+  return true;
+}
+
 export function rankSearchCandidates<T extends { title?: string; uploader?: string; duration?: number | null }>(query: string, candidates: T[]): T[] {
   const wanted = searchTokens(query);
   const variants = ['remix', 'live', 'cover', 'karaoke', 'nightcore', 'sped', 'slowed'];
@@ -293,6 +313,62 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     }
     if (lastError) throw lastError;
     return [];
+  }
+
+  async findAlternative(song: Song, signal?: AbortSignal): Promise<Song | null> {
+    if (!song.name || song.isLive) return null;
+    const reference = song.stream.playFromSource ? song : song.stream.song ?? song;
+    if (reference.isLive) return null;
+    const query = recoveryQuery(`${song.name} ${!song.stream.playFromSource ? song.uploader?.name ?? '' : ''}`);
+    if (!query) return null;
+    const budget = AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]);
+    const preferred: SearchSource = reference.source.toLowerCase().includes('soundcloud') ? 'youtube' : 'soundcloud';
+    let hydrated = 0;
+    const seen = new Set<string>();
+    for (const attempt of this.searchAttempts(toSearchQuery(query, preferred))) {
+      budget.throwIfAborted();
+      const cooldown = this.sourceCooldowns.get(attempt.source);
+      if (cooldown && cooldown.until > Date.now()) continue;
+      try {
+        const info = await this.fetchInfo(attempt.input, { flatPlaylist: true, playlistEnd: 5 }, budget);
+        const entries = rankSearchCandidates(query, (hasEntries(info) ? info.entries : [info]).filter(entry => entry && getPlayableUrl(entry)));
+        for (const entry of entries.slice(0, 3)) {
+          const url = getPlayableUrl(entry)!;
+          const key = `${attempt.source}:${entry.id ?? url}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const sameSource = attempt.source === (reference.source.includes('soundcloud') ? 'soundcloud' : 'youtube');
+          if (url === reference.url || (String(entry.id) === reference.id && sameSource)) continue;
+          if (hydrated++ >= 6) return null;
+          try {
+            const result = await this.fetchInfo(url, { format: 'ba/ba*', noPlaylist: true }, budget);
+            const canonical = getPlayableUrl(result);
+            if (!canonical || canonical === reference.url || hasEntries(result) || !result.url || result.url === canonical) continue;
+            if (String(result.id) === reference.id && sameSource) continue;
+            if (!compatibleAlternative(query, song, reference, result)) continue;
+            const candidate = this.createSong({ ...result, extractor: result.extractor ?? attempt.source }, {
+              metadata: song.metadata, ...(song.member ? { member: song.member } : {}),
+            });
+            if (!candidate.stream.playFromSource) continue;
+            candidate.stream.url = result.url;
+            if (song.playlist) candidate.playlist = song.playlist;
+            this.streamUrlCache.set(normalizeUrlCacheKey(canonical), result.url);
+            budget.throwIfAborted();
+            return candidate;
+          } catch (error) {
+            budget.throwIfAborted();
+            this.noteSourceError(attempt.source, error);
+            if (['YTDLP_NOT_FOUND', 'MUSIC_BUSY'].includes(classifyMusicError(error))) throw error;
+            if (['SOURCE_BLOCKED', 'SOURCE_RATE_LIMITED'].includes(classifyMusicError(error))) break;
+          }
+        }
+      } catch (error) {
+        budget.throwIfAborted();
+        this.noteSourceError(attempt.source, error);
+        if (['YTDLP_NOT_FOUND', 'MUSIC_BUSY'].includes(classifyMusicError(error))) throw error;
+      }
+    }
+    return null;
   }
 
   private searchAttempts(searchQuery: string, limit = 5): { input: string; source: SearchSource }[] {

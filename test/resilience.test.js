@@ -67,7 +67,7 @@ test('every playback notification handles missing Discord permissions', async (t
     distube.emit(event, ...args);
     await tick();
   }
-  assert.equal(errors.filter(([label]) => String(label).startsWith('[DisTube') || label === '[Panel de reproducción]').length, 6);
+  assert.equal(errors.filter(([label]) => String(label).startsWith('[DisTube') || ['[Panel de reproducción]', '[Aviso de recuperación]'].includes(label)).length, 6);
 });
 
 test('streams get a permanent error observer before voice playback can fail', async (t) => {
@@ -132,7 +132,7 @@ test('an empty channel disconnect timer is cancelled when a person returns', asy
   assert.equal(stopped, 1);
 });
 
-test('audio recovery renews the stream at most twice and preserves the next song', () => {
+test('audio recovery renews twice and offers one alternative attempt without losing the next song', () => {
   const plugin = new YtDlpSearchPlugin();
   const failed = song(plugin);
   const next = song(plugin, 'BBBBBBBBBBB');
@@ -146,8 +146,12 @@ test('audio recovery renews the stream at most twice and preserves the next song
   queue.songs.shift();
   assert.equal(recovery.retry(queue, failed, error, plugin), 2);
   queue.songs.shift();
+  assert.equal(recovery.retry(queue, failed, error, plugin), 3);
+  assert.equal(recovery.needsAlternative(queue, failed), true);
+  queue.songs.shift();
   assert.equal(recovery.retry(queue, failed, error, plugin), 0);
   assert.deepEqual(queue.songs, [next]);
+  recovery.dispose();
 });
 
 test('permanent failures and stopped queues are never reinserted', () => {
