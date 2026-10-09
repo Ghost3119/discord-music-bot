@@ -33,6 +33,13 @@ interface SavedQueue {
   updatedAt: number;
 }
 
+interface RestoreAttempt {
+  snapshot: SavedQueue;
+  initializing: boolean;
+  cancelled: boolean;
+  queue?: Queue;
+}
+
 function isSavedQueue(value: unknown): value is SavedQueue {
   if (typeof value !== 'object' || value === null) return false;
   const queue = value as SavedQueue;
@@ -52,32 +59,47 @@ function isSavedQueue(value: unknown): value is SavedQueue {
 
 export class QueueRecovery {
   private readonly saved = new Map<string, SavedQueue>();
-  private readonly restoring = new Set<string>();
+  private readonly restoring = new Map<string, RestoreAttempt>();
+  private pendingRestore: Promise<void> | undefined;
   private suspended = false;
+  private readonly detach: (() => void)[] = [];
   private readonly unregister: () => void;
   private readonly timer: ReturnType<typeof setInterval>;
 
   constructor(private readonly client: Client, private readonly distube: DisTube, private readonly path = resolve('data/queues.json')) {
     this.unregister = registerCheckpoint(distube, queue => this.capture(queue));
     this.load();
-    distube.on(Events.INIT_QUEUE, guardedEvent('Restaurar ajustes de la cola', (queue) => {
-      const snapshot = this.restoring.has(queue.id) ? this.saved.get(queue.id) : undefined;
-      if (!snapshot) return;
+    const on = (event: Events.INIT_QUEUE | Events.PLAY_SONG | Events.ADD_SONG | Events.ADD_LIST | Events.FINISH_SONG | Events.DELETE_QUEUE,
+      context: string, handler: (queue: Queue) => void) => {
+      const listener = guardedEvent(context, handler);
+      distube.on(event, listener);
+      this.detach.push(() => distube.off(event, listener));
+    };
+    on(Events.INIT_QUEUE, 'Restaurar ajustes de la cola', (queue) => {
+      const attempt = this.restoring.get(queue.id);
+      if (this.suspended || !attempt) return;
+      if (!attempt.initializing || attempt.queue) {
+        if (queue !== attempt.queue) attempt.cancelled = true;
+        return;
+      }
+      attempt.queue = queue;
+      attempt.initializing = false;
+      const { snapshot } = attempt;
       if (snapshot.blocked) getPlaybackHealth(distube)?.restoreBlocked(queue);
       queue.setVolume(snapshot.volume);
-      queue.setRepeatMode(snapshot.repeatMode);
+      if (queue.repeatMode !== snapshot.repeatMode) queue.setRepeatMode(snapshot.repeatMode);
       if (snapshot.autoplay !== queue.autoplay) queue.toggleAutoplay();
-    }));
+    });
     for (const event of [Events.PLAY_SONG, Events.ADD_SONG, Events.ADD_LIST, Events.FINISH_SONG] as const) {
-      distube.on(event, guardedEvent(`Guardar cola ${event}`, (queue: Queue) => this.capture(queue)));
+      on(event, `Guardar cola ${event}`, queue => this.capture(queue));
     }
-    distube.on(Events.DELETE_QUEUE, guardedEvent('Eliminar cola guardada', (queue) => {
-      if (this.suspended || this.restoring.has(queue.id)) return;
+    on(Events.DELETE_QUEUE, 'Eliminar cola guardada', (queue) => {
+      if (this.suspended || this.restoring.get(queue.id)?.queue === queue) return;
       const current = distube.getQueue(queue.id);
       if (current && current !== queue) return;
       this.saved.delete(queue.id);
       this.write();
-    }));
+    });
     this.timer = setInterval(guardedEvent('Guardar progreso de colas', () => this.captureAll()), 10_000);
     this.timer.unref();
   }
@@ -108,7 +130,8 @@ export class QueueRecovery {
   }
 
   private capture(queue: Queue): void {
-    if (this.suspended || this.restoring.has(queue.id) || queue.stopped || !queue.voiceChannel || !queue.songs.length) return;
+    if (this.suspended || this.restoring.get(queue.id)?.queue === queue || queue.stopped || !queue.voiceChannel || !queue.songs.length) return;
+    if (this.distube.getQueue(queue.id) !== queue) return;
     const songs = queue.songs.slice(0, 500).flatMap((song): SavedSong[] => {
       if (!song.url) return [];
       const metadata = song.metadata as { searchSource?: unknown } | null;
@@ -133,28 +156,40 @@ export class QueueRecovery {
   }
 
   stop(): void {
+    if (this.suspended) return;
     this.unregister();
     clearInterval(this.timer);
     this.captureAll();
     // Discord teardown emits DELETE_QUEUE. Keep the checkpoint for the next boot.
     this.suspended = true;
+    for (const detach of this.detach.splice(0)) detach();
   }
 
-  async restore(): Promise<void> {
+  restore(): Promise<void> {
+    if (!this.pendingRestore) this.pendingRestore = this.restoreSaved().finally(() => { this.pendingRestore = undefined; });
+    return this.pendingRestore;
+  }
+
+  private async restoreSaved(): Promise<void> {
     for (const snapshot of [...this.saved.values()]) {
       if (this.suspended || this.distube.getQueue(snapshot.guildId)) continue;
-      this.restoring.add(snapshot.guildId);
+      const attempt: RestoreAttempt = { snapshot, initializing: false, cancelled: false };
+      this.restoring.set(snapshot.guildId, attempt);
+      const cancelled = () => this.suspended || attempt.cancelled || Boolean(this.distube.getQueue(snapshot.guildId));
       try {
         const voice = await this.client.channels.fetch(snapshot.voiceChannelId);
+        if (cancelled()) continue;
         if (!voice || voice.type !== ChannelType.GuildVoice || voice.guildId !== snapshot.guildId ||
           !voice.members.some((member) => !member.user.bot) || !voice.joinable || !voice.speakable) {
           this.saved.delete(snapshot.guildId);
           continue;
         }
         const text = snapshot.textChannelId ? await this.client.channels.fetch(snapshot.textChannelId).catch(() => null) : null;
+        if (cancelled()) continue;
         const songs: Song[] = [];
         for (const saved of snapshot.songs) {
           const plugin = await this.distube.handler._getPluginFromURL(saved.url);
+          if (cancelled()) break;
           if (!plugin) continue;
           // Metadata-only platforms must retain their info-extractor semantics.
           if (!saved.playFromSource && plugin.type !== 'info-extractor') continue;
@@ -162,6 +197,7 @@ export class QueueRecovery {
             url: saved.url, uploader: { name: saved.uploader }, duration: saved.duration, ageRestricted: saved.ageRestricted, playFromSource: saved.playFromSource };
           songs.push(new Song(info, { metadata: { searchSource: saved.searchSource } }));
         }
+        if (cancelled()) continue;
         const first = songs[0];
         if (!first) {
           this.saved.delete(snapshot.guildId);
@@ -169,16 +205,20 @@ export class QueueRecovery {
         }
         // Add all songs before starting so an unavailable first track can be skipped.
         const playlist = new Playlist({ source: 'recovery', songs });
+        attempt.initializing = true;
         await this.distube.play(voice, playlist, {
           metadata: { searchSource: snapshot.songs[0]?.searchSource ?? 'youtube' },
           ...(text?.isTextBased() && 'guildId' in text && text.guildId === snapshot.guildId ? { textChannel: text } : {}),
         });
+        attempt.initializing = false;
         const queue = this.distube.getQueue(snapshot.guildId);
-        if (!queue || queue.stopped) continue;
+        if (this.suspended || attempt.cancelled || !queue || queue.stopped || queue !== attempt.queue) continue;
         queue.setVolume(snapshot.volume);
-        queue.setRepeatMode(snapshot.repeatMode);
+        // DisTube toggles an explicitly repeated mode back to Disabled.
+        if (queue.repeatMode !== snapshot.repeatMode) queue.setRepeatMode(snapshot.repeatMode);
         if (snapshot.autoplay !== queue.autoplay) queue.toggleAutoplay();
         if (!snapshot.blocked && queue.songs[0] === first && snapshot.position > 0 && first.duration > snapshot.position + 5) await queue.seek(snapshot.position);
+        if (this.suspended || queue.stopped || this.distube.getQueue(snapshot.guildId) !== queue) continue;
         if (snapshot.paused && !queue.paused) await queue.pause();
         console.log(`✅ Cola recuperada para ${snapshot.guildId}: ${queue.songs.length} canciones`);
       } catch (error) {

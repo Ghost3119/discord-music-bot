@@ -4,7 +4,7 @@ La nueva versión está preparada en el código y en `dist`. No se detuvo ni rei
 
 ## Validación local
 
-Resultado al 8 de octubre de 2026: **166 pruebas aprobadas, cero fallos**, con compilación TypeScript correcta mediante `npm test`.
+Resultado al 8 de octubre de 2026: **176 pruebas aprobadas, cero fallos**, con compilación TypeScript correcta mediante `npm test`.
 
 La suite cubre el detector a 8 y 12 segundos, pausas y seek, tres solicitudes agotadas con la recuperación real, reintento manual, dos servidores, edición simultánea, recomendaciones tardías, historial con límites de almacenamiento, permisos, fallos de disco, rotación y restauración de colas normales y bloqueadas. También comprueba FFmpeg ante un HTTP 403 de un servidor local y el reinicio del supervisor con procesos de prueba.
 
@@ -30,6 +30,17 @@ Se añadieron 12 pruebas con `QueueManager`, `Queue` y el bloqueo de tareas real
 Detener manualmente ya no registra la canción como completada por un evento de fin tardío. Cancelar una recuperación para pasar a otra canción limpia su indicador de intento; los callbacks de una cola cerrada no vuelven a incorporarla al monitor.
 
 La activación y las pruebas en Discord permanecen aplazadas por indicación del usuario. Estos resultados amplían la validación local y no sustituyen la prueba prolongada de reproducción real.
+
+### Validación de persistencia y restauración
+
+Se añadieron diez casos de regresión con checkpoints en directorios temporales y consultas controladas, sin conectar el bot. Las 18 pruebas de restauración verifican también el método real `Queue.setRepeatMode` de la versión instalada de DisTube: repetir una asignación del mismo modo lo desactiva. La recuperación aplica ese ajuste solo cuando difiere.
+
+- Cerrar durante la consulta de un canal o plugin impide iniciar después la reproducción guardada y conserva el checkpoint.
+- Una sesión manual creada durante la consulta conserva canciones y ajustes propios. Si se detiene antes de terminar la consulta, la restauración pendiente queda cancelada; si se cierra el proceso, se guarda esa sesión manual.
+- Una cola sustituta no recibe ajustes ni pausas de una recuperación anterior. Los eventos tardíos de reproducción, incorporaciones y fin no sobrescriben su checkpoint.
+- Dos solicitudes simultáneas de restauración comparten una operación. Cerrar el almacén varias veces es seguro y retira sus seis manejadores de eventos, sin acumularlos en las siguientes inicializaciones.
+
+Estas comprobaciones cubren la lógica local de restauración; siguen pendientes el reinicio de mantenimiento y la recuperación con una conexión real a Discord.
 
 ## Configuración
 

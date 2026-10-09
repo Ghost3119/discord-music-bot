@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { Collection, ChannelType } = require('discord.js');
-const { Song } = require('distube');
+const { Song, Queue } = require('distube');
 const { QueueRecovery } = require('../dist/music/queueRecovery');
 const { registerDisTubeEvents } = require('../dist/music/events');
 const { getPlaybackState } = require('../dist/music/playbackState');
@@ -42,7 +42,7 @@ function makeQueue() {
     songs: [makeSong('AAAAAAAAAAA'), makeSong('BBBBBBBBBBB')],
     currentTime: 75, volume: 80, paused: true, autoplay: true, repeatMode: 2,
     setVolume(value) { this.volume = value; },
-    setRepeatMode(value) { this.repeatMode = value; },
+    setRepeatMode: Queue.prototype.setRepeatMode,
     toggleAutoplay() { this.autoplay = !this.autoplay; },
     addToQueue(songs) { this.songs.push(...songs); },
     async seek(position) { this.currentTime = position; },
@@ -58,6 +58,7 @@ test('queue checkpoints preserve order and playback settings without saving stre
   distube.queues.collection.set(guildId, queue);
   const store = new QueueRecovery({}, distube, file);
   t.after(() => store.stop());
+  distube.queues.collection.set(guildId, queue);
   distube.emit('playSong', queue, queue.songs[0]);
   const data = fs.readFileSync(file, 'utf8');
   const [saved] = JSON.parse(data);
@@ -167,15 +168,18 @@ test('restoration does not join an empty channel or replay an old checkpoint', a
 });
 
 test('corrupt checkpoints and disk write failures do not crash playback', (t) => {
-  t.mock.method(console, 'error', () => {});
+  const errors = []; t.mock.method(console, 'error', (...args) => errors.push(args));
   const file = workspace(t);
   fs.writeFileSync(file, '{invalid-json');
   const distube = distubeMock();
   const store = new QueueRecovery({}, distube, file);
   assert.doesNotThrow(() => store.stop());
   const unwritable = new QueueRecovery({}, distube, path.dirname(file));
-  assert.doesNotThrow(() => distube.emit('playSong', makeQueue(), makeSong('AAAAAAAAAAA')));
+  const queue = makeQueue(); distube.queues.collection.set(guildId, queue);
+  assert.doesNotThrow(() => distube.emit('playSong', queue, queue.songs[0]));
   assert.doesNotThrow(() => unwritable.stop());
+  assert.ok(errors.some(args => String(args[0]).includes('No se pudieron leer')));
+  assert.ok(errors.some(args => String(args[0]).includes('No se pudo guardar')));
 });
 
 test('an unavailable first track does not discard the remaining restored queue', async (t) => {
@@ -192,10 +196,148 @@ test('an unavailable first track does not discard the remaining restored queue',
     const restored = { ...makeQueue(), songs: playlist.songs.slice(1), currentTime: 0,
       seek: async () => assert.fail('The position of the failed first track must not be applied to its successor') };
     distube.queues.collection.set(guildId, restored);
+    distube.emit('initQueue', restored);
   };
   const client = { channels: { fetch: async (id) => id === voiceId ? voice : null } };
   const store = new QueueRecovery(client, distube, file);
   await store.restore();
   assert.deepEqual(distube.getQueue(guildId).songs.map((song) => song.id), ['BBBBBBBBBBB']);
   store.stop();
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(r => { resolve = r; });
+  return { promise, resolve };
+}
+
+function savedFixture(t) {
+  const file = workspace(t), original = distubeMock();
+  original.queues.collection.set(guildId, makeQueue());
+  new QueueRecovery({}, original, file).stop();
+  const distube = distubeMock();
+  const voice = { id: voiceId, guildId, type: ChannelType.GuildVoice, joinable: true, speakable: true,
+    members: new Collection([['user', { user: { bot: false } }]]) };
+  const client = { channels: { fetch: async id => id === voiceId ? voice : null } };
+  return { file, distube, voice, client };
+}
+
+test('late playback events cannot overwrite a successor checkpoint', t => {
+  const file = workspace(t), distube = distubeMock(), old = makeQueue(), current = makeQueue();
+  current.songs = [makeSong('CCCCCCCCCCC')]; distube.queues.collection.set(guildId, current);
+  const store = new QueueRecovery({}, distube, file); t.after(() => store.stop());
+  distube.emit('playSong', current, current.songs[0]);
+  for (const event of ['playSong', 'addSong', 'addList', 'finishSong']) distube.emit(event, old, old.songs[0]);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8'))[0].songs[0].id, 'CCCCCCCCCCC');
+});
+
+test('shutdown cancels restoration waiting for a channel without deleting its checkpoint', async t => {
+  const f = savedFixture(t), gate = deferred();
+  f.client.channels.fetch = async id => id === voiceId ? gate.promise : null;
+  let starts = 0; f.distube.play = async () => { starts++; };
+  const store = new QueueRecovery(f.client, f.distube, f.file); t.after(() => store.stop());
+  const restore = store.restore(); store.stop(); gate.resolve(f.voice); await restore;
+  assert.equal(starts, 0);
+  assert.equal(JSON.parse(fs.readFileSync(f.file, 'utf8')).length, 1);
+});
+
+test('shutdown cancels restoration waiting for a plugin', async t => {
+  const f = savedFixture(t), entered = deferred(), gate = deferred();
+  f.distube.handler._getPluginFromURL = async () => { entered.resolve(); return gate.promise; };
+  let starts = 0; f.distube.play = async () => { starts++; };
+  const store = new QueueRecovery(f.client, f.distube, f.file); t.after(() => store.stop());
+  const restore = store.restore(); await entered.promise; store.stop(); gate.resolve({ type: 'extractor' }); await restore;
+  assert.equal(starts, 0);
+});
+
+test('a manual session created during channel lookup keeps its own settings and songs', async t => {
+  const f = savedFixture(t), gate = deferred();
+  f.client.channels.fetch = async id => id === voiceId ? gate.promise : null;
+  let starts = 0; f.distube.play = async () => { starts++; };
+  const store = new QueueRecovery(f.client, f.distube, f.file); t.after(() => store.stop());
+  const restore = store.restore(), current = makeQueue();
+  current.volume = 35; current.repeatMode = 0; current.autoplay = false;
+  current.songs = [makeSong('CCCCCCCCCCC')];
+  f.distube.queues.collection.set(guildId, current); f.distube.emit('initQueue', current);
+  gate.resolve(f.voice); await restore;
+  assert.equal(starts, 0); assert.equal(current.volume, 35); assert.equal(current.repeatMode, 0);
+  assert.equal(current.autoplay, false); assert.equal(current.songs.length, 1);
+  assert.equal(JSON.parse(fs.readFileSync(f.file, 'utf8'))[0].songs[0].id, 'CCCCCCCCCCC');
+});
+
+test('a successor created while restored playback finishes keeps its own settings', async t => {
+  const f = savedFixture(t), current = makeQueue();
+  current.volume = 35; current.repeatMode = 0; current.paused = false; current.autoplay = false;
+  current.songs = [makeSong('CCCCCCCCCCC')];
+  f.distube.play = async (_voice, playlist) => {
+    const restored = { ...makeQueue(), songs: playlist.songs };
+    f.distube.queues.collection.set(guildId, restored); f.distube.emit('initQueue', restored);
+    restored.stopped = true;
+    f.distube.queues.collection.set(guildId, current); f.distube.emit('initQueue', current);
+  };
+  const store = new QueueRecovery(f.client, f.distube, f.file); t.after(() => store.stop()); await store.restore();
+  assert.equal(current.volume, 35); assert.equal(current.repeatMode, 0);
+  assert.equal(current.paused, false); assert.equal(current.autoplay, false);
+});
+
+test('stopping recovery removes all event listeners and is idempotent', t => {
+  const file = workspace(t), distube = distubeMock();
+  for (let i = 0; i < 25; i++) {
+    const store = new QueueRecovery({}, distube, file); store.stop(); store.stop();
+    assert.equal(distube.eventNames().length, 0);
+  }
+});
+
+test('concurrent restore requests share one startup operation', async t => {
+  const f = savedFixture(t), gate = deferred();
+  let lookups = 0, starts = 0;
+  f.client.channels.fetch = async id => { if (id !== voiceId) return null; lookups++; return gate.promise; };
+  f.distube.play = async (_voice, playlist) => {
+    starts++;
+    const restored = { ...makeQueue(), songs: playlist.songs };
+    f.distube.queues.collection.set(guildId, restored); f.distube.emit('initQueue', restored);
+  };
+  const store = new QueueRecovery(f.client, f.distube, f.file); t.after(() => store.stop());
+  const first = store.restore(), second = store.restore(); gate.resolve(f.voice); await Promise.all([first, second]);
+  assert.equal(lookups, 1); assert.equal(starts, 1);
+});
+
+test('a manual session stopped during lookup is not revived by the old checkpoint', async t => {
+  const f = savedFixture(t), gate = deferred();
+  f.client.channels.fetch = async id => id === voiceId ? gate.promise : null;
+  let starts = 0; f.distube.play = async () => { starts++; };
+  const store = new QueueRecovery(f.client, f.distube, f.file); t.after(() => store.stop());
+  const restore = store.restore(), current = makeQueue();
+  f.distube.queues.collection.set(guildId, current); f.distube.emit('initQueue', current);
+  f.distube.emit('playSong', current, current.songs[0]);
+  current.stopped = true; f.distube.queues.collection.delete(guildId); f.distube.emit('deleteQueue', current);
+  gate.resolve(f.voice); await restore;
+  assert.equal(starts, 0); assert.deepEqual(JSON.parse(fs.readFileSync(f.file, 'utf8')), []);
+});
+
+test('shutdown checkpoints a manual session even while old restoration is pending', async t => {
+  const f = savedFixture(t), gate = deferred();
+  f.client.channels.fetch = async id => id === voiceId ? gate.promise : null;
+  let starts = 0; f.distube.play = async () => { starts++; };
+  const store = new QueueRecovery(f.client, f.distube, f.file); t.after(() => store.stop());
+  const restore = store.restore(), current = makeQueue(); current.songs = [makeSong('CCCCCCCCCCC')];
+  f.distube.queues.collection.set(guildId, current); f.distube.emit('initQueue', current);
+  store.stop(); gate.resolve(f.voice); await restore;
+  assert.equal(starts, 0); assert.equal(JSON.parse(fs.readFileSync(f.file, 'utf8'))[0].songs[0].id, 'CCCCCCCCCCC');
+});
+
+test('a successor created during restored seek is not paused by the old restoration', async t => {
+  const f = savedFixture(t), entered = deferred(), gate = deferred();
+  const current = makeQueue(); current.paused = false; current.songs = [makeSong('CCCCCCCCCCC')];
+  let pauses = 0;
+  f.distube.play = async (_voice, playlist) => {
+    const restored = { ...makeQueue(), songs: playlist.songs, paused: false,
+      seek: async () => { entered.resolve(restored); await gate.promise; }, pause: () => { pauses++; } };
+    f.distube.queues.collection.set(guildId, restored); f.distube.emit('initQueue', restored);
+  };
+  const store = new QueueRecovery(f.client, f.distube, f.file); t.after(() => store.stop());
+  const restore = store.restore(), old = await entered.promise;
+  old.stopped = true; f.distube.queues.collection.set(guildId, current); f.distube.emit('initQueue', current);
+  gate.resolve(); await restore;
+  assert.equal(pauses, 0); assert.equal(current.paused, false);
 });
