@@ -72,6 +72,10 @@ function httpUrl(value: string | undefined): string | null {
 export function createNowPlayingEmbed(song: Song, currentMs = 0, details: PlayerDetails = {}): EmbedBuilder {
   const status = details.ended ?? details.status ?? (details.paused ? '⏸ En pausa' : '▶ Reproduciendo');
   const audioSource = (song.stream.playFromSource ? song.source : song.stream.song?.source) ?? song.source;
+  const audioSong = song.stream.playFromSource ? song : song.stream.song;
+  const thumbnail = song.thumbnail ?? audioSong?.thumbnail ??
+    (audioSong?.source === 'youtube' && /^[\w-]{11}$/.test(audioSong.id)
+      ? `https://i.ytimg.com/vi/${audioSong.id}/hqdefault.jpg` : undefined);
   const source = ({ youtube: 'YouTube', soundcloud: 'SoundCloud', spotify: 'Spotify', apple_music: 'Apple Music' } as Record<string, string>)[audioSource] ?? audioSource;
   const repeat = details.repeatMode === RepeatMode.SONG ? ' · Repetir canción' : details.repeatMode === RepeatMode.QUEUE ? ' · Repetir cola' : '';
   const embed = new EmbedBuilder()
@@ -83,7 +87,7 @@ export function createNowPlayingEmbed(song: Song, currentMs = 0, details: Player
       { name: 'Solicitada por', value: escapeMarkdown((song.member?.displayName || 'Desconocido').slice(0, 80)), inline: true },
       { name: 'Volumen', value: `${details.volume ?? 100} %`, inline: true },
     )
-    .setImage(httpUrl(song.thumbnail ?? (song.stream.playFromSource ? undefined : song.stream.song?.thumbnail)))
+    .setImage(httpUrl(thumbnail))
     .setURL(httpUrl(song.url))
     .setFooter({ text: `${source} · ${details.ended ? 0 : details.queued ?? 0} en espera · Radio ${details.autoplay ? 'activada' : 'desactivada'}${repeat}`.slice(0, 2048) });
   if (!details.ended) {

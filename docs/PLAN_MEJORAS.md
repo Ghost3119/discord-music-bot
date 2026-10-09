@@ -1,6 +1,6 @@
 # Plan de mejoras del bot de música
 
-Estado al 8 de octubre de 2026: las entregas 1 a 6 están implementadas y compiladas. La entrega 7 tiene pruebas locales y guía de operación; el registro de comandos, el reinicio y la validación prolongada en Discord quedan pendientes de mantenimiento. No se ha reiniciado el bot en uso.
+Estado al 8 de octubre de 2026: las entregas 1 a 6 están implementadas. La entrega 7 ya incluye respaldo, registro real de los 19 comandos y activación autorizada a las 20:24 (Ciudad de México). Se confirmó la recuperación de siete canciones y cinco minutos de avance real sin errores registrados. La comprobación interactiva se interrumpió cuando el usuario detuvo Computer Use con Esc; siguen pendientes los controles en Discord y la prueba prolongada. Un ajuste posterior para conservar la portada está compilado y probado, pendiente de reiniciar para aplicarlo.
 
 ## Objetivo y punto de partida
 
@@ -32,10 +32,11 @@ Los valores numéricos siguientes son los implementados. Podrán ajustarse tras 
 - `/clear` y `/move`, además de `/shuffle` y `/remove` reforzados. Comprobaciones del canal de voz, operaciones ordenadas y descarte de resultados tardíos.
 - Portada grande conservada, estados del audio, historial y Reintentar en el panel, inicio aproximado de pendientes y tiempo restante del ciclo actual.
 - Pruebas de recuperación integrada, dos servidores, pausas, callbacks tardíos, componentes de Discord, errores de disco, restauración bloqueada y una hora de avance de audio con reloj simulado. La hora simulada no equivale a una hora de reproducción real en Discord.
-- Preparación de activación reforzada: `deploy:check` comprueba los 19 comandos sin contactar con Discord. El registro real falla con código 1 si hay problemas y verifica la respuesta de la API. La suite completa tiene 185 pruebas aprobadas; registro real, reinicio y validación prolongada siguen pendientes y aplazados por indicación del usuario.
+- Preparación de activación reforzada: `deploy:check` comprueba los 19 comandos sin contactar con Discord. El registro real falla con código 1 si hay problemas y verifica la respuesta de la API. La suite completa tiene 187 pruebas aprobadas. Discord confirmó el registro real y la versión se activó con una sola instancia; faltan comprobaciones interactivas y prolongadas.
 - Doce pruebas adicionales con la cola y el bloqueo reales de DisTube, y voz simulada, cubren errores tardíos de voz, cierre fallido, errores y finales duplicados, Siguiente y seek simultáneos con el fin del audio, sesiones reemplazadas y cien sesiones sucesivas. Se corrigieron los fallos reproducidos: una excepción tardía sin manejador y el avance indebido de la cola por eventos antiguos.
 - Diez pruebas adicionales de persistencia y restauración cubren cierre durante consultas pendientes, sesiones manuales que sustituyen o cancelan la restauración, eventos antiguos, solicitudes de restauración concurrentes y limpieza de manejadores. Se comprobó además el método real `Queue.setRepeatMode`: aplicar el mismo modo dos veces lo desactiva; la restauración ahora conserva el ajuste.
 - Nueve pruebas adicionales de persistencia del historial cubren fallos de disco y reemplazo atómico, recuperación sin nuevas canciones, cambios durante una escritura y cierre. Un error conserva los cambios pendientes y programa un reintento a los 60 segundos, con un solo temporizador. Al cerrar se cancela y se realiza un último intento; el temporizador no mantiene vivo el proceso.
+- La activación detectó que los checkpoints no conservaban la portada. Se añadió su persistencia para imágenes públicas sin credenciales ni parámetros y una portada de YouTube deducida del ID para checkpoints antiguos, sin búsquedas adicionales. Dos pruebas nuevas y la restauración existente verifican el ajuste; todavía no se ha reiniciado para cargarlo.
 
 La configuración y la secuencia de activación y vuelta atrás están en [OPERACION.md](OPERACION.md). Se mantienen a continuación el alcance y los criterios de aceptación de cada entrega.
 

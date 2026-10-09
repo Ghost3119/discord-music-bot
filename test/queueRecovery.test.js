@@ -125,8 +125,13 @@ test('a new process restores the queue, position, pause, repeat and volume', asy
   const original = distubeMock();
   const queue = makeQueue();
   original.queues.collection.set(guildId, queue);
+  queue.songs[0].thumbnail = 'https://i.ytimg.com/vi/AAAAAAAAAAA/hqdefault.jpg';
+  queue.songs[1].thumbnail = 'https://images.test/cover.jpg?token=temporary-image-secret';
   const oldStore = new QueueRecovery({}, original, file);
   oldStore.stop();
+  const checkpoint = fs.readFileSync(file, 'utf8');
+  assert.doesNotMatch(checkpoint, /temporary-image-secret/);
+  assert.equal(JSON.parse(checkpoint)[0].songs[0].thumbnail, queue.songs[0].thumbnail);
 
   const distube = distubeMock();
   const voice = { id: voiceId, type: ChannelType.GuildVoice, guildId, joinable: true, speakable: true,
@@ -150,6 +155,8 @@ test('a new process restores the queue, position, pause, repeat and volume', asy
   assert.equal(restored.paused, true);
   assert.equal(restored.autoplay, true);
   assert.equal(restored.repeatMode, 2);
+  assert.equal(restored.songs[0].thumbnail, queue.songs[0].thumbnail);
+  assert.equal(restored.songs[1].thumbnail, undefined);
   store.stop();
 });
 

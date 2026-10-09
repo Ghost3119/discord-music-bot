@@ -1,14 +1,20 @@
 # Operación y activación de las mejoras
 
-La nueva versión está preparada en el código y en `dist`. No se detuvo ni reinició el bot del usuario y no se ejecutó `npm run deploy`. `npm run start` usa un supervisor de proceso, sin recarga de archivos. Las mejoras se activarán en el siguiente arranque; no inicies una segunda instancia del mismo bot.
+La nueva versión se activó con autorización del usuario el 8 de octubre de 2026 a las 20:24 (Ciudad de México): se respaldaron código y datos, Discord confirmó los 19 comandos y se cerró ordenadamente la instancia anterior antes de arrancar una sola instancia nueva. Se confirmó la recuperación de siete canciones. `npm run start` usa un supervisor de proceso, sin recarga de archivos.
+
+El supervisor actual funciona en segundo plano (PID 20556), con el bot hijo PID 25824. El respaldo está en `C:\Users\picud\Repos\discord-music-backup-20261008-202303`; contiene el código, historial Git, `dist` preparado y datos después del cierre, además de los metadatos de activación. La revisión cargada es `2d539846eb84d0ba96b031f44c76759002709dc5`.
+
+La observación inicial confirmó cinco minutos de avance real, actualización del panel y checkpoints, sin errores ni advertencias nuevos en los registros y sin reemplazo del proceso. Esto no equivale a una prueba prolongada ni confirma que todos los controles funcionen. El usuario detuvo Computer Use con Esc durante la comprobación de Discord; no se continuó con entradas en la aplicación. Quedan pendientes las pruebas interactivas y prolongadas, y la recuperación real de una cola bloqueada.
+
+Se encontró además pérdida de la portada al restaurar. El ajuste posterior ya está en el código y en `dist`, con pruebas aprobadas: conserva imágenes públicas y usa una portada de YouTube por ID para checkpoints antiguos. Este ajuste aún no está cargado en el proceso activo; requiere otro reinicio de mantenimiento.
 
 ## Validación local
 
-Resultado al 8 de octubre de 2026: **185 pruebas aprobadas, cero fallos**, con compilación TypeScript correcta mediante `npm test`.
+Resultado al 8 de octubre de 2026: **187 pruebas aprobadas, cero fallos**, con compilación TypeScript correcta mediante `npm test`.
 
 La suite cubre el detector a 8 y 12 segundos, pausas y seek, tres solicitudes agotadas con la recuperación real, reintento manual, dos servidores, edición simultánea, recomendaciones tardías, historial con límites de almacenamiento, permisos, fallos de disco, rotación y restauración de colas normales y bloqueadas. También comprueba FFmpeg ante un HTTP 403 de un servidor local y el reinicio del supervisor con procesos de prueba.
 
-Se simula una hora de progreso y la limpieza repetida de sesiones y observadores. No se inició otro bot ni se hicieron pruebas de reproducción en Discord con las credenciales del usuario. El registro de comandos y la prueba prolongada en un servidor siguen pendientes de activación. Las pruebas locales no garantizan disponibilidad de YouTube ni SoundCloud.
+Se simula una hora de progreso y la limpieza repetida de sesiones y observadores. La suite local no inicia un bot ni conecta a Discord con las credenciales del usuario. El registro y la activación reales se hicieron después, como se describe arriba; sigue pendiente la prueba prolongada en un servidor. Las pruebas locales no garantizan disponibilidad de YouTube ni SoundCloud.
 
 `npm run deploy:check` también pasó: valida localmente las 19 definiciones, comprueba que sus nombres sean únicos y muestra una huella SHA-256 del contenido. No realiza llamadas a Discord ni requiere credenciales válidas. El registro real devuelve código 1 ante errores de configuración o API, oculta credenciales en los diagnósticos y comprueba que Discord devuelva los comandos esperados. Los casos de éxito y rechazo de la API se probaron con respuestas simuladas, sin registrar comandos reales.
 
@@ -29,7 +35,7 @@ Se añadieron 12 pruebas con `QueueManager`, `Queue` y el bloqueo de tareas real
 
 Detener manualmente ya no registra la canción como completada por un evento de fin tardío. Cancelar una recuperación para pasar a otra canción limpia su indicador de intento; los callbacks de una cola cerrada no vuelven a incorporarla al monitor.
 
-La activación y las pruebas en Discord permanecen aplazadas por indicación del usuario. Estos resultados amplían la validación local y no sustituyen la prueba prolongada de reproducción real.
+Estos resultados amplían la validación local y no sustituyen las pruebas interactivas pendientes ni la prueba prolongada de reproducción real.
 
 ### Validación de persistencia y restauración
 
@@ -40,7 +46,7 @@ Se añadieron diez casos de regresión con checkpoints en directorios temporales
 - Una cola sustituta no recibe ajustes ni pausas de una recuperación anterior. Los eventos tardíos de reproducción, incorporaciones y fin no sobrescriben su checkpoint.
 - Dos solicitudes simultáneas de restauración comparten una operación. Cerrar el almacén varias veces es seguro y retira sus seis manejadores de eventos, sin acumularlos en las siguientes inicializaciones.
 
-Estas comprobaciones cubren la lógica local de restauración; siguen pendientes el reinicio de mantenimiento y la recuperación con una conexión real a Discord.
+Estas comprobaciones cubren la lógica local de restauración. La activación confirmó la recuperación de una cola normal con conexión real a Discord; sigue pendiente probar una cola bloqueada en un entorno de pruebas.
 
 ### Recuperación del guardado del historial
 

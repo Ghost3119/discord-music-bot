@@ -72,6 +72,21 @@ test('live streams and invalid progress values render without exceptions or nega
   assert.equal(embed.url,undefined);assert.equal(embed.image,undefined);
 });
 
+test('legacy restored YouTube tracks retain a large cover without an extra lookup', () => {
+  const current = song(); current.thumbnail = undefined; current.id = 'AAAAAAAAAAA';
+  assert.equal(createNowPlayingEmbed(current).toJSON().image.url, 'https://i.ytimg.com/vi/AAAAAAAAAAA/hqdefault.jpg');
+  current.source = 'soundcloud';
+  assert.equal(createNowPlayingEmbed(current).toJSON().image, undefined);
+});
+
+test('a metadata track without saved artwork uses the resolved audio cover', () => {
+  const current = song(); current.source = 'spotify'; current.thumbnail = undefined; current.stream.playFromSource = false;
+  const audio = song(); audio.id = 'BBBBBBBBBBB'; audio.thumbnail = undefined; current.stream.song = audio;
+  assert.equal(createNowPlayingEmbed(current).toJSON().image.url, 'https://i.ytimg.com/vi/BBBBBBBBBBB/hqdefault.jpg');
+  current.thumbnail = 'https://i.scdn.co/image/original-cover';
+  assert.equal(createNowPlayingEmbed(current).toJSON().image.url, current.thumbnail);
+});
+
 test('song changes edit one player and unchanged or paused progress does not generate writes', async t => {
   const f=fixture(t);await f.panels.show(f.queue);
   await f.panels.refresh(f.queue);assert.equal(f.edits.length,0);

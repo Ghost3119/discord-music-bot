@@ -12,6 +12,7 @@ interface SavedSong {
   source: string;
   url: string;
   name: string;
+  thumbnail?: string;
   uploader: string;
   duration: number;
   ageRestricted: boolean;
@@ -40,6 +41,15 @@ interface RestoreAttempt {
   queue?: Queue;
 }
 
+function publicThumbnail(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 2_000) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash) return url.href;
+  } catch { /* Artwork is optional; never persist a signed or unusable image URL. */ }
+  return undefined;
+}
+
 function isSavedQueue(value: unknown): value is SavedQueue {
   if (typeof value !== 'object' || value === null) return false;
   const queue = value as SavedQueue;
@@ -50,6 +60,7 @@ function isSavedQueue(value: unknown): value is SavedQueue {
     typeof queue.paused === 'boolean' && typeof queue.autoplay === 'boolean' && [0, 1, 2].includes(queue.repeatMode) &&
     Number.isFinite(queue.updatedAt) && Array.isArray(queue.songs) && queue.songs.length > 0 && queue.songs.length <= 500 &&
     queue.songs.every((song) => song && typeof song.id === 'string' && typeof song.source === 'string' &&
+      (song.thumbnail === undefined || publicThumbnail(song.thumbnail) === song.thumbnail) &&
       typeof song.name === 'string' && song.name.length <= 500 && typeof song.uploader === 'string' && song.uploader.length <= 500 &&
       typeof song.url === 'string' && /^https?:\/\//i.test(song.url) &&
       song.url.length <= 2_000 && Number.isFinite(song.duration) && song.duration >= 0 &&
@@ -135,7 +146,9 @@ export class QueueRecovery {
     const songs = queue.songs.slice(0, 500).flatMap((song): SavedSong[] => {
       if (!song.url) return [];
       const metadata = song.metadata as { searchSource?: unknown } | null;
+      const thumbnail = publicThumbnail(song.thumbnail);
       return [{ id: song.id, source: song.source, url: song.url, name: (song.name ?? song.id).slice(0, 500),
+        ...(thumbnail ? { thumbnail } : {}),
         uploader: (song.uploader.name ?? '').slice(0, 500),
         duration: song.duration, ageRestricted: Boolean(song.ageRestricted), playFromSource: song.stream.playFromSource,
         searchSource: metadata?.searchSource === 'soundcloud' ? 'soundcloud' : 'youtube' }];
@@ -194,6 +207,7 @@ export class QueueRecovery {
           // Metadata-only platforms must retain their info-extractor semantics.
           if (!saved.playFromSource && plugin.type !== 'info-extractor') continue;
           const info: SongInfo = { plugin, source: saved.source, id: saved.id, name: saved.name,
+            ...(saved.thumbnail ? { thumbnail: saved.thumbnail } : {}),
             url: saved.url, uploader: { name: saved.uploader }, duration: saved.duration, ageRestricted: saved.ageRestricted, playFromSource: saved.playFromSource };
           songs.push(new Song(info, { metadata: { searchSource: saved.searchSource } }));
         }
