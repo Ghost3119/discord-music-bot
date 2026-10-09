@@ -8,7 +8,7 @@ function redact(value) {
     .replace(/https?:\/\/[^\s<>"']+/gi, '[enlace oculto]')
     .replace(/\b(?:authorization|cookie|set-cookie)\s*[:=][^\r\n]*/gi, '[cabecera oculta]')
     .replace(/((?:token|secret|password|client_secret)\s*['"]?\s*[:=]\s*)(?:'[^']*'|"[^"]*"|[^\s,}]+)/gi, '$1[oculto]')
-    .replace(/\b(?:Bot|Bearer)\s+[\w.\-/+=]+/gi, '[credencial oculta]')
+    .replace(/\b(?:Bot|Bearer)\s+[\w.\-/+=]{20,}/gi, '[credencial oculta]')
     .slice(0, 8_000);
 }
 

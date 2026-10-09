@@ -25,6 +25,7 @@ function fixture(t, mode) {
     require(${JSON.stringify(safety)}).installProcessHandlers(code => process.exit(code));
     process.on('message', message => { if (message.type === 'shutdown') process.exit(0); });
     if (${JSON.stringify(mode)} === 'config') process.exit(78);
+    if (${JSON.stringify(mode)} === 'duplicate') process.exit(79);
     if (${JSON.stringify(mode)} === 'crash' && starts === 1) setImmediate(() => { throw new Error('supervisor-fatal-marker'); });
     if (${JSON.stringify(mode)} !== 'hang' || starts > 1) setInterval(() => process.send?.({type:'heartbeat'}, () => {}), 20);
     setInterval(() => {}, 1000);
@@ -32,7 +33,7 @@ function fixture(t, mode) {
   fs.writeFileSync(runner, `
     const fs = require('node:fs');
     const controller = require(${JSON.stringify(supervisor)}).supervise({entry:${JSON.stringify(child)}, minimumDelay:20, maximumDelay:50, heartbeatTimeout:500});
-    if (${JSON.stringify(mode)} !== 'config') {
+    if (!['config','duplicate'].includes(${JSON.stringify(mode)})) {
       const check = setInterval(() => {
         const starts = fs.existsSync(${JSON.stringify(counter)}) ? Number(fs.readFileSync(${JSON.stringify(counter)}, 'utf8')) : 0;
         if (starts >= ${mode === 'normal' ? 1 : 2}) { clearInterval(check); controller.stop(); }
@@ -70,6 +71,15 @@ test('invalid configuration exits with a diagnostic instead of a restart loop', 
     assert.equal(error.code, 78);
     assert.match(error.stderr, /Configuración inválida/);
     return true;
+  });
+  assert.equal(fs.readFileSync(counter, 'utf8'), '1');
+});
+
+test('a duplicate instance exits without entering a supervisor restart loop', async t => {
+  const { runner, counter } = fixture(t, 'duplicate');
+  await assert.rejects(promisify(execFile)(process.execPath, [runner], { timeout: 10000, windowsHide: true }), error => {
+    assert.equal(error.code, 79); assert.match(error.stderr, /otra instancia activa/);
+    assert.doesNotMatch(error.stderr, /reinicio en/); return true;
   });
   assert.equal(fs.readFileSync(counter, 'utf8'), '1');
 });

@@ -50,6 +50,24 @@ test('a failed button and a failed error reply never escape the interaction boun
   assert.equal(replies, 1);
 });
 
+for (const code of [10062, 40060]) {
+  for (const kind of ['button', 'command']) {
+    test(`an unavailable ${kind} interaction ${code} is not acknowledged a second time`, async t => {
+      const warnings = []; t.mock.method(console, 'warn', value => warnings.push(value));
+      t.mock.method(console, 'error', () => {});
+      let replies = 0, edits = 0;
+      const value = { guild: { id: 'guild-1' }, guildId: 'guild-1', client: { distube: { getQueue: () => undefined } },
+        customId: 'btn_queue', commandName: 'nowplaying', message: { id: 'obsolete', edit: async () => { edits++; } },
+        isButton: () => kind === 'button', isAutocomplete: () => false, isChatInputCommand: () => kind === 'command',
+        isRepliable: () => true, deferred: false, replied: false,
+        reply: async () => { replies++; throw Object.assign(new Error('unavailable'), { code }); } };
+      await assert.doesNotReject(handleInteraction(value));
+      assert.equal(replies, 1); assert.equal(edits, 0); assert.equal(warnings.length, 1);
+      assert.match(warnings[0], new RegExp(String(code)));
+    });
+  }
+}
+
 test('every playback notification handles missing Discord permissions', async (t) => {
   const errors = [];
   t.mock.method(console, 'error', (...args) => errors.push(args));

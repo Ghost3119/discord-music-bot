@@ -6,6 +6,14 @@ import { getPlayerPanels } from '../music/playerPanel';
 import { ensureControlChannel } from '../utils/guard';
 import { checkpointQueue } from '../music/queueChanges';
 
+function unavailableInteraction(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false;
+  const code = Number(error.code);
+  if (code !== 10062 && code !== 40060) return false;
+  console.warn(`[Interacción ${code}] La interacción venció o ya fue atendida. No se reenviará la respuesta; comprueba que solo haya una instancia activa.`);
+  return true;
+}
+
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   try {
     if (interaction.isButton()) {
@@ -14,6 +22,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
     }
     await handleCommand(interaction);
   } catch (error) {
+    if (unavailableInteraction(error)) return;
     console.error('Error procesando interacción:', error);
     if (!interaction.isRepliable()) return;
     // A failed error response (expired token, deleted channel, missing permissions)
@@ -27,6 +36,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await interaction.reply({ content: describeMusicError(error), flags: MessageFlags.Ephemeral });
       }
     } catch (replyError) {
+      if (unavailableInteraction(replyError)) return;
       console.error('No se pudo informar el error de interacción:', replyError);
     }
   }
@@ -62,6 +72,7 @@ async function handleCommand(interaction: Interaction) {
     const queue = interaction.guildId ? interaction.client.distube.getQueue(interaction.guildId) : undefined;
     if (queue) { checkpointQueue(interaction.client.distube, queue); await getPlayerPanels(interaction.client.distube)?.refresh(queue); }
   } catch (error) {
+    if (unavailableInteraction(error)) return;
     console.error(`Error ejecutando /${interaction.commandName}:`, error);
 
     const reply: InteractionReplyOptions = {

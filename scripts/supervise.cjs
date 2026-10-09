@@ -30,9 +30,10 @@ function supervise(options = {}) {
     child.on('error', (error) => console.error('[Supervisor] No se pudo ejecutar el bot:', error));
     child.on('close', (code, signal) => {
       child = undefined;
-      if (stopping || code === 78) {
+      if (stopping || code === 78 || code === 79) {
         if (code === 78) console.error('[Supervisor] Configuración inválida; corrige el error y vuelve a iniciar.');
-        finish(stopping ? 0 : 78);
+        if (code === 79) console.error('[Supervisor] Ya hay otra instancia activa; salida sin reinicio.');
+        finish(stopping ? 0 : code);
         return;
       }
       if (Date.now() - lastStart > 60000) failures = 0;

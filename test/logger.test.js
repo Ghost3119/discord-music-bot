@@ -36,3 +36,11 @@ test('sensitive headers, signed URLs and named secrets are redacted and capped',
   }
   assert.ok(redact('x'.repeat(10000)).length <= 8000);
 });
+
+test('redaction preserves ordinary bot diagnostics while hiding standalone credentials', () => {
+  for (const input of ['[Bot Voice State] Canal: Lounge', '✅ Bot conectado como Musica#0338',
+    'El bot todavía no puede identificar este error.', 'El bot sigue disponible.']) assert.equal(redact(input), input);
+  for (const prefix of ['Bot', 'Bearer', 'bOt']) {
+    assert.doesNotMatch(redact(`${prefix} real-looking.secret.token-value`), /real-looking/);
+  }
+});
