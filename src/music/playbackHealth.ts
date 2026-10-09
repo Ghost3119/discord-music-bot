@@ -45,6 +45,8 @@ export class PlaybackHealth {
   }
   recovery(status: RecoveryStatus): void {
     const { queue, original, song, stage } = status;
+    if (this.disposed || queue.stopped || getPlaybackState(queue)?.closing ||
+      (typeof this.distube.getQueue === 'function' && this.distube.getQueue(queue.id) !== queue)) return;
     this.init(queue);
     const state = getPlaybackState(queue)!;
     if (original !== song) this.history.alias(queue, original, song);
@@ -60,6 +62,7 @@ export class PlaybackHealth {
     if (stage === 'renew') state.mode = 'recovering';
     if (stage === 'alternative') state.mode = 'alternative';
     if (stage === 'recovered') state.mode = queue.paused ? 'paused' : 'playing';
+    if (stage === 'cancelled') { state.mode = queue.paused ? 'paused' : 'preparing'; state.attempt = 0; }
     if (stage === 'failed') this.failed(queue, song, status.code);
     if (state.blocked) state.mode = 'blocked';
     this.changed(queue);

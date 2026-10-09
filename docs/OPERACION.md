@@ -4,13 +4,32 @@ La nueva versión está preparada en el código y en `dist`. No se detuvo ni rei
 
 ## Validación local
 
-Resultado al 8 de octubre de 2026: **154 pruebas aprobadas, cero fallos**, con compilación TypeScript correcta mediante `npm test`.
+Resultado al 8 de octubre de 2026: **166 pruebas aprobadas, cero fallos**, con compilación TypeScript correcta mediante `npm test`.
 
 La suite cubre el detector a 8 y 12 segundos, pausas y seek, tres solicitudes agotadas con la recuperación real, reintento manual, dos servidores, edición simultánea, recomendaciones tardías, historial con límites de almacenamiento, permisos, fallos de disco, rotación y restauración de colas normales y bloqueadas. También comprueba FFmpeg ante un HTTP 403 de un servidor local y el reinicio del supervisor con procesos de prueba.
 
 Se simula una hora de progreso y la limpieza repetida de sesiones y observadores. No se inició otro bot ni se hicieron pruebas de reproducción en Discord con las credenciales del usuario. El registro de comandos y la prueba prolongada en un servidor siguen pendientes de activación. Las pruebas locales no garantizan disponibilidad de YouTube ni SoundCloud.
 
 `npm run deploy:check` también pasó: valida localmente las 19 definiciones, comprueba que sus nombres sean únicos y muestra una huella SHA-256 del contenido. No realiza llamadas a Discord ni requiere credenciales válidas. El registro real devuelve código 1 ante errores de configuración o API, oculta credenciales en los diagnósticos y comprueba que Discord devuelva los comandos esperados. Los casos de éxito y rechazo de la API se probaron con respuestas simuladas, sin registrar comandos reales.
+
+### Validación del ciclo de voz y operaciones simultáneas
+
+Se añadieron 12 pruebas con `QueueManager`, `Queue` y el bloqueo de tareas reales de DisTube, usando una conexión de voz simulada. No se conectan a Discord ni descargan audio. Esta capa permitió reproducir y corregir los siguientes casos:
+
+| Caso | Resultado verificado |
+| --- | --- |
+| Error de voz después de detener la cola | Lo absorbe un observador permanente; no se convierte en una excepción sin manejador ni revive la reproducción. |
+| Error al cerrar el audio de una solicitud agotada | La frontera del evento captura el fallo y la cola se retira incluso si falla `voice.stop`. |
+| Errores duplicados del mismo stream | Se consume un solo intento y no se adelanta la cola. |
+| Fin de audio antiguo durante Siguiente o seek | Se vuelve a comprobar canción, recurso y sesión después de esperar las operaciones pendientes; no se salta una segunda canción ni se termina el recurso nuevo. |
+| Eventos de fin duplicados | Comparten una sola transición pendiente, sin dejar tareas bloqueadas. |
+| Cola bloqueada o sesión reemplazada | Los callbacks antiguos no retiran la cabecera ni afectan a la sesión siguiente. |
+| Detector, pausa y seek | El detector usa el mismo presupuesto de recuperación; la pausa no cuenta y seek concede los doce segundos para audio nuevo. |
+| Cien sesiones sucesivas | Se liberan los manejadores de cola, las tareas y el estado del monitor; queda un único observador de errores tardíos por voz. |
+
+Detener manualmente ya no registra la canción como completada por un evento de fin tardío. Cancelar una recuperación para pasar a otra canción limpia su indicador de intento; los callbacks de una cola cerrada no vuelven a incorporarla al monitor.
+
+La activación y las pruebas en Discord permanecen aplazadas por indicación del usuario. Estos resultados amplían la validación local y no sustituyen la prueba prolongada de reproducción real.
 
 ## Configuración
 

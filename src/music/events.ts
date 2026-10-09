@@ -3,7 +3,7 @@ import { EmbedBuilder } from 'discord.js';
 import { createAddQueueEmbed } from '../utils/embed';
 import { BotColors } from '../utils/colors';
 import { PLAYLIST_SEARCH_WARM_LIMIT, YtDlpSearchPlugin } from './ytDlpSearchPlugin';
-import { getStreamDiagnostics, observeStreamErrors } from './streamErrors';
+import { getStreamDiagnostics, observeStreamErrors, observeVoiceErrors } from './streamErrors';
 import { describeMusicError } from './errors';
 import { PlaybackRecovery } from './playbackRecovery';
 import { guardedEvent } from '../runtime/safety';
@@ -36,19 +36,30 @@ function warmSearchCache(distube: DisTube, songs: Song[], metadata: unknown): vo
 export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, options?: HealthOptions): () => void {
   const notices = new RecoveryNotices();
   const panels = new PlayerPanels(distube);
+  let disposed = false;
+  const failedStreams = new WeakSet<object>();
+  const ownsQueue = (queue: Queue) => !disposed && !queue.stopped && !getPlaybackState(queue)?.closing &&
+    (typeof distube.getQueue !== 'function' || distube.getQueue(queue.id) === queue);
+  async function failSong(queue: Queue, error: unknown, song = queue.songs[0]): Promise<void> {
+    if (!ownsQueue(queue) || getPlaybackState(queue)?.blocked || !song || queue.songs[0] !== song) return;
+    const stream = queue.voice.stream;
+    if (stream) failedStreams.add(stream);
+    queue.voice.emittedError = true;
+    queue.songs.shift();
+    distube.emit(Events.ERROR, error instanceof Error ? error : new Error(String(error)), queue, song);
+    try { stream?.kill(); } catch (killError) { console.error('[Cerrar stream fallido]', killError); }
+    if (queue.songs.length) await distube.queues.playSong(queue);
+    else {
+      // Native error handling awaits stop() without guarding its rejected promise.
+      // Cleanup here also avoids reacquiring a task lock held by extraction.
+      try { queue.voice.stop(); } finally { queue.remove(); }
+    }
+  }
   let health: PlaybackHealth;
   const recovery = new PlaybackRecovery((status) => { health.recovery(status); void notices.update(status); });
   health = new PlaybackHealth(distube, history, queue => {
     void panels.refresh(queue); checkpointQueue(distube, queue);
-  }, async queue => {
-    if (queue.stopped || getPlaybackState(queue)?.blocked || !queue.songs[0]) return;
-    const song = queue.songs.shift()!;
-    queue.voice.emittedError = true;
-    queue.voice.stream?.kill();
-    distube.emit(Events.ERROR, stallError(), queue, song);
-    if (queue.songs.length) await distube.queues.playSong(queue);
-    else { queue.voice.stop(); queue.remove(); }
-  }, options);
+  }, queue => failSong(queue, stallError()), options);
   const restoreControls = new Map<Queue, () => void>();
   const alternativePlays = new WeakMap<Queue, { song: Song; pending: Promise<void> }>();
   const nativePlay = distube.queues?.playSong;
@@ -59,7 +70,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
     const song = queue.songs[0];
     if (!song || queue.stopped) return;
     let stream: DisTubeStream | undefined;
-    const owns = () => !queue.stopped && !getPlaybackState(queue)?.closing && distube.getQueue(queue.id) === queue && queue.songs[0] === song;
+    const owns = () => ownsQueue(queue) && queue.songs[0] === song;
     try {
       await distube.handler.attachStreamInfo(song);
       if (!owns() || getPlaybackState(queue)?.blocked) return;
@@ -77,26 +88,50 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
     } catch (error) {
       stream?.kill();
       if (!owns()) return;
-      queue.songs.shift();
-      distube.emit(Events.ERROR, error instanceof Error ? error : new Error(String(error)), queue, song);
-      if (queue.songs.length) await distube.queues.playSong(queue);
-      else { queue.voice.stop(); queue.remove(); }
+      await failSong(queue, error, song);
     }
   }
   const nativeFinish = distube.queues?.handleSongFinish;
+  const pendingFinishes = new WeakMap<Queue, { song: Song | undefined; stream: DisTubeStream | undefined; manual: boolean; pending: Promise<void> }>();
   if (nativeFinish) distube.queues.handleSongFinish = async queue => {
-    const state = getPlaybackState(queue);
-    if (state?.blocked || state?.busy || (state && ['recovering', 'alternative'].includes(state.mode) &&
-      (queue.voice.emittedError || !(queue.voice.stream?.audioResource?.playbackDuration)))) return;
-    try { await nativeFinish.call(distube.queues, queue); }
-    catch (error) { console.error('[Fin de canción]', error); }
+    const song = queue.songs[0], stream = queue.voice.stream, manual = queue._manualUpdate;
+    if (!song) return;
+    const eligible = () => {
+      const state = getPlaybackState(queue);
+      return ownsQueue(queue) && !state?.blocked && !state?.busy && queue.songs[0] === song && queue.voice.stream === stream &&
+        queue._manualUpdate === manual && (manual || !queue.voice.emittedError &&
+          !(state && ['recovering', 'alternative'].includes(state.mode) && !stream?.audioResource?.playbackDuration));
+    };
+    if (!eligible()) return;
+    const existing = pendingFinishes.get(queue);
+    if (existing && existing.song === song && existing.stream === stream && existing.manual === manual) return existing.pending;
+    const pending = (async () => {
+      try {
+        for (;;) {
+          await queue._taskQueue.queuing();
+          let finishing: Promise<void>;
+          try {
+            if (!eligible()) return;
+            // Drain commands already waiting before delegating: native finish
+            // captures the head before acquiring its own task lock.
+            if (queue._taskQueue.remaining > 1) continue;
+            finishing = nativeFinish.call(distube.queues, queue);
+          } finally { queue._taskQueue.resolve(); }
+          await finishing;
+          return;
+        }
+      } catch (error) { console.error('[Fin de canción]', error); }
+    })();
+    pendingFinishes.set(queue, { song, stream, manual, pending });
+    try { await pending; }
+    finally { if (pendingFinishes.get(queue)?.pending === pending) pendingFinishes.delete(queue); }
   };
   if (nativePlay) {
     // ERROR listeners are not awaited. Hold the reinserted head here, before
     // native playback, so an asynchronous alternative never races the next song.
     const playWithRecovery: typeof nativePlay = async (queue, emitPlaySong) => {
       const failed = queue.songs[0];
-      if (queue.stopped) return;
+      if (!ownsQueue(queue)) return;
       if (getPlaybackState(queue)?.blocked) { await panels.show(queue); return; }
       const plugin = findSearchPlugin(distube);
       const existing = alternativePlays.get(queue);
@@ -138,7 +173,18 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
 
   on(Events.INIT_QUEUE, (queue) => {
     health.init(queue);
+    observeVoiceErrors(queue.voice);
     if (!restoreControls.has(queue)) {
+      const previousError = queue._listeners?.error;
+      const voiceError = guardedEvent('Error de reproducción de voz', async (error: Error) => {
+        if (queue.voice.stream && failedStreams.has(queue.voice.stream)) return;
+        await failSong(queue, error);
+      });
+      if (previousError) {
+        queue.voice.off('error', previousError);
+        queue._listeners!.error = voiceError;
+        queue.voice.on('error', voiceError);
+      }
       const skip = queue.skip;
       const stop = queue.stop;
       const seek = queue.seek;
@@ -179,6 +225,11 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
       };
       if (resume) queue.resume = (...args) => getPlaybackState(queue)?.blocked ? health.retryBlocked(queue).then(() => queue) : resume.apply(queue, args);
       restoreControls.set(queue, () => {
+        if (previousError && queue._listeners?.error === voiceError) {
+          queue.voice.off('error', voiceError);
+          queue._listeners.error = previousError;
+          if (!queue.stopped) queue.voice.on('error', previousError);
+        }
         if (skip) queue.skip = skip;
         if (stop && !queue.stopped) queue.stop = stop;
         if (seek) queue.seek = seek;
@@ -233,7 +284,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
     console.error('DisTube Error:', error);
     const diagnostics = getStreamDiagnostics(error);
     if (diagnostics.length) console.error('[FFmpeg]', diagnostics.join('\n'));
-    if (queue.stopped) return;
+    if (!ownsQueue(queue)) return;
     // Must run before the first await: DisTube decides whether to stop immediately after emit.
     recovery.retry(queue, song, error, findSearchPlugin(distube));
     if (!song) await queue.textChannel?.send({ embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription(describeMusicError(error))] });
@@ -248,6 +299,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
       .setDescription('🔇 No se encontraron canciones relacionadas. Puedes añadir otra con /play.')] });
   });
   return () => {
+    disposed = true;
     for (const remove of listeners.splice(0)) remove();
     notices.dispose(); recovery.dispose(); panels.dispose(); health.dispose();
     for (const restore of restoreControls.values()) restore();

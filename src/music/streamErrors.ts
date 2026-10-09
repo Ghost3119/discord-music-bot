@@ -1,7 +1,17 @@
-import { DisTubeStream } from 'distube';
+import { DisTubeStream, DisTubeVoice } from 'distube';
 
 const observedStreams = new WeakSet<DisTubeStream>();
 const diagnostics = new WeakMap<object, string[]>();
+const observedVoices = new WeakSet<DisTubeVoice>();
+
+/** Queue.remove detaches its error listener while the voice can still receive callbacks. */
+export function observeVoiceErrors(voice: DisTubeVoice): void {
+  if (observedVoices.has(voice) || typeof voice.on !== 'function') return;
+  observedVoices.add(voice);
+  voice.on('error', error => {
+    if (voice.listenerCount('error') === 1) console.error('Error tardío de voz:', error);
+  });
+}
 
 function sanitizeAudioLog(line: string): string {
   return line.replace(/\b(?:authorization|cookie|set-cookie)\s*:[^\r\n]*/gi, '[credencial omitida]')

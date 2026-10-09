@@ -32,7 +32,8 @@ Los valores numéricos siguientes son los implementados. Podrán ajustarse tras 
 - `/clear` y `/move`, además de `/shuffle` y `/remove` reforzados. Comprobaciones del canal de voz, operaciones ordenadas y descarte de resultados tardíos.
 - Portada grande conservada, estados del audio, historial y Reintentar en el panel, inicio aproximado de pendientes y tiempo restante del ciclo actual.
 - Pruebas de recuperación integrada, dos servidores, pausas, callbacks tardíos, componentes de Discord, errores de disco, restauración bloqueada y una hora de avance de audio con reloj simulado. La hora simulada no equivale a una hora de reproducción real en Discord.
-- Preparación de activación reforzada: `deploy:check` comprueba los 19 comandos sin contactar con Discord. El registro real falla con código 1 si hay problemas y verifica la respuesta de la API. La suite completa tiene 154 pruebas aprobadas; registro real, reinicio y validación prolongada siguen pendientes.
+- Preparación de activación reforzada: `deploy:check` comprueba los 19 comandos sin contactar con Discord. El registro real falla con código 1 si hay problemas y verifica la respuesta de la API. La suite completa tiene 166 pruebas aprobadas; registro real, reinicio y validación prolongada siguen pendientes y aplazados por indicación del usuario.
+- Doce pruebas adicionales con la cola y el bloqueo reales de DisTube, y voz simulada, cubren errores tardíos de voz, cierre fallido, errores y finales duplicados, Siguiente y seek simultáneos con el fin del audio, sesiones reemplazadas y cien sesiones sucesivas. Se corrigieron los fallos reproducidos: una excepción tardía sin manejador y el avance indebido de la cola por eventos antiguos.
 
 La configuración y la secuencia de activación y vuelta atrás están en [OPERACION.md](OPERACION.md). Se mantienen a continuación el alcance y los criterios de aceptación de cada entrega.
 
