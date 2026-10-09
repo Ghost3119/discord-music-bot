@@ -12,6 +12,9 @@ function temporary(t) {
 test('log rotation retains bounded valid JSON records and masks credentials', async t => {
   const directory = temporary(t), logger = createLogger({ directory, maxBytes: 500, backups: 2 });
   for (let i = 0; i < 20; i++) logger.write('error', [`${i} https://discord.com/api/webhooks/123/webhook-secret`, { token: 'token-secret', message: 'x'.repeat(100) }]);
+  // Production close is bounded. Wait for this fixture's actual disk work before
+  // inspecting and removing its directory, even on a busy test machine.
+  await logger.flush(10000);
   await logger.close();
   const files = fs.readdirSync(directory); assert.ok(files.length <= 3); assert.ok(files.length > 1);
   for (const file of files) {
@@ -24,7 +27,7 @@ test('unwritable logging falls back once to console and keeps a bounded queue', 
   const directory = temporary(t), file = path.join(directory, 'file'); fs.writeFileSync(file, 'occupied');
   const errors = [], logger = createLogger({ directory: file, maxPending: 2, report: (...args) => errors.push(args) });
   for (let i = 0; i < 100; i++) logger.write('error', ['test']);
-  await logger.flush(); logger.write('error', ['later']); await logger.close();
+  await logger.flush(10000); logger.write('error', ['later']); await logger.close();
   assert.equal(errors.length, 1); assert.ok(logger.stats().dropped >= 98); assert.equal(logger.stats().pending, 0);
 });
 test('sensitive headers, signed URLs and named secrets are redacted and capped', () => {

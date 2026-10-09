@@ -66,6 +66,14 @@ Registra los comandos slash en tu servidor:
 npm run deploy
 ```
 
+Puedes comprobar antes las definiciones sin contactar con Discord ni iniciar el bot:
+
+```powershell
+npm run deploy:check
+```
+
+La comprobación muestra los 19 comandos y la huella SHA-256 del registro. El registro real verifica la respuesta de Discord y termina con código 1 si falla; no interpretes un registro fallido como permiso para continuar la activación. Su diagnóstico oculta credenciales y se conserva en `logs/deploy.jsonl`.
+
 Inicia el bot:
 
 ```powershell
@@ -213,6 +221,7 @@ Ideas buenas para seguir mejorando el bot:
 | `npm run update:ytdlp` | Actualiza yt-dlp durante mantenimiento, con un límite de 60 segundos. |
 | `npm test` | Compila y ejecuta las pruebas, incluidas recuperación y fallos simulados. |
 | `npm run deploy` | Registra comandos slash en el servidor configurado. |
+| `npm run deploy:check` | Valida y muestra los comandos sin registrarlos ni iniciar el bot. |
 
 ## Notas
 
