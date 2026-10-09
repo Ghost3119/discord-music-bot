@@ -35,6 +35,9 @@ export class HistoryStore {
   private pending: Promise<void> | undefined;
   private dirty = false;
   private retryAt = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  private closed = false;
+  private closing: Promise<void> | undefined;
   constructor(private readonly path?: string) {
     if (!path) return;
     try {
@@ -101,20 +104,60 @@ export class HistoryStore {
     }).slice(0, 2000);
   }
   private save(): void {
-    if (!this.path || Date.now() < this.retryAt) return;
+    if (!this.path || this.closed) return;
     this.dirty = true;
-    if (this.pending) return;
+    void this.write();
+  }
+  private clearRetry(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+  }
+  private scheduleRetry(): void {
+    if (!this.path || this.closed || !this.dirty || this.retryTimer) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      void this.write();
+    }, Math.max(0, this.retryAt - Date.now()));
+    this.retryTimer.unref();
+  }
+  private write(force = false): Promise<void> | undefined {
+    if (this.pending) return this.pending;
+    if (!this.path || !this.dirty || this.closed && !force) return undefined;
+    if (!force && Date.now() < this.retryAt) { this.scheduleRetry(); return undefined; }
+    this.clearRetry();
     this.pending = (async () => {
       try {
         await mkdir(dirname(this.path!), { recursive: true });
         while (this.dirty) {
+          this.prune();
           this.dirty = false;
           await writeFile(`${this.path}.tmp`, JSON.stringify(this.entries), { mode: 0o600 });
           await rename(`${this.path}.tmp`, this.path!);
         }
-      } catch (error) { this.retryAt = Date.now() + 60_000; this.dirty = false; console.error('[Historial] No se pudo guardar:', error); }
-      finally { this.pending = undefined; }
+        this.retryAt = 0;
+      } catch (error) {
+        this.retryAt = Date.now() + 60_000;
+        this.dirty = true;
+        console.error(this.closed ? '[Historial] No se pudo guardar durante el cierre:' :
+          '[Historial] No se pudo guardar; se reintentará en 60 segundos:', error);
+      } finally {
+        this.pending = undefined;
+        this.scheduleRetry();
+      }
     })();
+    return this.pending;
   }
-  async flush(): Promise<void> { await this.pending; }
+  async flush(): Promise<void> { await this.write(); }
+  close(): Promise<void> {
+    if (!this.closing) {
+      this.closed = true;
+      this.clearRetry();
+      this.closing = (async () => {
+        await this.pending;
+        // One final attempt may bypass the cooldown; failures never restart it.
+        await this.write(true);
+      })();
+    }
+    return this.closing;
+  }
 }

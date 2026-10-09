@@ -4,7 +4,7 @@ La nueva versión está preparada en el código y en `dist`. No se detuvo ni rei
 
 ## Validación local
 
-Resultado al 8 de octubre de 2026: **176 pruebas aprobadas, cero fallos**, con compilación TypeScript correcta mediante `npm test`.
+Resultado al 8 de octubre de 2026: **185 pruebas aprobadas, cero fallos**, con compilación TypeScript correcta mediante `npm test`.
 
 La suite cubre el detector a 8 y 12 segundos, pausas y seek, tres solicitudes agotadas con la recuperación real, reintento manual, dos servidores, edición simultánea, recomendaciones tardías, historial con límites de almacenamiento, permisos, fallos de disco, rotación y restauración de colas normales y bloqueadas. También comprueba FFmpeg ante un HTTP 403 de un servidor local y el reinicio del supervisor con procesos de prueba.
 
@@ -41,6 +41,14 @@ Se añadieron diez casos de regresión con checkpoints en directorios temporales
 - Dos solicitudes simultáneas de restauración comparten una operación. Cerrar el almacén varias veces es seguro y retira sus seis manejadores de eventos, sin acumularlos en las siguientes inicializaciones.
 
 Estas comprobaciones cubren la lógica local de restauración; siguen pendientes el reinicio de mantenimiento y la recuperación con una conexión real a Discord.
+
+### Recuperación del guardado del historial
+
+Se corrigió un caso en el que el historial permanecía en memoria después de un fallo de escritura, aunque el disco volviera a estar disponible. Ahora mantiene los cambios pendientes y vuelve a intentar guardarlos a los 60 segundos sin necesitar otra canción. Los errores consecutivos respetan esa espera; las entradas siguen sujetas a los límites de retención y se revisan antes de cada escritura.
+
+El cierre cancela el temporizador, espera la escritura en curso y hace un último intento si quedan cambios pendientes, incluso dentro de la espera de 60 segundos. Si el disco sigue fallando, informa del fallo sin programar más reintentos. El límite general de cierre del proceso sigue siendo de cinco segundos.
+
+Nueve pruebas con archivos temporales y reloj simulado comprueban recuperación automática, fallos persistentes, conservación del archivo anterior si falla el reemplazo, escrituras simultáneas con el cierre y caducidad tras una interrupción prolongada. Una prueba adicional dentro de esos nueve casos usa un proceso local para verificar que el temporizador pendiente no impide su salida; no conecta un bot a Discord.
 
 ## Configuración
 

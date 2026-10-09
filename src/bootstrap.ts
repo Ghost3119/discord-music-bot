@@ -36,7 +36,7 @@ void import('./index').then(({ client, queueRecovery, startBot, stopEmptyVoice, 
     stopEmptyVoice();
     stopPlayerPanels();
     queueRecovery.stop();
-    await Promise.allSettled([history.flush(), client.destroy()]);
+    await Promise.allSettled([history.close(), client.destroy()]);
   };
   return startBot();
 }).catch(guardedEvent('Inicio del bot', (error: unknown) => {

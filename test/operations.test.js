@@ -177,6 +177,7 @@ test('history disk failures keep the in-memory history available without rejecte
   const store = new HistoryStore(path.join(file, 'history.json'));
   store.finish({ id: guildId }, song(), 'failed', 'SOURCE_BLOCKED'); await store.flush();
   assert.equal(store.list(guildId).length, 1);
+  await store.close();
 });
 test('history rejects unsafe sources, prevents double retries and scopes entries to their guild', () => {
   for (const input of ['https://audio.test/?token=secret', 'javascript:alert(1)', 'https://evil.test/youtube.com/watch?v=AAAAAAAAAAA', 'https://user:pass@youtube.com/watch?v=AAAAAAAAAAA']) assert.equal(publicMusicUrl(input), undefined);
