@@ -2,15 +2,17 @@
 
 La nueva versión se activó con autorización del usuario el 8 de octubre de 2026 a las 20:24 (Ciudad de México): se respaldaron código y datos, Discord confirmó los 19 comandos y se cerró ordenadamente la instancia anterior antes de arrancar una sola instancia nueva. Se confirmó la recuperación de siete canciones. `npm run start` usa un supervisor de proceso, sin recarga de archivos.
 
-El supervisor actual funciona en segundo plano (PID 20556), con el bot hijo PID 25824. El respaldo está en `C:\Users\picud\Repos\discord-music-backup-20261008-202303`; contiene el código, historial Git, `dist` preparado y datos después del cierre, además de los metadatos de activación. La revisión cargada es `2d539846eb84d0ba96b031f44c76759002709dc5`.
+La activación inicial usó el supervisor en segundo plano PID 20556 y el bot hijo PID 25824, desde la revisión `2d539846eb84d0ba96b031f44c76759002709dc5`. El respaldo está en `C:\Users\picud\Repos\discord-music-backup-20261008-202303`; contiene el código, historial Git, `dist` preparado y datos después del cierre, además de los metadatos de activación.
+
+Después se inició otra copia desde la terminal a las 20:32. Al investigar los errores de voz e interacciones se confirmaron ambas instancias activas. Se cerró ordenadamente solo la copia en segundo plano, conservando el supervisor de la terminal PID 7708 y su bot hijo PID 43540. Estos PID describen la comprobación del incidente; cambiarán al reiniciar.
 
 La observación inicial confirmó cinco minutos de avance real, actualización del panel y checkpoints, sin errores ni advertencias nuevos en los registros y sin reemplazo del proceso. Esto no equivale a una prueba prolongada ni confirma que todos los controles funcionen. El usuario detuvo Computer Use con Esc durante la comprobación de Discord; no se continuó con entradas en la aplicación. Quedan pendientes las pruebas interactivas y prolongadas, y la recuperación real de una cola bloqueada.
 
-Se encontró además pérdida de la portada al restaurar. El ajuste posterior ya está en el código y en `dist`, con pruebas aprobadas: conserva imágenes públicas y usa una portada de YouTube por ID para checkpoints antiguos. Este ajuste aún no está cargado en el proceso activo; requiere otro reinicio de mantenimiento.
+Se encontró además pérdida de la portada al restaurar. El ajuste conserva imágenes públicas y usa una portada de YouTube por ID para checkpoints antiguos; está compilado y probado. La inspección visual de la portada restaurada sigue pendiente.
 
 ## Validación local
 
-Resultado al 8 de octubre de 2026: **187 pruebas aprobadas, cero fallos**, con compilación TypeScript correcta mediante `npm test`.
+Resultado al 8 de octubre de 2026: **200 pruebas aprobadas, cero fallos**, con compilación TypeScript correcta mediante `npm test`.
 
 La suite cubre el detector a 8 y 12 segundos, pausas y seek, tres solicitudes agotadas con la recuperación real, reintento manual, dos servidores, edición simultánea, recomendaciones tardías, historial con límites de almacenamiento, permisos, fallos de disco, rotación y restauración de colas normales y bloqueadas. También comprueba FFmpeg ante un HTTP 403 de un servidor local y el reinicio del supervisor con procesos de prueba.
 
@@ -55,6 +57,16 @@ Se corrigió un caso en el que el historial permanecía en memoria después de u
 El cierre cancela el temporizador, espera la escritura en curso y hace un último intento si quedan cambios pendientes, incluso dentro de la espera de 60 segundos. Si el disco sigue fallando, informa del fallo sin programar más reintentos. El límite general de cierre del proceso sigue siendo de cinco segundos.
 
 Nueve pruebas con archivos temporales y reloj simulado comprueban recuperación automática, fallos persistentes, conservación del archivo anterior si falla el reemplazo, escrituras simultáneas con el cierre y caducidad tras una interrupción prolongada. Una prueba adicional dentro de esos nueve casos usa un proceso local para verificar que el temporizador pendiente no impide su salida; no conecta un bot a Discord.
+
+### Evitar instancias duplicadas
+
+El arranque reserva una instancia por `CLIENT_ID` en el equipo antes de importar el bot o conectar a Discord. En Windows usa una tubería local con nombre; en otros sistemas, un puerto de localhost derivado del identificador. La reserva se libera al cerrar o morir el proceso, sin archivos de bloqueo que haya que borrar.
+
+Una segunda copia termina con código 79 y un diagnóstico explícito. El supervisor no vuelve a arrancarla en bucle ni detiene a la primera. La protección se aplica también a `dev` y `start:once`. Trece pruebas adicionales verifican arranques concurrentes, procesos distintos, liberación tras un cierre forzado, salida del supervisor, interacciones vencidas o ya atendidas y redacción de credenciales sin ocultar frases normales como “Bot Voice State”.
+
+Los errores de interacción 10062 y 40060 se registran como advertencia y no provocan otro intento de respuesta. Otros fallos conservan su manejo habitual.
+
+Esta protección y el ajuste de interacciones están compilados, pero la instancia de la terminal ya estaba arrancada cuando se prepararon: todavía no mantiene la nueva reserva. Para cargarlos, cuando se pueda interrumpir la música, pulsa `Ctrl+C`, espera a que termine y ejecuta `npm run start`. No hace falta registrar comandos de nuevo. Compilar no recarga el proceso activo; no inicies una copia adicional para probar la protección mientras siga funcionando la versión anterior.
 
 ## Configuración
 

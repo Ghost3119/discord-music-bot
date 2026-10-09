@@ -224,6 +224,8 @@ Ideas buenas para seguir mejorando el bot:
 | `npm run deploy` | Registra comandos slash en el servidor configurado. |
 | `npm run deploy:check` | Valida y muestra los comandos sin registrarlos ni iniciar el bot. |
 
+Solo puede arrancar una instancia por `CLIENT_ID` en el mismo equipo. Una segunda copia sale con código 79 y el supervisor no la reinicia. La reserva se libera automáticamente al terminar el proceso. `npm run build` no recarga el bot activo: para aplicar cambios, detén su terminal con `Ctrl+C`, espera a que termine y vuelve a ejecutar `npm run start`.
+
 ## Notas
 
 - Los errores de `/play`, `/search` y reproducción incluyen una causa, una sugerencia y un código de diagnóstico. Distinguen búsquedas vacías, restricciones de acceso o región, límites de solicitudes, fallos de red, voz y audio. El error completo se conserva en la consola.
