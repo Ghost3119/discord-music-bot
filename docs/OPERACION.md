@@ -6,9 +6,9 @@ La activación inicial usó el supervisor en segundo plano PID 20556 y el bot hi
 
 Después se inició otra copia desde la terminal a las 20:32. Al investigar los errores de voz e interacciones se confirmaron ambas instancias activas. Se cerró ordenadamente solo la copia en segundo plano, conservando el supervisor de la terminal PID 7708 y su bot hijo PID 43540. Estos PID describen la comprobación del incidente; cambiarán al reiniciar.
 
-La observación inicial confirmó cinco minutos de avance real, actualización del panel y checkpoints, sin errores ni advertencias nuevos en los registros y sin reemplazo del proceso. Esto no equivale a una prueba prolongada ni confirma que todos los controles funcionen. El usuario detuvo Computer Use con Esc durante la comprobación de Discord; no se continuó con entradas en la aplicación. Quedan pendientes las pruebas interactivas y prolongadas, y la recuperación real de una cola bloqueada.
+La observación inicial confirmó cinco minutos de avance real, actualización del panel y checkpoints, sin errores ni advertencias nuevos en los registros y sin reemplazo del proceso. El usuario detuvo Computer Use con Esc durante la comprobación de Discord; no se continuó con entradas en la aplicación. Posteriormente, el usuario confirmó que probó el bot sin problemas y que la portada se ve. Se registra esa prueba de uso como satisfactoria; no se especificaron su duración ni todos los controles utilizados. Siguen sin documentarse una prueba prolongada y la recuperación real de una cola bloqueada.
 
-Se encontró además pérdida de la portada al restaurar. El ajuste conserva imágenes públicas y usa una portada de YouTube por ID para checkpoints antiguos; está compilado y probado. La inspección visual de la portada restaurada sigue pendiente.
+Se encontró además pérdida de la portada al restaurar. El ajuste conserva imágenes públicas y usa una portada de YouTube por ID para checkpoints antiguos; está compilado y probado. El usuario confirmó que la portada se muestra en uso real. No indicó si esa comprobación incluyó una restauración de cola.
 
 ## Validación local
 
@@ -37,7 +37,7 @@ Se añadieron 12 pruebas con `QueueManager`, `Queue` y el bloqueo de tareas real
 
 Detener manualmente ya no registra la canción como completada por un evento de fin tardío. Cancelar una recuperación para pasar a otra canción limpia su indicador de intento; los callbacks de una cola cerrada no vuelven a incorporarla al monitor.
 
-Estos resultados amplían la validación local y no sustituyen las pruebas interactivas pendientes ni la prueba prolongada de reproducción real.
+Estos resultados amplían la validación local. La prueba de uso posterior del usuario terminó sin problemas; sigue sin documentarse una prueba prolongada de reproducción real.
 
 ### Validación de persistencia y restauración
 
@@ -66,7 +66,7 @@ Una segunda copia termina con código 79 y un diagnóstico explícito. El superv
 
 Los errores de interacción 10062 y 40060 se registran como advertencia y no provocan otro intento de respuesta. Otros fallos conservan su manejo habitual.
 
-Esta protección y el ajuste de interacciones están compilados, pero la instancia de la terminal ya estaba arrancada cuando se prepararon: todavía no mantiene la nueva reserva. Para cargarlos, cuando se pueda interrumpir la música, pulsa `Ctrl+C`, espera a que termine y ejecuta `npm run start`. No hace falta registrar comandos de nuevo. Compilar no recarga el proceso activo; no inicies una copia adicional para probar la protección mientras siga funcionando la versión anterior.
+Esta protección y el ajuste de interacciones quedaron compilados después de arrancar la instancia de la terminal. Se indicó reiniciar para cargarlos; la confirmación posterior de uso satisfactorio no especifica si hubo reinicio. Si sigue activo el proceso anterior, pulsa `Ctrl+C`, espera a que termine y ejecuta `npm run start` cuando se pueda interrumpir la música. No hace falta registrar comandos de nuevo. Compilar no recarga el proceso activo; no inicies una copia adicional para probar la protección mientras siga funcionando la versión anterior.
 
 ## Configuración
 
