@@ -1,4 +1,4 @@
-import { DisTube, DisTubeEvents, TypedDisTubeEvents, Events, InfoExtractorPlugin, Playlist, Queue, Song, DisTubeStream } from 'distube';
+import { DisTube, DisTubeEvents, TypedDisTubeEvents, Events, InfoExtractorPlugin, Playlist, Queue, Song, DisTubeStream, DisTubeError } from 'distube';
 import { EmbedBuilder } from 'discord.js';
 import { createAddQueueEmbed } from '../utils/embed';
 import { BotColors } from '../utils/colors';
@@ -69,11 +69,17 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
     if (!distube.handler?.attachStreamInfo) { await nativePlay?.call(distube.queues, queue, emit); return; }
     const song = queue.songs[0];
     if (!song || queue.stopped) return;
+    const signal = recovery.signalFor(queue, song);
     let stream: DisTubeStream | undefined;
     const owns = () => ownsQueue(queue) && queue.songs[0] === song;
     try {
-      await distube.handler.attachStreamInfo(song);
-      if (!owns() || getPlaybackState(queue)?.blocked) return;
+      const renewing = song.stream.playFromSource ? song : song.stream.song;
+      if (signal && renewing?.plugin instanceof YtDlpSearchPlugin && renewing.stream.playFromSource && !renewing.stream.url) {
+        const url = await renewing.plugin.getStreamURL(renewing, signal);
+        if (signal.aborted || !owns()) return;
+        renewing.stream.url = url;
+      } else await distube.handler.attachStreamInfo(song);
+      if (signal?.aborted || !owns() || getPlaybackState(queue)?.blocked) return;
       const playable = song.stream.playFromSource ? song : song.stream.song;
       if (!playable?.stream.playFromSource || !playable.stream.url) throw Object.assign(new Error('No stream URL attached'), { errorCode: 'NO_STREAM_URL' });
       stream = new DisTubeStream(playable.stream.url, {
@@ -83,11 +89,11 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
       queue._beginTime = 0;
       stream.on('debug', data => distube.emit(Events.FFMPEG_DEBUG, `[${queue.id}] ${data}`));
       await queue.voice.play(stream);
-      if (!owns()) { stream.kill(); return; }
+      if (signal?.aborted || !owns()) { stream.kill(); return; }
       if (emit) distube.emit(Events.PLAY_SONG, queue, song);
     } catch (error) {
       stream?.kill();
-      if (!owns()) return;
+      if (signal?.aborted || !owns()) return;
       await failSong(queue, error, song);
     }
   }
@@ -193,7 +199,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
       // Otherwise a user pressing Stop/Next could wait for the whole lookup.
       if (skip) queue.skip = async (...args) => {
         const failed = queue.songs[0];
-        const searching = failed && recovery.needsAlternative(queue, failed);
+        const recovering = failed && recovery.signalFor(queue, failed);
         recovery.cancelQueue(queue);
         if (getPlaybackState(queue)?.blocked) throw Object.assign(new Error('La cola está pausada por fallos. Usa Reintentar o Detener.'), { errorCode: 'QUEUE_BLOCKED' });
         resetObservation(queue, health.now());
@@ -206,7 +212,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
         catch (error) {
           // Skip can reject (e.g. there is no next song, or radio lookup fails).
           // Do not leave an aborted recovery at the head with no active audio.
-          if (searching && recovery.abandonCancelled(queue, failed)) {
+          if (recovering && recovery.abandonCancelled(queue, failed)) {
             if (queue.songs.length) await queue.play();
             else await queue.stop();
           }
@@ -218,10 +224,22 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
         const state = getPlaybackState(queue); if (state) state.closing = true;
         markQueueEdited(queue); recovery.cancelQueue(queue); return stop.apply(queue, args);
       };
-      if (seek) queue.seek = (...args) => {
-        if (getPlaybackState(queue)?.blocked) return Promise.reject(Object.assign(new Error('Usa Reintentar para recuperar la cola.'), { errorCode: 'QUEUE_BLOCKED' }));
+      if (typeof seek === 'function') queue.seek = async (time) => {
+        const song = queue.songs[0];
+        if (getPlaybackState(queue)?.blocked) throw Object.assign(new Error('Usa Reintentar para recuperar la cola.'), { errorCode: 'QUEUE_BLOCKED' });
         recovery.cancelQueue(queue); resetObservation(queue, health.now());
-        return seek.apply(queue, args);
+        // Native seek reads its head only after waiting. Keep the command bound
+        // to the song the user saw, and validate inside the same task lock.
+        await queue._taskQueue.queuing();
+        try {
+          if (!ownsQueue(queue) || !song || queue.songs[0] !== song) throw Object.assign(new Error('La canción cambió mientras esperaba.'), { errorCode: 'SESSION_CHANGED' });
+          if (getPlaybackState(queue)?.blocked) throw Object.assign(new Error('Usa Reintentar para recuperar la cola.'), { errorCode: 'QUEUE_BLOCKED' });
+          if (typeof time !== 'number') throw new DisTubeError('INVALID_TYPE', 'number', time, 'time');
+          if (Number.isNaN(time) || time < 0) throw new DisTubeError('NUMBER_COMPARE', 'time', 'bigger or equal to', 0);
+          queue._beginTime = time;
+          await queue.play(false);
+          return queue;
+        } finally { queue._taskQueue.resolve(); }
       };
       if (resume) queue.resume = (...args) => getPlaybackState(queue)?.blocked ? health.retryBlocked(queue).then(() => queue) : resume.apply(queue, args);
       restoreControls.set(queue, () => {

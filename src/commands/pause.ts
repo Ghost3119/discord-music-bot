@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { Command } from './command.types';
-import { ensureGuild } from '../utils/guard';
+import { ensureControlChannel, ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
 
 export const pause: Command = {
@@ -31,8 +31,11 @@ export const pause: Command = {
       return;
     }
 
+    await interaction.deferReply();
+    if (!await ensureControlChannel(interaction, queue)) return;
+    if (distube.getQueue(guild.id) !== queue || queue.stopped) throw Object.assign(new Error('La sesión terminó mientras esperaba.'), { errorCode: 'SESSION_CHANGED' });
     await queue.pause();
-    await interaction.reply({
+    await interaction.editReply({
       embeds: [new EmbedBuilder().setColor(BotColors.Warning).setDescription('⏸️ Música pausada. Usa `/resume` para reanudar.')],
     });
   },
