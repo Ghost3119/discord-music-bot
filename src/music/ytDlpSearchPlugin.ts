@@ -46,8 +46,8 @@ interface YtDlpInfo {
   entries?: YtDlpInfo[];
 }
 
-interface PendingStreamUrl {
-  promise: Promise<string>;
+interface PendingRequest<T> {
+  promise: Promise<T>;
   controller: AbortController;
   consumers: number;
   settled: boolean;
@@ -237,8 +237,8 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
   private readonly searchCache = new TtlCache<YtDlpInfo>(SEARCH_CACHE_MAX_ITEMS, SEARCH_CACHE_TTL_MS);
   private readonly streamUrlCache = new TtlCache<string>(STREAM_CACHE_MAX_ITEMS, STREAM_CACHE_TTL_MS);
   private readonly mixCache = new TtlCache<YtDlpInfo[]>(MIX_CACHE_MAX_ITEMS, MIX_CACHE_TTL_MS);
-  private readonly pendingSearches = new Map<string, Promise<YtDlpInfo | null>>();
-  private readonly pendingStreamUrls = new Map<string, PendingStreamUrl>();
+  private readonly pendingSearches = new Map<string, PendingRequest<YtDlpInfo | null>>();
+  private readonly pendingStreamUrls = new Map<string, PendingRequest<string>>();
   private readonly pendingMixes = new Map<string, Promise<YtDlpInfo[]>>();
   private readonly refreshAfter = new WeakMap<Song, number>();
   private readonly sourceCooldowns = new Map<SearchSource, { until: number; error: unknown }>();
@@ -257,18 +257,19 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     return this.createSong(info, options);
   }
 
-  override async searchSong<T>(query: string, options: ResolveOptions<T>): Promise<Song<T> | null> {
-    const result = await this.getSearchResult(query, options.metadata);
+  override async searchSong<T>(query: string, options: ResolveOptions<T>, signal?: AbortSignal, priority: ExtractionPriority = 'interactive'): Promise<Song<T> | null> {
+    const result = await this.getSearchResult(query, options.metadata, priority, signal);
 
     return result ? this.createSong(result, options) : null;
   }
 
-  override async getStreamURL<T>(song: Song<T>, signal?: AbortSignal): Promise<string> {
+  override async getStreamURL<T>(song: Song<T>, signal?: AbortSignal, priority: ExtractionPriority = 'interactive'): Promise<string> {
     signal?.throwIfAborted();
     const refreshAfter = this.refreshAfter.get(song);
     if (refreshAfter) {
       this.refreshAfter.delete(song);
-      await delay(Math.max(0, refreshAfter - Date.now()), undefined, { signal });
+      const remaining = Math.max(0, refreshAfter - Date.now());
+      if (remaining > 0) await delay(remaining, undefined, { signal });
     }
     signal?.throwIfAborted();
     if (!song.url) {
@@ -282,8 +283,8 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     let pending = this.pendingStreamUrls.get(cacheKey);
     if (!pending) {
       const controller = new AbortController();
-      const request: PendingStreamUrl = { controller, consumers: 0, settled: false,
-        promise: this.fetchStreamUrl(song.url, controller.signal).then(streamUrl => {
+      const request: PendingRequest<string> = { controller, consumers: 0, settled: false,
+        promise: this.fetchStreamUrl(song.url, controller.signal, priority).then(streamUrl => {
           controller.signal.throwIfAborted();
           this.streamUrlCache.set(cacheKey, streamUrl);
           return streamUrl;
@@ -295,10 +296,10 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
       this.pendingStreamUrls.set(cacheKey, request);
       pending = request;
     }
-    return this.consumeStreamUrl(cacheKey, pending, signal);
+    return this.consumeRequest(this.pendingStreamUrls, cacheKey, pending, signal);
   }
 
-  private consumeStreamUrl(cacheKey: string, request: PendingStreamUrl, signal?: AbortSignal): Promise<string> {
+  private consumeRequest<T>(requests: Map<string, PendingRequest<T>>, cacheKey: string, request: PendingRequest<T>, signal?: AbortSignal): Promise<T> {
     request.consumers += 1;
     return new Promise((resolve, reject) => {
       let finished = false;
@@ -308,7 +309,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
         signal?.removeEventListener('abort', abort);
         request.consumers -= 1;
         if (!request.settled && !request.consumers) {
-          if (this.pendingStreamUrls.get(cacheKey) === request) this.pendingStreamUrls.delete(cacheKey);
+          if (requests.get(cacheKey) === request) requests.delete(cacheKey);
           request.controller.abort();
         }
         return true;
@@ -354,7 +355,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     return [];
   }
 
-  async findAlternative(song: Song, signal?: AbortSignal): Promise<Song | null> {
+  async findAlternative(song: Song, signal?: AbortSignal, priority: ExtractionPriority = 'interactive'): Promise<Song | null> {
     if (!song.name || song.isLive) return null;
     const reference = song.stream.playFromSource ? song : song.stream.song ?? song;
     if (reference.isLive) return null;
@@ -369,7 +370,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
       const cooldown = this.sourceCooldowns.get(attempt.source);
       if (cooldown && cooldown.until > Date.now()) continue;
       try {
-        const info = await this.fetchInfo(attempt.input, { flatPlaylist: true, playlistEnd: 5 }, budget);
+        const info = await this.fetchInfo(attempt.input, { flatPlaylist: true, playlistEnd: 5 }, budget, priority);
         const entries = rankSearchCandidates(query, (hasEntries(info) ? info.entries : [info]).filter(entry => entry && getPlayableUrl(entry)));
         for (const entry of entries.slice(0, 3)) {
           const url = getPlayableUrl(entry)!;
@@ -380,7 +381,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
           if (url === reference.url || (String(entry.id) === reference.id && sameSource)) continue;
           if (hydrated++ >= 6) return null;
           try {
-            const result = await this.fetchInfo(url, { format: 'ba/ba*', noPlaylist: true }, budget);
+            const result = await this.fetchInfo(url, { format: 'ba/ba*', noPlaylist: true }, budget, priority);
             const canonical = getPlayableUrl(result);
             if (!canonical || canonical === reference.url || hasEntries(result) || !result.url || result.url === canonical) continue;
             if (String(result.id) === reference.id && sameSource) continue;
@@ -389,6 +390,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
               metadata: song.metadata, ...(song.member ? { member: song.member } : {}),
             });
             if (!candidate.stream.playFromSource) continue;
+            budget.throwIfAborted();
             candidate.stream.url = result.url;
             if (song.playlist) candidate.playlist = song.playlist;
             this.streamUrlCache.set(normalizeUrlCacheKey(canonical), result.url);
@@ -465,8 +467,8 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     });
   }
 
-  private async fetchStreamUrl(url: string, signal: AbortSignal): Promise<string> {
-    const info = await this.fetchInfo(url, { format: 'ba/ba*', noPlaylist: true }, signal);
+  private async fetchStreamUrl(url: string, signal: AbortSignal, priority: ExtractionPriority): Promise<string> {
+    const info = await this.fetchInfo(url, { format: 'ba/ba*', noPlaylist: true }, signal, priority);
     const streamUrl = toStringValue(info.url);
 
     if (!streamUrl) {
@@ -515,7 +517,8 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     return promise;
   }
 
-  private async getSearchResult(query: string, metadata: unknown, priority: ExtractionPriority = 'interactive'): Promise<YtDlpInfo | null> {
+  private async getSearchResult(query: string, metadata: unknown, priority: ExtractionPriority = 'interactive', signal?: AbortSignal): Promise<YtDlpInfo | null> {
+    signal?.throwIfAborted();
     const trimmedQuery = query.trim();
     if (!trimmedQuery) return null;
 
@@ -524,24 +527,27 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     const cachedResult = this.searchCache.get(cacheKey);
     if (cachedResult) return cachedResult;
 
-    const pendingSearch = this.pendingSearches.get(cacheKey);
-    if (pendingSearch) return pendingSearch;
-
-    const searchPromise = this.fetchSearchResult(searchQuery, priority).finally(() => {
-      this.pendingSearches.delete(cacheKey);
-    });
-    this.pendingSearches.set(cacheKey, searchPromise);
-
-    const result = await searchPromise;
-    if (result) {
-      this.searchCache.set(cacheKey, result);
+    let request = this.pendingSearches.get(cacheKey);
+    if (!request) {
+      const controller = new AbortController();
+      const created: PendingRequest<YtDlpInfo | null> = { controller, consumers: 0, settled: false,
+        promise: this.fetchSearchResult(searchQuery, priority, controller.signal).then(result => {
+          controller.signal.throwIfAborted();
+          if (result) this.searchCache.set(cacheKey, result);
+          return result;
+        }).finally(() => {
+          created.settled = true;
+          if (this.pendingSearches.get(cacheKey) === created) this.pendingSearches.delete(cacheKey);
+        }),
+      };
+      this.pendingSearches.set(cacheKey, created);
+      request = created;
     }
-
-    return result;
+    return this.consumeRequest(this.pendingSearches, cacheKey, request, signal);
   }
 
-  private async fetchSearchResult(searchQuery: string, priority: ExtractionPriority): Promise<YtDlpInfo | null> {
-    const budget = AbortSignal.timeout(90_000);
+  private async fetchSearchResult(searchQuery: string, priority: ExtractionPriority, signal: AbortSignal): Promise<YtDlpInfo | null> {
+    const budget = AbortSignal.any([AbortSignal.timeout(90_000), signal]);
     const query = searchQuery.replace(YTDLP_SEARCH_PATTERN, '');
     let lastError: unknown;
     for (const attempt of this.searchAttempts(searchQuery)) {
@@ -549,6 +555,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
       if (cooldown && cooldown.until > Date.now()) { lastError = cooldown.error; continue; }
       try {
         const info = await this.fetchInfo(attempt.input, { flatPlaylist: true, playlistEnd: 5 }, budget, priority);
+        budget.throwIfAborted();
         const candidates = rankSearchCandidates(query, (hasEntries(info) ? info.entries : [info])
           .filter((entry) => entry && getPlayableUrl(entry)));
         for (const candidate of candidates.slice(0, 5)) {
@@ -556,6 +563,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
             const result = candidate._type === 'url'
               ? await this.fetchInfo(getPlayableUrl(candidate)!, { format: 'ba/ba*', noPlaylist: true }, budget, priority)
               : candidate;
+            budget.throwIfAborted();
             const canonical = getPlayableUrl(result);
             if (!canonical || hasEntries(result)) continue;
             if (candidate._type === 'url' && !matchesSearchQuery(query, result)) continue;

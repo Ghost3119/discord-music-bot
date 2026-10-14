@@ -13,6 +13,8 @@ import { PlaybackHealth, HealthOptions, stallError } from './playbackHealth';
 import { getPlaybackState, markQueueEdited, resetObservation } from './playbackState';
 import { HistoryStore } from './history';
 import { checkpointQueue } from './queueChanges';
+import { AudioPreloader, PreloaderOptions } from './audioPreloader';
+import { PrebufferedStream } from './prebufferedStream';
 
 function findSearchPlugin(distube: DisTube): YtDlpSearchPlugin | undefined {
   return distube.plugins?.find((plugin): plugin is YtDlpSearchPlugin => plugin instanceof YtDlpSearchPlugin);
@@ -33,7 +35,7 @@ function warmSearchCache(distube: DisTube, songs: Song[], metadata: unknown): vo
   })();
 }
 
-export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, options?: HealthOptions): () => void {
+export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, options?: HealthOptions, preloaderOptions?: PreloaderOptions): () => void {
   const notices = new RecoveryNotices();
   const panels = new PlayerPanels(distube);
   let disposed = false;
@@ -60,6 +62,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
   health = new PlaybackHealth(distube, history, queue => {
     void panels.refresh(queue); checkpointQueue(distube, queue);
   }, queue => failSong(queue, stallError()), options);
+  const preloader = new AudioPreloader(distube, recovery, { interval: options?.interval === 0 ? 0 : 1000, clock: health.now, ...preloaderOptions });
   const restoreControls = new Map<Queue, () => void>();
   const alternativePlays = new WeakMap<Queue, { song: Song; pending: Promise<void> }>();
   const nativePlay = distube.queues?.playSong;
@@ -67,32 +70,49 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
   // starts the resolved stream even if its old queue ended during extraction.
   async function startSong(queue: Queue, emit = true): Promise<void> {
     if (!distube.handler?.attachStreamInfo) { await nativePlay?.call(distube.queues, queue, emit); return; }
-    const song = queue.songs[0];
+    let song = queue.songs[0];
     if (!song || queue.stopped) return;
     const signal = recovery.signalFor(queue, song);
     let stream: DisTubeStream | undefined;
     const owns = () => ownsQueue(queue) && queue.songs[0] === song;
     try {
-      const renewing = song.stream.playFromSource ? song : song.stream.song;
-      if (signal && renewing?.plugin instanceof YtDlpSearchPlugin && renewing.stream.playFromSource && !renewing.stream.url) {
-        const url = await renewing.plugin.getStreamURL(renewing, signal);
-        if (signal.aborted || !owns()) return;
-        renewing.stream.url = url;
-      } else await distube.handler.attachStreamInfo(song);
+      const prepared = signal ? undefined : await preloader.take(queue, song);
+      if (prepared?.stream && !preloader.compatible(queue, prepared)) { await prepared.stream.dispose(); delete prepared.stream; }
+      if (!owns() || getPlaybackState(queue)?.blocked) { await prepared?.stream?.dispose(); return; }
+      if (prepared) {
+        if (prepared.replacement) {
+          health.history.alias(queue, song, prepared.replacement);
+          if (song.playlist) prepared.replacement.playlist = song.playlist;
+          queue.songs[0] = prepared.replacement; song = prepared.replacement;
+        }
+        if (!song.stream.playFromSource) song.stream.song = prepared.playable;
+        const playable = song.stream.playFromSource ? song : prepared.playable;
+        if (playable.stream.playFromSource) playable.stream.url = prepared.url;
+        stream = prepared.stream;
+      }
+      if (!prepared) {
+        const renewing = song.stream.playFromSource ? song : song.stream.song;
+        if (signal && renewing?.plugin instanceof YtDlpSearchPlugin && renewing.stream.playFromSource && !renewing.stream.url) {
+          const url = await renewing.plugin.getStreamURL(renewing, signal);
+          if (signal.aborted || !owns()) return;
+          renewing.stream.url = url;
+        } else await distube.handler.attachStreamInfo(song);
+      }
       if (signal?.aborted || !owns() || getPlaybackState(queue)?.blocked) return;
       const playable = song.stream.playFromSource ? song : song.stream.song;
       if (!playable?.stream.playFromSource || !playable.stream.url) throw Object.assign(new Error('No stream URL attached'), { errorCode: 'NO_STREAM_URL' });
-      stream = new DisTubeStream(playable.stream.url, {
+      stream ??= new DisTubeStream(playable.stream.url, {
         ffmpeg: { path: distube.options.ffmpeg.path, args: { global: { ...queue.ffmpegArgs.global }, input: { ...queue.ffmpegArgs.input },
           output: { ...queue.ffmpegArgs.output, ...queue.filters.ffmpegArgs } } }, ...(playable.duration ? { seek: queue._beginTime } : {}),
       });
       queue._beginTime = 0;
       stream.on('debug', data => distube.emit(Events.FFMPEG_DEBUG, `[${queue.id}] ${data}`));
       await queue.voice.play(stream);
-      if (signal?.aborted || !owns()) { stream.kill(); return; }
+      if (signal?.aborted || !owns()) { if (stream instanceof PrebufferedStream) await stream.dispose(); else stream.kill(); return; }
+      preloader.started(queue, stream, prepared?.stream ? 'buffer' : prepared ? 'url' : 'fallback');
       if (emit) distube.emit(Events.PLAY_SONG, queue, song);
     } catch (error) {
-      stream?.kill();
+      if (stream instanceof PrebufferedStream) await stream.dispose(); else stream?.kill();
       if (signal?.aborted || !owns()) return;
       await failSong(queue, error, song);
     }
@@ -222,11 +242,13 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
       if (stop) queue.stop = (...args) => {
         if (queue.stopped) return Promise.resolve();
         const state = getPlaybackState(queue); if (state) state.closing = true;
+        preloader.end(queue);
         markQueueEdited(queue); recovery.cancelQueue(queue); return stop.apply(queue, args);
       };
       if (typeof seek === 'function') queue.seek = async (time) => {
         const song = queue.songs[0];
         if (getPlaybackState(queue)?.blocked) throw Object.assign(new Error('Usa Reintentar para recuperar la cola.'), { errorCode: 'QUEUE_BLOCKED' });
+        preloader.cancel(queue, 'seek');
         recovery.cancelQueue(queue); resetObservation(queue, health.now());
         // Native seek reads its head only after waiting. Keep the command bound
         // to the song the user saw, and validate inside the same task lock.
@@ -273,11 +295,13 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
   });
 
   on(Events.ADD_SONG, async (queue, song) => {
+    preloader.changed(queue);
     await panels.refresh(queue);
     await queue.textChannel?.send({ embeds: [createAddQueueEmbed(song)] });
   });
 
   on(Events.ADD_LIST, async (queue, playlist: Playlist) => {
+    preloader.changed(queue);
     warmSearchCache(distube, playlist.songs, playlist.metadata);
     await panels.refresh(queue);
     await queue.textChannel?.send({ embeds: [new EmbedBuilder().setColor(BotColors.Info)
@@ -290,8 +314,9 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
   });
 
   on(Events.FINISH, (queue) => panels.close(queue, '✓ Cola terminada'));
-  on(Events.FINISH_SONG, (queue, song) => { if (song) health.completed(queue, song); });
+  on(Events.FINISH_SONG, (queue, song) => { if (song) { preloader.finished(queue); health.completed(queue, song); } });
   on(Events.DELETE_QUEUE, (queue) => {
+    preloader.end(queue);
     health.end(queue);
     recovery.cancelQueue(queue);
     restoreControls.get(queue)?.(); restoreControls.delete(queue);
@@ -319,7 +344,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
   return () => {
     disposed = true;
     for (const remove of listeners.splice(0)) remove();
-    notices.dispose(); recovery.dispose(); panels.dispose(); health.dispose();
+    preloader.dispose(); notices.dispose(); recovery.dispose(); panels.dispose(); health.dispose();
     for (const restore of restoreControls.values()) restore();
     restoreControls.clear();
     if (nativePlay) distube.queues.playSong = nativePlay;

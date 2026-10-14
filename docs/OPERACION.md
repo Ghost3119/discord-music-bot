@@ -70,10 +70,13 @@ Esta protección y el ajuste de interacciones quedaron compilados después de ar
 
 ## Configuración
 
+La preparación anticipada implementada el 13 de octubre de 2026 está en una rama nueva desde las correcciones de concurrencia. No se activó ni se reinició el bot. Su [informe técnico](SMART_AUDIO_PRELOADER.md) registra 302 pruebas aprobadas, los límites de recursos y los logs de transición. Durante su futura activación deben actualizarse juntos bot y supervisor para incluir la limpieza por IPC de los FFmpeg preparados; no cambian las definiciones slash.
+
 | Variable | Predeterminado | Efecto |
 | --- | --- | --- |
 | `AUDIO_WATCHDOG_ENABLED` | `true` | `false` desactiva solo la detección de falta de avance. |
 | `AUDIO_BREAKER_ENABLED` | `true` | `false` desactiva solo el bloqueo por fallos consecutivos. |
+| `AUDIO_PRELOADER_ENABLED` | `true` | `false` desactiva la preparación de la próxima canción; se mantiene la reproducción convencional. |
 | `LOG_MAX_BYTES` | `10485760` | Tamaño por archivo; entero de 1 a 104857600. |
 | `LOG_BACKUPS` | `5` | Archivos anteriores por proceso; entero de 1 a 20. |
 
