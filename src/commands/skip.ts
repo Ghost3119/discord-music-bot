@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { Command } from './command.types';
-import { ensureGuild } from '../utils/guard';
+import { ensureControlChannel, ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
 
 export const skip: Command = {
@@ -25,20 +25,14 @@ export const skip: Command = {
       return;
     }
 
-    try {
-      const song = await queue.skip();
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder().setColor(BotColors.Success).setDescription(`⏭️ Saltando a: **${song.name}**`),
-        ],
-      });
-    } catch {
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder().setColor(BotColors.Error).setDescription('❌ No hay más canciones en la cola.'),
-        ],
-        flags: MessageFlags.Ephemeral,
-      });
-    }
+    await interaction.deferReply();
+    if (!await ensureControlChannel(interaction, queue)) return;
+    if (distube.getQueue(guild.id) !== queue || queue.stopped) throw Object.assign(new Error('La sesión terminó mientras esperaba.'), { errorCode: 'SESSION_CHANGED' });
+    const song = await queue.skip();
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder().setColor(BotColors.Success).setDescription(`⏭️ Saltando a: **${song.name}**`),
+      ],
+    });
   },
 };

@@ -346,7 +346,8 @@ test('the stream engine exhausts recovery for three requests and preserves the r
   const f = engine(t), plugin = new YtDlpSearchPlugin(); f.distube.plugins = [plugin];
   f.queue.songs = ['AAAAAAAAAAA', 'BBBBBBBBBBB', 'CCCCCCCCCCC', 'DDDDDDDDDDD'].map(id => song(id, plugin));
   let extracts = 0, alternatives = 0;
-  f.distube.handler.attachStreamInfo = async () => { extracts++; throw new Error('HTTP error 403 Forbidden'); };
+  plugin.getStreamURL = async () => { extracts++; throw new Error('HTTP error 403 Forbidden'); };
+  f.distube.handler.attachStreamInfo = async current => { current.stream.url = await plugin.getStreamURL(current); };
   plugin.findAlternative = async () => { alternatives++; return null; };
   await f.queue._taskQueue.queuing();
   try { await f.queue.play(); } finally { f.queue._taskQueue.resolve(); }

@@ -275,7 +275,7 @@ test('the extraction pool limits parallel work and cancels queued operations', a
   assert.equal(await pool.run(async () => 'next', new AbortController().signal), 'next');
 });
 
-test('yt-dlp cancellation kills the extraction and reports a timeout without retrying', async (t) => {
+test('yt-dlp user cancellation kills the extraction and preserves its reason without retrying', async (t) => {
   const childProcess = require('node:child_process');
   const controller = new AbortController();
   let starts = 0;
@@ -292,7 +292,7 @@ test('yt-dlp cancellation kills the extraction and reports a timeout without ret
     queueMicrotask(() => controller.abort());
     return child;
   });
-  await assert.rejects(runYtDlp('test', {}, controller.signal), { code: 'ETIMEDOUT' });
+  await assert.rejects(runYtDlp('test', {}, controller.signal), error => error === controller.signal.reason && error.name === 'AbortError');
   assert.equal(starts, 1);
 });
 

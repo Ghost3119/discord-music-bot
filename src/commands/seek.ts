@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { Command } from './command.types';
-import { ensureGuild } from '../utils/guard';
+import { ensureControlChannel, ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
 import { formatDuration } from '../utils/embed';
 
@@ -31,10 +31,14 @@ export const seek: Command = {
     }
 
     const seconds = interaction.options.getInteger('segundos', true);
+    const song = queue.songs[0];
+    await interaction.deferReply();
+    if (!await ensureControlChannel(interaction, queue)) return;
+    if (interaction.client.distube.getQueue(guild.id) !== queue || queue.stopped || queue.songs[0] !== song) throw Object.assign(new Error('La canción cambió mientras esperaba.'), { errorCode: 'SESSION_CHANGED' });
     await queue.seek(seconds);
 
     const formattedTime = formatDuration(seconds * 1000);
-    await interaction.reply({
+    await interaction.editReply({
       embeds: [
         new EmbedBuilder()
           .setColor(BotColors.Info)

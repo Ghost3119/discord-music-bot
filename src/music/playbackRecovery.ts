@@ -80,6 +80,12 @@ export class PlaybackRecovery {
     return state?.queue === queue && state.stage === 'alternative' && state.song === state.original;
   }
 
+  signalFor(queue: Queue, song: Song): AbortSignal | undefined {
+    const state = this.states.get(song);
+    return state?.queue === queue && state.song === song && ['renew', 'alternative'].includes(state.stage)
+      ? state.controller.signal : undefined;
+  }
+
   alternativeFailed(queue: Queue, song: Song): boolean {
     const state = this.states.get(song);
     return state?.queue === queue && state.stage === 'failed';

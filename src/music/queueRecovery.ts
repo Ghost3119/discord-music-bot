@@ -22,6 +22,8 @@ interface SavedSong {
 
 interface SavedQueue {
   blocked?: boolean;
+  probe?: boolean;
+  failures?: number[];
   guildId: string;
   voiceChannelId: string;
   textChannelId?: string;
@@ -56,6 +58,9 @@ function isSavedQueue(value: unknown): value is SavedQueue {
   const id = (value: unknown) => typeof value === 'string' && /^\d{15,22}$/.test(value);
   return id(queue.guildId) && id(queue.voiceChannelId) && (queue.textChannelId === undefined || id(queue.textChannelId)) &&
     (queue.blocked === undefined || typeof queue.blocked === 'boolean') &&
+    (queue.probe === undefined || typeof queue.probe === 'boolean') &&
+    (queue.failures === undefined || Array.isArray(queue.failures) && queue.failures.length <= 3 &&
+      queue.failures.every(time => Number.isFinite(time) && time >= 0)) &&
     Number.isFinite(queue.position) && queue.position >= 0 && Number.isFinite(queue.volume) && queue.volume >= 0 && queue.volume <= 200 &&
     typeof queue.paused === 'boolean' && typeof queue.autoplay === 'boolean' && [0, 1, 2].includes(queue.repeatMode) &&
     Number.isFinite(queue.updatedAt) && Array.isArray(queue.songs) && queue.songs.length > 0 && queue.songs.length <= 500 &&
@@ -96,7 +101,7 @@ export class QueueRecovery {
       attempt.queue = queue;
       attempt.initializing = false;
       const { snapshot } = attempt;
-      if (snapshot.blocked) getPlaybackHealth(distube)?.restoreBlocked(queue);
+      getPlaybackHealth(distube)?.restoreRecoveryState(queue, snapshot);
       queue.setVolume(snapshot.volume);
       if (queue.repeatMode !== snapshot.repeatMode) queue.setRepeatMode(snapshot.repeatMode);
       if (snapshot.autoplay !== queue.autoplay) queue.toggleAutoplay();
@@ -105,9 +110,16 @@ export class QueueRecovery {
       on(event, `Guardar cola ${event}`, queue => this.capture(queue));
     }
     on(Events.DELETE_QUEUE, 'Eliminar cola guardada', (queue) => {
-      if (this.suspended || this.restoring.get(queue.id)?.queue === queue) return;
+      if (this.suspended) return;
       const current = distube.getQueue(queue.id);
       if (current && current !== queue) return;
+      const attempt = this.restoring.get(queue.id);
+      if (attempt?.queue === queue) {
+        // Keep a checkpoint after an automatic startup failure, but an explicit
+        // stop marks the session closing before waiting for the queue lock.
+        if (!getPlaybackState(queue)?.closing) return;
+        attempt.cancelled = true;
+      }
       this.saved.delete(queue.id);
       this.write();
     });
@@ -154,9 +166,11 @@ export class QueueRecovery {
         searchSource: metadata?.searchSource === 'soundcloud' ? 'soundcloud' : 'youtube' }];
     });
     if (!songs.length) return;
+    const state = getPlaybackState(queue), now = getPlaybackHealth(this.distube)?.now() ?? Date.now();
     this.saved.set(queue.id, {
       guildId: queue.id, voiceChannelId: queue.voiceChannel.id,
-      blocked: Boolean(getPlaybackState(queue)?.blocked),
+      blocked: Boolean(state?.blocked), probe: Boolean(state?.probe),
+      failures: (state?.failures ?? []).filter(time => time <= now && now - time < 300_000).slice(-3),
       ...(queue.textChannel ? { textChannelId: queue.textChannel.id } : {}),
       songs, position: queue.currentTime, volume: queue.volume, paused: queue.paused,
       autoplay: queue.autoplay, repeatMode: queue.repeatMode, updatedAt: Date.now(),
@@ -227,10 +241,8 @@ export class QueueRecovery {
         attempt.initializing = false;
         const queue = this.distube.getQueue(snapshot.guildId);
         if (this.suspended || attempt.cancelled || !queue || queue.stopped || queue !== attempt.queue) continue;
-        queue.setVolume(snapshot.volume);
-        // DisTube toggles an explicitly repeated mode back to Disabled.
-        if (queue.repeatMode !== snapshot.repeatMode) queue.setRepeatMode(snapshot.repeatMode);
-        if (snapshot.autoplay !== queue.autoplay) queue.toggleAutoplay();
+        // INIT_QUEUE already applied settings before playback. Reapplying them
+        // here would undo user changes made while stream extraction was pending.
         if (!snapshot.blocked && queue.songs[0] === first && snapshot.position > 0 && first.duration > snapshot.position + 5) await queue.seek(snapshot.position);
         if (this.suspended || queue.stopped || this.distube.getQueue(snapshot.guildId) !== queue) continue;
         if (snapshot.paused && !queue.paused) await queue.pause();

@@ -17,6 +17,7 @@ async function fixture(t) {
   t.mock.method(console, 'log', () => {}); t.mock.method(console, 'info', () => {}); t.mock.method(console, 'warn', () => {});
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] }); t.after(() => client.destroy());
   const plugin = new YtDlpSearchPlugin(); plugin.invalidateStream = () => {}; plugin.findAlternative = async () => null;
+  plugin.getStreamURL = async () => 'https://unused.test/audio';
   const distube = new DisTube(client, { plugins: [plugin], ffmpeg: { path: ffmpeg } }); distube.setMaxListeners(10);
   const streams = [], voice = new EventEmitter(); Object.assign(voice, { id: guildId, emittedError: false, playbackTime: 0, volume: 50,
     channel: { id: '1082065100569059471', guildId, guild: { members: { me: null } } },
@@ -29,7 +30,7 @@ async function fixture(t) {
   const song = id => new Song({ plugin, source: 'youtube', id, name: id, duration: 200,
     playFromSource: true, url: `https://www.youtube.com/watch?v=${id}` });
   queue.songs = [song('AAAAAAAAAAA'), song('BBBBBBBBBBB')];
-  distube.handler.attachStreamInfo = async current => { current.stream.url = 'https://unused.test/audio'; };
+  distube.handler.attachStreamInfo = async current => { current.stream.url = await plugin.getStreamURL(current); };
   t.after(() => { for (const stream of streams) stream.kill(); if (!queue.stopped) queue.remove(); });
   const health = getPlaybackHealth(distube);
   function advance(frames) { now += 2000; if (frames !== undefined) voice.stream.audioResource.playbackDuration = frames; health.tick(); }
@@ -54,7 +55,7 @@ test('voice cleanup failures are caught at the event boundary and still remove t
 
 test('duplicate errors and an old finish event cannot consume extra recovery attempts or skip the next song', async t => {
   const f = await fixture(t); await f.queue.play(); const original = f.queue.songs[0], gate = deferred();
-  f.distube.handler.attachStreamInfo = async current => { await gate.promise; current.stream.url = 'https://unused.test/renewed'; };
+  f.plugin.getStreamURL = async () => { await gate.promise; return 'https://unused.test/renewed'; };
   f.voice.emit('error', new Error('HTTP 403 Forbidden'));
   f.voice.emit('error', new Error('HTTP 403 Forbidden')); f.voice.emit('finish');
   assert.equal(f.state.attempt, 1); assert.equal(f.queue.songs[0], original); assert.equal(f.queue.songs.length, 2);

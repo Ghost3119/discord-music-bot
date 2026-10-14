@@ -1,6 +1,6 @@
 import { ExtractorPlugin, Playlist, ResolveOptions, Song, SongInfo, PlaylistInfo } from 'distube';
 import { setTimeout as delay } from 'node:timers/promises';
-import { runYtDlp, YtDlpFlags } from './ytDlpRunner';
+import { runYtDlp, YtDlpFlags, ExtractionPriority } from './ytDlpRunner';
 import { classifyMusicError } from './errors';
 
 // The wrapper's types predate yt-dlp's JavaScript runtime option.
@@ -30,7 +30,9 @@ interface YtDlpInfo {
   webpage_url?: string;
   original_url?: string;
   extractor?: string;
+  ie_key?: string;
   is_live?: boolean;
+  live_status?: string | null;
   duration?: number | null;
   thumbnail?: string;
   thumbnails?: YtDlpThumbnail[];
@@ -42,6 +44,13 @@ interface YtDlpInfo {
   repost_count?: number;
   age_limit?: number;
   entries?: YtDlpInfo[];
+}
+
+interface PendingStreamUrl {
+  promise: Promise<string>;
+  controller: AbortController;
+  consumers: number;
+  settled: boolean;
 }
 
 const URL_PATTERN = /^https?:\/\//i;
@@ -229,7 +238,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
   private readonly streamUrlCache = new TtlCache<string>(STREAM_CACHE_MAX_ITEMS, STREAM_CACHE_TTL_MS);
   private readonly mixCache = new TtlCache<YtDlpInfo[]>(MIX_CACHE_MAX_ITEMS, MIX_CACHE_TTL_MS);
   private readonly pendingSearches = new Map<string, Promise<YtDlpInfo | null>>();
-  private readonly pendingStreamUrls = new Map<string, Promise<string>>();
+  private readonly pendingStreamUrls = new Map<string, PendingStreamUrl>();
   private readonly pendingMixes = new Map<string, Promise<YtDlpInfo[]>>();
   private readonly refreshAfter = new WeakMap<Song, number>();
   private readonly sourceCooldowns = new Map<SearchSource, { until: number; error: unknown }>();
@@ -239,7 +248,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
   }
 
   override async resolve<T>(url: string, options: ResolveOptions<T>): Promise<Song<T> | Playlist<T>> {
-    const info = await this.fetchInfo(url, { playlistEnd: 500 });
+    const info = await this.fetchInfo(url, { playlistEnd: 500, flatPlaylist: true });
 
     if (hasEntries(info)) {
       return this.createPlaylist(info, options);
@@ -254,12 +263,14 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     return result ? this.createSong(result, options) : null;
   }
 
-  override async getStreamURL<T>(song: Song<T>): Promise<string> {
+  override async getStreamURL<T>(song: Song<T>, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     const refreshAfter = this.refreshAfter.get(song);
     if (refreshAfter) {
       this.refreshAfter.delete(song);
-      await delay(Math.max(0, refreshAfter - Date.now()));
+      await delay(Math.max(0, refreshAfter - Date.now()), undefined, { signal });
     }
+    signal?.throwIfAborted();
     if (!song.url) {
       throw new Error('Cannot resolve a stream URL for a song without a source URL.');
     }
@@ -268,17 +279,45 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     const cachedStreamUrl = this.streamUrlCache.get(cacheKey);
     if (cachedStreamUrl) return cachedStreamUrl;
 
-    const pendingStreamUrl = this.pendingStreamUrls.get(cacheKey);
-    if (pendingStreamUrl) return pendingStreamUrl;
+    let pending = this.pendingStreamUrls.get(cacheKey);
+    if (!pending) {
+      const controller = new AbortController();
+      const request: PendingStreamUrl = { controller, consumers: 0, settled: false,
+        promise: this.fetchStreamUrl(song.url, controller.signal).then(streamUrl => {
+          controller.signal.throwIfAborted();
+          this.streamUrlCache.set(cacheKey, streamUrl);
+          return streamUrl;
+        }).finally(() => {
+          request.settled = true;
+          if (this.pendingStreamUrls.get(cacheKey) === request) this.pendingStreamUrls.delete(cacheKey);
+        }),
+      };
+      this.pendingStreamUrls.set(cacheKey, request);
+      pending = request;
+    }
+    return this.consumeStreamUrl(cacheKey, pending, signal);
+  }
 
-    const streamUrlPromise = this.fetchStreamUrl(song.url).finally(() => {
-      this.pendingStreamUrls.delete(cacheKey);
+  private consumeStreamUrl(cacheKey: string, request: PendingStreamUrl, signal?: AbortSignal): Promise<string> {
+    request.consumers += 1;
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      const release = () => {
+        if (finished) return false;
+        finished = true;
+        signal?.removeEventListener('abort', abort);
+        request.consumers -= 1;
+        if (!request.settled && !request.consumers) {
+          if (this.pendingStreamUrls.get(cacheKey) === request) this.pendingStreamUrls.delete(cacheKey);
+          request.controller.abort();
+        }
+        return true;
+      };
+      const abort = () => { if (release()) reject(signal?.reason); };
+      signal?.addEventListener('abort', abort, { once: true });
+      request.promise.then(value => { if (release()) resolve(value); }, error => { if (release()) reject(error); });
+      if (signal?.aborted) abort();
     });
-    this.pendingStreamUrls.set(cacheKey, streamUrlPromise);
-
-    const streamUrl = await streamUrlPromise;
-    this.streamUrlCache.set(cacheKey, streamUrl);
-    return streamUrl;
   }
 
   override async getRelatedSongs(song: Song): Promise<Song[]> {
@@ -419,15 +458,15 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
 
     await runWithConcurrency(uniqueQueries, PLAYLIST_WARM_CONCURRENCY, async (query) => {
       try {
-        await this.getSearchResult(query, metadata);
+        await this.getSearchResult(query, metadata, 'background');
       } catch (error) {
         console.warn(`No se pudo precachear "${query}":`, error);
       }
     });
   }
 
-  private async fetchStreamUrl(url: string): Promise<string> {
-    const info = await this.fetchInfo(url, { format: 'ba/ba*', noPlaylist: true });
+  private async fetchStreamUrl(url: string, signal: AbortSignal): Promise<string> {
+    const info = await this.fetchInfo(url, { format: 'ba/ba*', noPlaylist: true }, signal);
     const streamUrl = toStringValue(info.url);
 
     if (!streamUrl) {
@@ -476,7 +515,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     return promise;
   }
 
-  private async getSearchResult(query: string, metadata: unknown): Promise<YtDlpInfo | null> {
+  private async getSearchResult(query: string, metadata: unknown, priority: ExtractionPriority = 'interactive'): Promise<YtDlpInfo | null> {
     const trimmedQuery = query.trim();
     if (!trimmedQuery) return null;
 
@@ -488,7 +527,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     const pendingSearch = this.pendingSearches.get(cacheKey);
     if (pendingSearch) return pendingSearch;
 
-    const searchPromise = this.fetchSearchResult(searchQuery).finally(() => {
+    const searchPromise = this.fetchSearchResult(searchQuery, priority).finally(() => {
       this.pendingSearches.delete(cacheKey);
     });
     this.pendingSearches.set(cacheKey, searchPromise);
@@ -501,7 +540,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     return result;
   }
 
-  private async fetchSearchResult(searchQuery: string): Promise<YtDlpInfo | null> {
+  private async fetchSearchResult(searchQuery: string, priority: ExtractionPriority): Promise<YtDlpInfo | null> {
     const budget = AbortSignal.timeout(90_000);
     const query = searchQuery.replace(YTDLP_SEARCH_PATTERN, '');
     let lastError: unknown;
@@ -509,13 +548,13 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
       const cooldown = this.sourceCooldowns.get(attempt.source);
       if (cooldown && cooldown.until > Date.now()) { lastError = cooldown.error; continue; }
       try {
-        const info = await this.fetchInfo(attempt.input, { flatPlaylist: true, playlistEnd: 5 }, budget);
+        const info = await this.fetchInfo(attempt.input, { flatPlaylist: true, playlistEnd: 5 }, budget, priority);
         const candidates = rankSearchCandidates(query, (hasEntries(info) ? info.entries : [info])
           .filter((entry) => entry && getPlayableUrl(entry)));
         for (const candidate of candidates.slice(0, 5)) {
           try {
             const result = candidate._type === 'url'
-              ? await this.fetchInfo(getPlayableUrl(candidate)!, { format: 'ba/ba*', noPlaylist: true }, budget)
+              ? await this.fetchInfo(getPlayableUrl(candidate)!, { format: 'ba/ba*', noPlaylist: true }, budget, priority)
               : candidate;
             const canonical = getPlayableUrl(result);
             if (!canonical || hasEntries(result)) continue;
@@ -539,7 +578,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     return null;
   }
 
-  private async fetchInfo(input: string, extraFlags: YtDlpJsonFlags = {}, signal?: AbortSignal): Promise<YtDlpInfo> {
+  private async fetchInfo(input: string, extraFlags: YtDlpJsonFlags = {}, signal?: AbortSignal, priority: ExtractionPriority = 'interactive'): Promise<YtDlpInfo> {
     const flags: YtDlpJsonFlags = {
       dumpSingleJson: true,
       noWarnings: true,
@@ -550,13 +589,13 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
       ...extraFlags,
     };
 
-    return await runYtDlp(input, flags, signal) as YtDlpInfo;
+    return await runYtDlp(input, flags, signal, priority) as YtDlpInfo;
   }
 
   private createPlaylist<T>(info: YtDlpInfo & { entries: YtDlpInfo[] }, options: ResolveOptions<T>): Playlist<T> {
     const songs: Song[] = info.entries
       .filter((entry) => getPlayableUrl(entry))
-      .map((entry) => this.createSong(entry, options));
+      .map((entry) => this.createSong({ ...entry, extractor: entry.extractor ?? entry.ie_key?.toLowerCase() ?? info.extractor ?? 'yt-dlp' }, options));
 
     const playlistInfo: PlaylistInfo = {
       source: info.extractor ?? 'yt-dlp',
@@ -599,6 +638,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     if (url) songInfo.url = url;
     if (thumbnail) songInfo.thumbnail = thumbnail;
     if (typeof info.is_live === 'boolean') songInfo.isLive = info.is_live;
+    else if (info.live_status) songInfo.isLive = info.live_status === 'is_live';
     if (duration !== undefined) songInfo.duration = duration;
     if (views !== undefined) songInfo.views = views;
     if (likes !== undefined) songInfo.likes = likes;

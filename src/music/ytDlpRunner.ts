@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { classifyMusicError } from './errors';
 
 export type YtDlpFlags = NonNullable<Parameters<typeof json>[1]> & { jsRuntimes?: string };
+export type ExtractionPriority = 'interactive' | 'background';
 const TRANSIENT = new Set(['NETWORK_TIMEOUT', 'NETWORK_ERROR', 'SOURCE_UNAVAILABLE']);
 export function isTransientMusicError(error: unknown): boolean {
   return TRANSIENT.has(classifyMusicError(error));
@@ -10,16 +11,21 @@ export function isTransientMusicError(error: unknown): boolean {
 
 export class ExtractionPool {
   private active = 0;
-  private readonly waiting: (() => void)[] = [];
+  private readonly waiting: { start: () => void; priority: ExtractionPriority }[] = [];
+  private interactiveGrants = 0;
   constructor(private readonly limit = 3, private readonly maxWaiting = 50) {}
 
-  async run<T>(task: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  async run<T>(task: () => Promise<T>, signal: AbortSignal, priority: ExtractionPriority = 'interactive'): Promise<T> {
     signal.throwIfAborted();
     if (this.active >= this.limit) {
-      if (this.waiting.length >= this.maxWaiting) throw Object.assign(new Error('Demasiadas consultas pendientes'), { code: 'MUSIC_BUSY' });
+      const reserved = Math.min(this.limit, Math.max(0, this.maxWaiting - 1));
+      const background = this.waiting.filter(waiter => waiter.priority === 'background').length;
+      if (this.waiting.length >= this.maxWaiting || priority === 'background' && background >= this.maxWaiting - reserved) {
+        throw Object.assign(new Error('Demasiadas consultas pendientes'), { code: 'MUSIC_BUSY' });
+      }
       await new Promise<void>((resolve, reject) => {
         const abort = () => {
-          const index = this.waiting.indexOf(start);
+          const index = this.waiting.indexOf(waiter);
           if (index !== -1) this.waiting.splice(index, 1);
           reject(signal.reason);
         };
@@ -27,7 +33,8 @@ export class ExtractionPool {
           signal.removeEventListener('abort', abort);
           resolve();
         };
-        this.waiting.push(start);
+        const waiter = { start, priority };
+        this.waiting.push(waiter);
         signal.addEventListener('abort', abort, { once: true });
       });
     } else {
@@ -37,9 +44,18 @@ export class ExtractionPool {
       signal.throwIfAborted();
       return await task();
     } finally {
-      const next = this.waiting.shift();
-      if (next) next(); // Transfer the occupied slot to the next caller.
-      else this.active -= 1;
+      const interactive = this.waiting.findIndex(waiter => waiter.priority === 'interactive');
+      const background = this.waiting.findIndex(waiter => waiter.priority === 'background');
+      // Prefer user work, but give warmups a slot after at most three user grants.
+      const index = background !== -1 && (interactive === -1 || this.interactiveGrants >= 3) ? background : interactive;
+      const next = index === -1 ? undefined : this.waiting.splice(index, 1)[0];
+      if (next) {
+        this.interactiveGrants = next.priority === 'background' ? 0 : Math.min(3, this.interactiveGrants + 1);
+        next.start(); // Transfer the occupied slot to the next caller.
+      } else {
+        this.interactiveGrants = 0;
+        this.active -= 1;
+      }
     }
   }
 }
@@ -63,26 +79,35 @@ export async function retryTransient<T>(
   }
 }
 
-export async function runYtDlp(input: string, flags: YtDlpFlags = {}, signal?: AbortSignal): Promise<unknown> {
+export async function runYtDlp(
+  input: string,
+  flags: YtDlpFlags = {},
+  signal?: AbortSignal,
+  priority: ExtractionPriority = 'interactive',
+): Promise<unknown> {
+  // Waiting for a slot and retry backoff share the total operation budget.
   const deadline = AbortSignal.timeout(60_000);
   const budget = signal ? AbortSignal.any([signal, deadline]) : deadline;
   try {
-    return await retryTransient(async () => {
+    return await retryTransient(() => pool.run(async () => {
+      // Only a real extraction consumes an attempt and its 20 s allowance.
       const attempt = AbortSignal.any([budget, AbortSignal.timeout(20_000)]);
       try {
-        return await pool.run(() => json(input, {
+        return await json(input, {
           dumpSingleJson: true, noWarnings: true, skipDownload: true, simulate: true,
           jsRuntimes: `node:${process.execPath}`,
           socketTimeout: 8, retries: 0, extractorRetries: 0,
           ...flags,
-        }, { signal: attempt, windowsHide: true }), attempt);
+        }, { signal: attempt, windowsHide: true });
       } catch (error) {
+        budget.throwIfAborted();
         if (attempt.aborted) throw Object.assign(new Error('yt-dlp: tiempo de espera agotado', { cause: error }), { code: 'ETIMEDOUT' });
         throw error;
       }
-    }, budget);
+    }, budget, priority), budget);
   } catch (error) {
-    if (budget.aborted) throw Object.assign(new Error('yt-dlp: tiempo total de espera agotado', { cause: error }), { code: 'ETIMEDOUT' });
+    signal?.throwIfAborted();
+    if (deadline.aborted) throw Object.assign(new Error('yt-dlp: tiempo total de espera agotado', { cause: error }), { code: 'ETIMEDOUT' });
     throw error;
   }
 }

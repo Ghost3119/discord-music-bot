@@ -102,6 +102,13 @@ export class PlaybackHealth {
     await queue.play();
   }
   restoreBlocked(queue: Queue): void { this.init(queue); const state = getPlaybackState(queue)!; state.blocked = true; state.mode = 'blocked'; queue.paused = true; this.changed(queue); }
+  restoreRecoveryState(queue: Queue, saved: { blocked?: boolean; probe?: boolean; failures?: number[] }): void {
+    this.init(queue);
+    const state = getPlaybackState(queue)!, now = this.now();
+    state.failures = (saved.failures ?? []).filter(time => time <= now && now - time < 300_000).slice(-3);
+    state.probe = Boolean(saved.probe) && !saved.blocked;
+    if (saved.blocked) this.restoreBlocked(queue);
+  }
   tick(): void {
     if (this.disposed) return;
     for (const queue of this.queues) {
