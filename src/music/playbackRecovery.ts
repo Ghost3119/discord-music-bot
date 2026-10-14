@@ -24,6 +24,13 @@ interface RecoveryState {
   preparation: Promise<boolean> | undefined;
 }
 
+export interface PreparationRecovery {
+  original: Song;
+  candidate: Song;
+  renewals: number;
+  alternativeUsed: boolean;
+}
+
 export class PlaybackRecovery {
   private readonly states = new WeakMap<Song, RecoveryState>();
   private readonly started = new WeakMap<Queue, Song>();
@@ -31,6 +38,31 @@ export class PlaybackRecovery {
   private disposed = false;
 
   constructor(private readonly onStatus: (status: RecoveryStatus) => void = () => {}, private readonly confirmMs = 1_000) {}
+
+  // Speculation shares the recovery policy and candidate matcher, but never
+  // changes a queue, publishes playback failures or spends its breaker probe.
+  async prepareAhead<T>(state: PreparationRecovery, plugin: YtDlpSearchPlugin,
+    prepare: (song: Song) => Promise<T>, signal: AbortSignal): Promise<T> {
+    for (;;) {
+      signal.throwIfAborted();
+      try { return await prepare(state.candidate); }
+      catch (error) {
+        signal.throwIfAborted();
+        if (!RECOVERABLE.has(classifyMusicError(error))) throw error;
+        if (state.renewals < 2) {
+          state.renewals++;
+          plugin.invalidateStream(state.candidate, 0);
+          continue;
+        }
+        if (state.alternativeUsed) throw error;
+        state.alternativeUsed = true;
+        const alternative = await plugin.findAlternative(state.original, signal, 'background');
+        signal.throwIfAborted();
+        if (!alternative) throw error;
+        state.candidate = alternative;
+      }
+    }
+  }
 
   markStarted(queue: Queue, song: Song): void {
     this.started.set(queue, song);

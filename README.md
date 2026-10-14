@@ -170,6 +170,14 @@ El bot cachea resultados de busqueda para que playlists grandes de Spotify o App
 
 Esto ayuda especialmente cuando se repite una playlist, hay canciones duplicadas o varios usuarios piden musica parecida.
 
+## Preparación anticipada de audio
+
+El Smart Audio Preloader resuelve la próxima canción mientras avanza la actual y, cuando faltan hasta 30 segundos, prepara un pequeño buffer Opus sin enviarlo a voz. Al cambiar de canción reutiliza ese mismo recurso, evitando repetir el arranque de FFmpeg. Si solo dispone de una URL válida o la preparación falla, conserva la reproducción convencional y su recuperación.
+
+Hay como máximo dos FFmpeg anticipados y dos resoluciones anticipadas simultáneas; yt-dlp mantiene su pool global y la prioridad de reproducción. La precarga se cancela al detener, buscar otra posición, pausar o cambiar la próxima canción. Las emisiones en vivo y duraciones desconocidas solo preparan URL. Los recursos no se guardan entre reinicios.
+
+`AUDIO_PRELOADER_ENABLED=false` desactiva esta función al siguiente arranque. Los logs `[Precarga]` incluyen tiempos, usos de buffer/URL, cancelaciones y el intervalo local entre canciones. La función reduce el trabajo pendiente en una transición; no garantiza reproducción perfectamente gapless en Discord. La [arquitectura y validación](docs/SMART_AUDIO_PRELOADER.md) incluyen 302 pruebas aprobadas y las comprobaciones manuales pendientes. Su activación sigue pendiente de autorización.
+
 ## Recuperación y operación en producción
 
 `npm run start` ejecuta un supervisor que reinicia el proceso si termina inesperadamente. Usa esperas crecientes de 1 a 30 segundos para evitar un bucle de reinicios rápidos. También comprueba una señal de actividad del bot y lo reinicia si deja de responder durante más de 60 segundos. `Ctrl+C` detiene el supervisor y el bot sin volver a iniciarlo.
