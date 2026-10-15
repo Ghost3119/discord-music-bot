@@ -132,11 +132,15 @@ test('a scheduled history retry does not keep a finished process alive', t => {
       name: 'Song', source: 'youtube', stream: { playFromSource: true },
       url: 'https://www.youtube.com/watch?v=AAAAAAAAAAA'
     }, 'completed');
-    store.flush().then(() => console.log(store.list('${guildId}').length));
+    store.flush().then(() => process.stdout.write(String(store.list('${guildId}').length)));
   `;
-  const result = spawnSync(process.execPath, ['-e', source, f.file], {
-    cwd: path.resolve(__dirname, '..'), encoding: 'utf8', timeout: 10_000,
-  });
-  assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), '1');
+  for (const forceColor of ['0', '1']) {
+    const env = { ...process.env, FORCE_COLOR: forceColor };
+    delete env.NO_COLOR;
+    const result = spawnSync(process.execPath, ['-e', source, f.file], {
+      cwd: path.resolve(__dirname, '..'), encoding: 'utf8', timeout: 10_000, windowsHide: true, env,
+    });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), '1');
+  }
 });

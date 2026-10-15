@@ -21,7 +21,8 @@ function fixture(t, replacement) {
     logger.installConsole = options => install({ ...options, directory: ${JSON.stringify(path.join(directory, 'logs'))} });
     require(${JSON.stringify(require.resolve('discord.js'))}).REST.prototype.put = ${replacement};
   `);
-  return { preload, options: { cwd: directory, windowsHide: true, timeout: 10000,
+  // Cold module reads on Windows can exceed ten seconds, especially beside the full suite.
+  return { preload, options: { cwd: directory, windowsHide: true, timeout: 30000,
     env: { ...process.env, DISCORD_TOKEN: 'fixture-token', CLIENT_ID: '1503904508109918299', GUILD_ID: '1082065100111872170' } } };
 }
 

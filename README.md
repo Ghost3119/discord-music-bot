@@ -60,6 +60,8 @@ npm install
 npm run build
 ```
 
+Para reinstalar las versiones guardadas en `package-lock.json`, usa `npm ci`. El proyecto conserva un override de `tar` a `^7.5.22` porque el instalador nativo de Opus todavía declara la rama 6; esta versión incluye las correcciones de los [avisos de seguridad de node-tar](https://github.com/isaacs/node-tar/security/advisories). Después de cambiar dependencias, ejecuta `npm audit`, `npm test` y `npm run deploy:check`.
+
 Registra los comandos slash en tu servidor:
 
 ```powershell
