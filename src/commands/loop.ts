@@ -1,7 +1,8 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { RepeatMode } from 'distube';
 import { Command } from './command.types';
-import { ensureGuild } from '../utils/guard';
+import { ensureControlChannel, ensureGuild } from '../utils/guard';
+import { setQueueSetting } from '../music/queueActions';
 import { BotColors } from '../utils/colors';
 
 export const loop: Command = {
@@ -55,9 +56,11 @@ export const loop: Command = {
         break;
     }
 
-    queue.setRepeatMode(mode);
+    if (!await ensureControlChannel(interaction, queue)) return;
+    await interaction.deferReply();
+    await setQueueSetting(interaction.client.distube, queue, 'repeat', mode);
 
-    await interaction.reply({
+    await interaction.editReply({
       embeds: [new EmbedBuilder().setColor(BotColors.Info).setDescription(message)],
     });
   },

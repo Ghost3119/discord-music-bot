@@ -9,6 +9,7 @@ import { QueueRecovery } from './music/queueRecovery';
 import { registerEmptyVoice } from './music/emptyVoice';
 import { HistoryStore } from './music/history';
 import { resolve } from 'node:path';
+import { createWebDashboard } from './runtime/webDashboard';
 
 export const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
@@ -18,6 +19,8 @@ export const history = new HistoryStore(resolve('data/history.json'));
 export const stopPlayerPanels = registerDisTubeEvents(client.distube, history);
 export const stopEmptyVoice = registerEmptyVoice(client, client.distube);
 export const queueRecovery = new QueueRecovery(client, client.distube);
+const webDashboard = createWebDashboard(client, history);
+export const stopWebDashboard = (): Promise<void> => webDashboard.stop();
 
 client.once(Events.ClientReady, guardedEvent('Recuperar colas al iniciar', async (readyClient) => {
   console.log(`✅ Bot conectado como ${readyClient.user.tag}`);
@@ -37,4 +40,5 @@ client.on(Events.VoiceStateUpdate, guardedEvent('Estado de voz', (_oldState, new
 
 export async function startBot(): Promise<void> {
   await client.login(config.token);
+  await webDashboard.start();
 }

@@ -5,6 +5,16 @@ import { markQueueEdited } from './playbackState';
 
 export type QueueAction = { type: 'shuffle' | 'clear' } | { type: 'remove'; position: number } | { type: 'move'; from: number; to: number };
 const actionError = (errorCode: string, message: string) => Object.assign(new Error(message), { errorCode });
+export async function setQueueSetting(distube: DisTube, queue: Queue, type: 'volume' | 'repeat', value: number): Promise<void> {
+  await queue._taskQueue.queuing();
+  try {
+    if (queue.stopped || distube.getQueue(queue.id) !== queue) throw actionError('SESSION_CHANGED', 'La sesión terminó mientras esperaba.');
+    if (type === 'volume') queue.setVolume(value);
+    else if (queue.repeatMode !== value) queue.setRepeatMode(value);
+    checkpointQueue(distube, queue);
+  } finally { queue._taskQueue.resolve(); }
+  await getPlayerPanels(distube)?.refresh(queue);
+}
 export async function editQueue(distube: DisTube, queue: Queue, action: QueueAction, authorized: () => boolean = () => true): Promise<string> {
   await queue._taskQueue.queuing();
   let result: string;

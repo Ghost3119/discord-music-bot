@@ -86,6 +86,12 @@ export class PlaybackHealth {
     if (state) { state.failures = []; state.probe = false; state.attempt = 0; }
   }
   async retryBlocked(queue: Queue): Promise<void> {
+    if (!getPlaybackState(queue)?.blocked) return;
+    await queue._taskQueue.queuing();
+    try { await this.retryBlockedLocked(queue); }
+    finally { queue._taskQueue.resolve(); }
+  }
+  private async retryBlockedLocked(queue: Queue): Promise<void> {
     const state = getPlaybackState(queue);
     if (!state?.blocked || state.busy || queue.stopped || this.distube.getQueue(queue.id) !== queue) return;
     const original = queue.songs[0];

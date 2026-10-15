@@ -5,6 +5,8 @@ import { handleButton } from './buttonHandler';
 import { getPlayerPanels } from '../music/playerPanel';
 import { ensureControlChannel } from '../utils/guard';
 import { checkpointQueue } from '../music/queueChanges';
+import { controlError, installQueueControlGuard, withMusicAccess } from '../music/controlAccess';
+import { getPlaybackState } from '../music/playbackState';
 
 function unavailableInteraction(error: unknown): boolean {
   if (typeof error !== 'object' || error === null || !('code' in error)) return false;
@@ -68,7 +70,18 @@ async function handleCommand(interaction: Interaction) {
     const controlled = new Set(['play', 'search', 'skip', 'stop', 'pause', 'resume', 'volume', 'shuffle', 'remove', 'clear', 'move', 'seek', 'loop', 'autoplay', 'recommend']);
     const existing = interaction.guildId ? interaction.client.distube.getQueue(interaction.guildId) : undefined;
     if (existing && controlled.has(interaction.commandName) && !await ensureControlChannel(interaction, existing)) return;
-    await command.execute(interaction);
+    if (existing && controlled.has(interaction.commandName) && interaction.commandName !== 'play') {
+      const wasBlocked = Boolean(getPlaybackState(existing)?.blocked);
+      installQueueControlGuard(existing);
+      await withMusicAccess(interaction.client.distube, () => {
+        if (interaction.client.distube.getQueue(existing.id) !== existing || existing.stopped) throw controlError('SESSION_CHANGED', 'La sesión terminó mientras esperaba.');
+        const voice = interaction.guild?.members.cache.get(interaction.user.id)?.voice.channel;
+        if (!voice || voice.id !== existing.voiceChannel?.id) throw controlError('CONTROL_CHANNEL_REQUIRED', 'Debes estar en el mismo canal de voz que el bot.');
+        const permissions = interaction.client.user && voice.permissionsFor(interaction.client.user.id);
+        if (interaction.client.user && (!permissions || !['ViewChannel', 'Connect', 'Speak'].every(flag => permissions.has(flag as 'ViewChannel' | 'Connect' | 'Speak')))) throw controlError('VOICE_PERMISSIONS', 'Faltan permisos para conectar o hablar.');
+        if (getPlaybackState(existing)?.blocked && (['skip', 'seek'].includes(interaction.commandName) || interaction.commandName === 'resume' && !wasBlocked)) throw controlError('QUEUE_BLOCKED', 'La cola está pausada por fallos. Usa Reintentar o Detener.');
+      }, () => command.execute(interaction));
+    } else await command.execute(interaction);
     const queue = interaction.guildId ? interaction.client.distube.getQueue(interaction.guildId) : undefined;
     if (queue) { checkpointQueue(interaction.client.distube, queue); await getPlayerPanels(interaction.client.distube)?.refresh(queue); }
   } catch (error) {

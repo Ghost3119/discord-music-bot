@@ -8,6 +8,8 @@ import { historyView } from '../music/historyView';
 import { playRequest } from '../commands/play';
 import { checkpointQueue } from '../music/queueChanges';
 import { ensureControlChannel } from '../utils/guard';
+import { controlError, installQueueControlGuard, withMusicAccess } from '../music/controlAccess';
+import { getPlaybackState } from '../music/playbackState';
 
 export async function handleButton(interaction: ButtonInteraction) {
   if (!interaction.guild) return;
@@ -79,6 +81,19 @@ export async function handleButton(interaction: ButtonInteraction) {
     return;
   }
 
+  const run = async <T>(operation: () => Promise<T>): Promise<T> => {
+    const wasBlocked = Boolean(getPlaybackState(queue)?.blocked);
+    installQueueControlGuard(queue);
+    return withMusicAccess(distube, () => {
+      if (distube.getQueue(queue.id) !== queue || queue.stopped || !panels.owns(queue, interaction.message.id)) throw controlError('SESSION_CHANGED', 'La sesión terminó mientras esperaba.');
+      const voice = interaction.guild?.members.cache.get(interaction.user.id)?.voice.channel;
+      if (!voice || voice.id !== queue.voiceChannel?.id) throw controlError('CONTROL_CHANNEL_REQUIRED', 'Debes estar en el mismo canal de voz que el bot.');
+      const permissions = interaction.client.user && voice.permissionsFor(interaction.client.user.id);
+      if (interaction.client.user && (!permissions || !['ViewChannel', 'Connect', 'Speak'].every(flag => permissions.has(flag as 'ViewChannel' | 'Connect' | 'Speak')))) throw controlError('VOICE_PERMISSIONS', 'Faltan permisos para conectar o hablar.');
+      if (getPlaybackState(queue)?.blocked && (interaction.customId === ButtonId.Skip || interaction.customId === ButtonId.PauseResume && !wasBlocked)) throw controlError('QUEUE_BLOCKED', 'La cola está pausada por fallos. Usa Reintentar o Detener.');
+    }, operation);
+  };
+
   switch (interaction.customId) {
     case ButtonId.History: {
       const history = getPlaybackHealth(distube)?.history;
@@ -87,18 +102,18 @@ export async function handleButton(interaction: ButtonInteraction) {
       break;
     }
     case ButtonId.Retry: {
-      await getPlaybackHealth(distube)?.retryBlocked(queue);
+      await run(async () => getPlaybackHealth(distube)?.retryBlocked(queue));
       checkpointQueue(distube, queue); await panels.refresh(queue);
       await interaction.editReply({ content: '🔄 Iniciada una prueba de recuperación de la cola.' });
       break;
     }
     case ButtonId.PauseResume: {
       if (queue.paused) {
-        await queue.resume();
+        await run(() => queue.resume());
         await panels.refresh(queue);
         await interaction.editReply({ content: '▶️ Música reanudada.' });
       } else {
-        await queue.pause();
+        await run(() => queue.pause());
         await panels.refresh(queue);
         await interaction.editReply({ content: '⏸️ Música pausada.' });
       }
@@ -107,7 +122,7 @@ export async function handleButton(interaction: ButtonInteraction) {
 
     case ButtonId.Skip: {
       try {
-        const song = await queue.skip();
+        const song = await run(() => queue.skip());
         await panels.refresh(queue);
         await interaction.editReply({
           embeds: [new EmbedBuilder().setColor(BotColors.Success).setDescription(`⏭️ Saltando a: **${song.name}**`)],
@@ -121,7 +136,7 @@ export async function handleButton(interaction: ButtonInteraction) {
     }
 
     case ButtonId.Stop: {
-      await queue.stop();
+      await run(() => queue.stop());
       await panels.close(queue, '⏹ Música detenida');
       await interaction.editReply({
         embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription('⏹️ Música detenida.')],
