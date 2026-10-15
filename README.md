@@ -224,16 +224,27 @@ Ideas buenas para seguir mejorando el bot:
 - Mejorar la resolucion de Spotify/Apple Music para reducir resultados incorrectos.
 - Guardar colas favoritas por servidor.
 
+## Panel web privado
+
+El dashboard **SONORA** añade inicio de sesión con Discord, reproducción y cola en tiempo real, controles musicales, playlists y favoritos en SQLite. Usa la misma instancia de DisTube y las protecciones del bot. Está **desactivado por defecto** (`WEB_ENABLED=false`) y escucha en `127.0.0.1:8080` al configurarlo.
+
+Instala ambas partes con `npm ci` y `npm run setup:web`; `npm run build` compila bot y frontend, y `npm test` verifica ambos. Consulta [configuración OAuth, variables, endpoints, migraciones y validación](docs/DASHBOARD.md). `.env.example` contiene valores de ejemplo sin secretos. `npm run dev:web` inicia Vite en el puerto 5173 para desarrollar la interfaz.
+
+La implementación no activa ni reinicia el bot en producción. Las comprobaciones reales de OAuth y voz en Discord se hacen al activar una única instancia de pruebas.
+
 ## Scripts
 
 | Script | Descripcion |
 | --- | --- |
 | `npm run dev` | Ejecuta el bot con `ts-node`. |
-| `npm run build` | Compila TypeScript a `dist`. |
+| `npm run build` | Compila el bot a `dist` y React a `frontend/dist`. |
+| `npm run build:bot` | Compila únicamente el bot. |
+| `npm run setup:web` | Instala las dependencias bloqueadas del frontend. |
+| `npm run dev:web` | Inicia Vite local en el puerto 5173. |
 | `npm run start` | Ejecuta la versión compilada con supervisor y reinicio automático. |
 | `npm run start:once` | Ejecuta un solo proceso, para usar con un supervisor externo. |
 | `npm run update:ytdlp` | Actualiza yt-dlp durante mantenimiento, con un límite de 60 segundos. |
-| `npm test` | Compila y ejecuta las pruebas, incluidas recuperación y fallos simulados. |
+| `npm test` | Compila el bot y ejecuta pruebas backend y frontend. |
 | `npm run deploy` | Registra comandos slash en el servidor configurado. |
 | `npm run deploy:check` | Valida y muestra los comandos sin registrarlos ni iniciar el bot. |
 
