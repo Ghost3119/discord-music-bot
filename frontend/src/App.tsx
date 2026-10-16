@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, AudioLines, Check, CircleHelp, Disc3, ExternalLink, Headphones, Heart, Library, ListMusic, LoaderCircle, LogOut, Menu, Music2, Pause, Pencil, Play, Plus, Radio, RefreshCw, Repeat, Search, ShieldCheck, Shuffle, SkipForward, Square, Trash2, Volume2, Wifi, X } from 'lucide-react';
 import { Brand } from './components/common/Brand';
 import { IconButton } from './components/common/IconButton';
@@ -7,14 +6,11 @@ import { Loading, EmptyState } from './components/common/StateFeedback';
 import { Artwork } from './components/artwork';
 import { Button } from './components/ui/button';
 import { Dialog } from './components/ui/dialog';
-import { api, ApiError, trackMetadata, type GuildSummary, type MusicAction, type PlaybackSnapshot, type Playlist, type Session, type Track } from './lib/api';
+import { trackMetadata, type PlaybackSnapshot, type Playlist, type Session, type Track } from './lib/api';
 import { cn, duration } from './lib/utils';
-import { usePlayback } from './hooks/use-playback';
+import { useSonoraApp } from './hooks/use-sonora-app';
 import { healthRows } from './lib/health';
-import { AbandonedOperation, createOperationScope } from './lib/operation-scope';
 
-type View = 'player' | 'library' | 'favorites' | 'diagnostics';
-type Modal = { type: 'playlist'; playlist?: Playlist } | { type: 'delete'; playlist: Playlist } | { type: 'save'; track: Track } | { type: 'add'; playlist: Playlist } | null;
 const labels = { idle: 'En espera', playing: 'Reproduciendo', paused: 'En pausa', recovering: 'Recuperando audio', blocked: 'Reproducción bloqueada' };
 const navigation = [{ id: 'player', name: 'Ahora suena', icon: AudioLines }, { id: 'library', name: 'Mi biblioteca', icon: Library }, { id: 'favorites', name: 'Favoritos', icon: Heart }, { id: 'diagnostics', name: 'Diagnóstico', icon: Activity }] as const;
 
@@ -40,215 +36,18 @@ function Login({ error, retry, loading }: { error: string; retry: () => void; lo
 
 function DiscordIcon() { return <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.7 5.3a18 18 0 0 0-4.4-1.4l-.6 1.2a16.2 16.2 0 0 0-5.4 0l-.6-1.2a18 18 0 0 0-4.4 1.4C1.5 9.4.7 13.4 1.1 17.3a18 18 0 0 0 5.4 2.8l1.1-1.8-1.7-.8.4-.3a12.8 12.8 0 0 0 11.4 0l.4.3-1.7.8 1.1 1.8a18 18 0 0 0 5.4-2.8c.5-4.5-.8-8.5-3.2-12ZM8.5 14.8c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Zm7 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Z" /></svg>; }
 export default function App() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [authError, setAuthError] = useState('');
-  const [authAttempt, setAuthAttempt] = useState(0);
-  const [guilds, setGuilds] = useState<GuildSummary[]>([]);
-  const [guildId, setGuildId] = useState('');
-  const [guildsLoading, setGuildsLoading] = useState(false);
-  const [view, setView] = useState<View>('player');
-  const [mobileNav, setMobileNav] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState('');
-  const [loggingOut, setLoggingOut] = useState(false);
-  const [query, setQuery] = useState('');
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [favorites, setFavorites] = useState<Track[]>([]);
-  const [libraryLoading, setLibraryLoading] = useState(false);
-  const [selectedPlaylist, setSelectedPlaylist] = useState('');
-  const [modal, setModal] = useState<Modal>(null);
-  const [name, setName] = useState('');
-  const [targetPlaylist, setTargetPlaylist] = useState('');
-  const [trackUrl, setTrackUrl] = useState('');
-  const [trackArtist, setTrackArtist] = useState('');
-  const [resolvedTrack, setResolvedTrack] = useState<Omit<Track, 'id'> | null>(null);
-  const [resolvingTrack, setResolvingTrack] = useState(false);
-  const [titleTouched, setTitleTouched] = useState(false);
-  const [artistTouched, setArtistTouched] = useState(false);
-  const [libraryRevision, setLibraryRevision] = useState(0);
-  const selectedGuildRef = useRef(guildId);
-  const operationScope = useRef(createOperationScope());
-  const runningOperation = useRef(0);
-  selectedGuildRef.current = guildId;
-  const reportError = useCallback((problem: unknown) => {
-    if (problem instanceof ApiError && problem.status === 401) {
-      operationScope.current.invalidate();
-      runningOperation.current++; setBusy('');
-      setSession(null); setGuildId(''); setGuilds([]); setAuthError('Tu sesión terminó. Inicia sesión de nuevo para continuar.');
-    } else setError(problem instanceof Error ? problem.message : 'Ocurrió un error. Vuelve a intentarlo.');
-  }, []);
-  const { state, connection, refresh } = usePlayback(session ? guildId : '', reportError);
+  const {
+    session, authLoading, authError, retryAuth, guilds, guildId, setGuildId, guildsLoading,
+    guild, view, setView, mobileNav, setMobileNav, error, setError, notice, busy,
+    loggingOut, logout, state, connection, refresh, current, controlsDisabled, playing,
+    progress, queueDuration, volumeDraft, setVolumeDraft, action, query, setQuery, addToQueue,
+    playlists, favorites, libraryLoading, selectedPlaylist, setSelectedPlaylist, playlist,
+    modal, setModal, name, setName, targetPlaylist, setTargetPlaylist, trackUrl, setTrackUrl,
+    trackArtist, setTrackArtist, resolvedTrack, resolvingTrack, setTitleTouched, setArtistTouched,
+    isFavorite, toggleFavorite, reorderPlaylist, removePlaylistTrack, loadPlaylist, submitModal, reloadLibrary,
+  } = useSonoraApp();
 
-  useEffect(() => {
-    const abort = new AbortController();
-    setAuthLoading(true); setAuthError('');
-    api<Session>('/api/session', { signal: abort.signal }).then((value) => setSession(value)).catch((problem) => {
-      if (abort.signal.aborted) return;
-      if (!(problem instanceof ApiError && problem.status === 401)) setAuthError(problem instanceof Error ? problem.message : 'No se pudo conectar al servidor.');
-    }).finally(() => { if (!abort.signal.aborted) setAuthLoading(false); });
-    return () => abort.abort();
-  }, [authAttempt]);
-
-  useEffect(() => {
-    if (!session) return;
-    const abort = new AbortController();
-    setGuildsLoading(true);
-    api<{ guilds: GuildSummary[] }>('/api/guilds', { signal: abort.signal }).then(({ guilds: next }) => {
-      if (abort.signal.aborted) return;
-      setGuilds(next); setGuildId(next[0]?.id || '');
-    }).catch((problem) => { if (!abort.signal.aborted) reportError(problem); }).finally(() => { if (!abort.signal.aborted) setGuildsLoading(false); });
-    return () => abort.abort();
-  }, [session, reportError]);
-
-  useEffect(() => {
-    setPlaylists([]); setFavorites([]); setSelectedPlaylist(''); setModal(null);
-    setLibraryLoading(false);
-  }, [guildId, session]);
-
-  useEffect(() => {
-    if (!guildId || !session) return;
-    const abort = new AbortController();
-    setLibraryLoading(true);
-    Promise.all([
-      api<{ playlists: Playlist[] }>(`/api/guilds/${guildId}/playlists`, { signal: abort.signal }),
-      api<{ favorites: Track[] }>(`/api/guilds/${guildId}/favorites`, { signal: abort.signal }),
-    ]).then(([library, saved]) => { if (!abort.signal.aborted) { setPlaylists(library.playlists); setFavorites(saved.favorites); } }).catch((problem) => { if (!abort.signal.aborted) reportError(problem); }).finally(() => { if (!abort.signal.aborted) setLibraryLoading(false); });
-    return () => abort.abort();
-  }, [libraryRevision, guildId, session, reportError]);
-
-  useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(''), 4000); return () => window.clearTimeout(timer); }, [notice]);
-  useEffect(() => {
-    if (modal?.type === 'playlist') setName(modal.playlist?.name || '');
-    if (modal?.type === 'save') setTargetPlaylist(playlists[0]?.id || '');
-    if (modal?.type === 'add') {
-      setName('');
-      setTrackUrl('');
-      setTrackArtist('');
-      setResolvedTrack(null);
-      setResolvingTrack(false);
-      setTitleTouched(false);
-      setArtistTouched(false);
-    }
-  }, [modal, playlists]);
-
-  useEffect(() => {
-    if (modal?.type !== 'add' || !guildId || !session) return;
-    const raw = trackUrl.trim();
-    if (!/^https:\/\/\S+\.\S+/i.test(raw)) {
-      setResolvedTrack(null);
-      setResolvingTrack(false);
-      return;
-    }
-    const abort = new AbortController();
-    setResolvingTrack(true);
-    const timer = window.setTimeout(() => {
-      api<{ track: Omit<Track, 'id'> }>(`/api/guilds/${guildId}/tracks/resolve?url=${encodeURIComponent(raw)}`, { signal: abort.signal })
-        .then(({ track }) => {
-          if (abort.signal.aborted) return;
-          setResolvedTrack(track);
-          setName((prev) => (!titleTouched || !prev.trim() ? track.title : prev));
-          setTrackArtist((prev) => (!artistTouched || !prev.trim() ? (track.artist === 'Artista desconocido' ? '' : track.artist) : prev));
-        })
-        .catch(() => {
-          if (!abort.signal.aborted) setResolvedTrack(null);
-        })
-        .finally(() => {
-          if (!abort.signal.aborted) setResolvingTrack(false);
-        });
-    }, 180);
-    return () => {
-      window.clearTimeout(timer);
-      abort.abort();
-    };
-  }, [modal?.type, trackUrl, guildId, session, titleTouched, artistTouched]);
-
-  async function run(key: string, task: () => Promise<void>) {
-    if (busy || loggingOut) return;
-    const operation = ++runningOperation.current;
-    setBusy(key); setError('');
-    try { await task(); } catch (problem) { if (!(problem instanceof AbandonedOperation)) reportError(problem); } finally { if (operation === runningOperation.current) setBusy(''); }
-  }
-  async function mutate(path: string, method: string, data?: unknown) {
-    if (!session) return;
-    await operationScope.current.run(() => api(path, { method, ...(data === undefined ? {} : { body: JSON.stringify(data) }) }, session.csrfToken));
-  }
-  async function logout() {
-    if (!session || loggingOut) return;
-    const previousGuild = guildId;
-    setLoggingOut(true); setError(''); setNotice('');
-    operationScope.current.invalidate();
-    runningOperation.current++; setBusy('');
-    // Close SSE immediately; logout can cancel a long-running backend operation.
-    setGuildId('');
-    try {
-      await api('/auth/logout', { method: 'POST' }, session.csrfToken);
-      setSession(null); setGuilds([]); setPlaylists([]); setFavorites([]); setBusy(''); setAuthError('');
-    } catch (problem) { setGuildId(previousGuild); reportError(problem); }
-    finally { setLoggingOut(false); }
-  }
-  function action(command: MusicAction) {
-    const originGuild = guildId;
-    return run(command.action, async () => {
-      await mutate(`/api/guilds/${originGuild}/actions`, 'POST', command);
-      if (originGuild === selectedGuildRef.current) await refresh();
-    });
-  }
-  async function addToQueue(event: FormEvent) {
-    event.preventDefault(); if (!query.trim()) return;
-    const text = query.trim();
-    await run('play', async () => { await mutate(`/api/guilds/${guildId}/actions`, 'POST', { action: 'play', query: text }); setQuery(''); setNotice('Canción enviada a la cola.'); await refresh(); });
-  }
-  function isFavorite(track: Track) { return favorites.some((item) => item.url === track.url); }
-  function toggleFavorite(track: Track) {
-    const saved = favorites.find((item) => item.url === track.url);
-    return run('favorite', async () => { await mutate(`/api/guilds/${guildId}/favorites${saved ? `/${saved.id}` : ''}`, saved ? 'DELETE' : 'POST', saved ? undefined : trackMetadata(track)); setLibraryRevision((value) => value + 1); setNotice(saved ? 'Canción retirada de favoritos.' : 'Guardada en tus favoritos.'); });
-  }
-  function reorderPlaylist(playlist: Playlist, from: number, to: number) {
-    const ids = playlist.tracks.map((track) => track.id); ids.splice(to, 0, ids.splice(from, 1)[0]);
-    return run('reorder', async () => { await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/tracks/order`, 'PUT', { trackIds: ids }); setLibraryRevision((value) => value + 1); });
-  }
-  function loadPlaylist(playlist: Playlist) {
-    return run('load', async () => {
-      await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/load`, 'POST');
-      setNotice(`«${playlist.name}» (${playlist.tracks.length} ${playlist.tracks.length === 1 ? 'canción' : 'canciones'}) enviada a la cola.`);
-      setView('player');
-      await refresh();
-    });
-  }
-  async function submitModal(event: FormEvent) {
-    event.preventDefault();
-    if (!modal) return;
-    await run('save', async () => {
-      const base = `/api/guilds/${guildId}/playlists`;
-      if (modal.type === 'playlist') await mutate(`${base}${modal.playlist ? `/${modal.playlist.id}` : ''}`, modal.playlist ? 'PATCH' : 'POST', { name: name.trim() });
-      if (modal.type === 'delete') { await mutate(`${base}/${modal.playlist.id}`, 'DELETE'); if (selectedPlaylist === modal.playlist.id) setSelectedPlaylist(''); }
-      if (modal.type === 'save') await mutate(`${base}/${targetPlaylist}/tracks`, 'POST', trackMetadata(modal.track));
-      if (modal.type === 'add') {
-        await mutate(`${base}/${modal.playlist.id}/tracks`, 'POST', {
-          url: trackUrl.trim(),
-          title: name.trim() || resolvedTrack?.title || '',
-          artist: trackArtist.trim() || resolvedTrack?.artist || 'Artista desconocido',
-          duration: resolvedTrack?.duration || 0,
-          thumbnail: resolvedTrack?.thumbnail || null,
-          source: resolvedTrack?.source || 'youtube',
-        });
-      }
-      setLibraryRevision((value) => value + 1); setModal(null); setNotice('Biblioteca actualizada.');
-    });
-  }
-  const guild = guilds.find((item) => item.id === guildId);
-  const playlist = playlists.find((item) => item.id === selectedPlaylist);
-  const current = state?.current;
-  const controlsDisabled = !!busy || loggingOut || !state;
-  const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
-  useEffect(() => { setVolumeDraft(null); }, [state?.volume, guildId]);
-  const playing = state?.status === 'playing';
-  const progress = current?.duration ? Math.min(100, Math.max(0, (state!.currentTime / current.duration) * 100)) : 0;
-  const queueDuration = state?.queue.reduce((sum, track) => sum + track.duration, 0) || 0;
-
-  if (!session) return <Login loading={authLoading} error={authError} retry={() => setAuthAttempt((value) => value + 1)} />;
+  if (!session) return <Login loading={authLoading} error={authError} retry={retryAuth} />;
 
   const trackRows = (tracks: Track[], context: 'queue' | 'favorites' | 'playlist', owner?: Playlist) => tracks.map((track, index) => <div className="track-row" key={`${track.id}-${index}`}>
     <span className="track-index">{String(index + 1).padStart(2, '0')}</span><Artwork track={track} className="track-art" decorative /><div className="track-title"><strong>{track.title}</strong><span>{track.artist || 'Artista desconocido'}</span></div>
@@ -257,7 +56,7 @@ export default function App() {
       {context !== 'queue' && <IconButton label={`Reproducir ${track.title}`} disabled={!!busy || !state} onClick={() => action({ action: 'play', query: track.url, track: trackMetadata(track) })}><Play size={15} /></IconButton>}
       <IconButton label={`${isFavorite(track) ? 'Quitar de' : 'Guardar en'} favoritos: ${track.title}`} active={isFavorite(track)} aria-pressed={isFavorite(track)} disabled={!!busy} onClick={() => toggleFavorite(track)}><Heart size={16} fill={isFavorite(track) ? 'currentColor' : 'none'} /></IconButton>
       {context === 'queue' && <IconButton label={`Guardar ${track.title} en playlist`} disabled={!!busy} onClick={() => setModal({ type: 'save', track })}><Plus size={17} /></IconButton>}
-      {context !== 'favorites' && <><IconButton label={`Subir ${track.title}`} disabled={!!busy || index === 0} onClick={() => owner ? reorderPlaylist(owner, index, index - 1) : action({ action: 'move', from: index + 1, to: index })}><ArrowUp size={15} /></IconButton><IconButton label={`Bajar ${track.title}`} disabled={!!busy || index === tracks.length - 1} onClick={() => owner ? reorderPlaylist(owner, index, index + 1) : action({ action: 'move', from: index + 1, to: index + 2 })}><ArrowDown size={15} /></IconButton><IconButton label={`Retirar ${track.title}`} disabled={!!busy} onClick={() => owner ? run('remove-track', async () => { await mutate(`/api/guilds/${guildId}/playlists/${owner.id}/tracks/${track.id}`, 'DELETE'); setLibraryRevision((value) => value + 1); }) : action({ action: 'remove', index: index + 1 })}><X size={16} /></IconButton></>}
+      {context !== 'favorites' && <><IconButton label={`Subir ${track.title}`} disabled={!!busy || index === 0} onClick={() => owner ? reorderPlaylist(owner, index, index - 1) : action({ action: 'move', from: index + 1, to: index })}><ArrowUp size={15} /></IconButton><IconButton label={`Bajar ${track.title}`} disabled={!!busy || index === tracks.length - 1} onClick={() => owner ? reorderPlaylist(owner, index, index + 1) : action({ action: 'move', from: index + 1, to: index + 2 })}><ArrowDown size={15} /></IconButton><IconButton label={`Retirar ${track.title}`} disabled={!!busy} onClick={() => owner ? removePlaylistTrack(owner, track) : action({ action: 'remove', index: index + 1 })}><X size={16} /></IconButton></>}
     </div>
   </div>);
 
@@ -298,7 +97,7 @@ export default function App() {
           />
         </div>
 
-        {error && <div className="alert alert-error" role="alert"><Activity size={18} /><span>{error}</span><Button variant="ghost" size="sm" onClick={() => { setError(''); void refresh(); setLibraryRevision((value) => value + 1); }}>Reintentar</Button><IconButton label="Cerrar error" onClick={() => setError('')}><X size={16} /></IconButton></div>}
+        {error && <div className="alert alert-error" role="alert"><Activity size={18} /><span>{error}</span><Button variant="ghost" size="sm" onClick={() => { setError(''); void refresh(); reloadLibrary(); }}>Reintentar</Button><IconButton label="Cerrar error" onClick={() => setError('')}><X size={16} /></IconButton></div>}
         {!guildId ? <EmptyState icon={<Headphones size={30} />} title={guildsLoading ? 'Buscando tu comunidad…' : 'Tu espacio está casi listo'} text={guildsLoading ? 'Consultando los servidores disponibles.' : 'No hay servidores disponibles para tu cuenta. Comprueba que el bot esté presente y tengas acceso.'} /> : <>
           {view === 'player' && <>
             <form className="search-bar" onSubmit={addToQueue}><Search size={20} /><label className="sr-only" htmlFor="music-search">Buscar canción o pegar enlace</label><input id="music-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="¿Qué escuchamos? Busca una canción o pega un enlace…" maxLength={500} autoComplete="off" /><span className="search-hint">YouTube · Spotify · SoundCloud</span><Button type="submit" aria-label="Agregar a la cola" disabled={!query.trim() || controlsDisabled} size="sm">{busy === 'play' ? <LoaderCircle size={16} className="spin" /> : <Plus size={17} />}<span>Agregar</span></Button></form>
