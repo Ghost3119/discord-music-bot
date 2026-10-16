@@ -9,6 +9,8 @@ import type { GuildPermissions, GuildSummary, MusicBridge, PlaybackSnapshot } fr
 import { WebConfig, validateWebConfig } from './config';
 import { WebDatabase, WebError, WebSession, csrfTokenFor, hashToken, openWebDatabase } from './database';
 import { musicAction, object, playlistName, resolveTrackUrlMetadata, trackMetadata } from './validation';
+import { createLyricsService, type LyricsService } from './lyrics/service';
+import type { LyricsCurrentResponse } from './lyrics/contracts';
 
 declare module 'fastify' { interface FastifyRequest { webSession: WebSession | null } }
 export interface WebServerOptions {
@@ -19,6 +21,8 @@ export interface WebServerOptions {
   oauthFetch?: typeof fetch;
   now?: () => number;
   sseIntervalMs?: number;
+  /** Test/provider injection; no client-supplied upstream URLs. */
+  lyricsService?: LyricsService;
 }
 interface LiveStream { response: ServerResponse; tokenHash: string; userId: string; guildId: string; close: () => void }
 interface PendingOperation { tokenHash: string; userId: string; guildId: string | undefined; controller: AbortController; done: () => void }
@@ -38,6 +42,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const database = options.database ?? openWebDatabase(config.databasePath);
   const now = options.now ?? Date.now;
   const oauthFetch = options.oauthFetch ?? fetch;
+  const lyrics = options.lyricsService ?? createLyricsService();
   const accessMode = config.accessMode ?? 'allowlist';
   const allowed = new Set(config.allowedUserIds);
   const allowedGuilds = config.allowedGuildIds?.length || accessMode === 'guild_members' ? new Set(config.allowedGuildIds ?? []) : null;
@@ -276,6 +281,40 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const guildId = params(request)['guildId']!;
     return projectSnapshot(userId, guildId, await bridge.getState(userId, guildId));
   });
+  app.get('/api/guilds/:guildId/lyrics/current', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply): Promise<LyricsCurrentResponse> => {
+    const userId = request.webSession!.user.id;
+    const guildId = params(request)['guildId']!;
+    const before = await bridge.getState(userId, guildId);
+    const identity = { guildId, trackId: before.current?.id ?? null, playbackId: before.playbackId ?? null };
+    if (!before.current || before.status === 'idle') return { ...identity, status: 'idle' };
+    // A legacy injected bridge without instance identity cannot safely attach lyrics.
+    if (!identity.playbackId) return { ...identity, status: 'stale' };
+    const operation = beginOperation(request, reply.raw);
+    const timeout = AbortSignal.timeout(12_000);
+    const signal = AbortSignal.any([operation.controller.signal, timeout]);
+    try {
+      const result = await lyrics.findLyrics({
+        title: before.current.title, artist: before.current.artist, duration: before.current.duration,
+        ...(before.current.album ? { album: before.current.album } : {}),
+      }, signal);
+      signal.throwIfAborted();
+      // Membership/session revocation during an upstream wait must take effect before returning text.
+      authenticate(request);
+      await assertGuildAccess(userId, guildId);
+      const after = await bridge.getState(userId, guildId);
+      signal.throwIfAborted();
+      if (after.playbackId !== before.playbackId || after.current?.id !== before.current.id || after.current?.url !== before.current.url || after.status === 'idle') {
+        return { guildId, trackId: after.current?.id ?? null, playbackId: after.playbackId ?? null, status: 'stale' };
+      }
+      return { ...identity, ...result };
+    } catch (error) {
+      if (signal.aborted) {
+        authenticate(request);
+        return { ...identity, status: 'temporary_error', retryAfterMs: 5000 };
+      }
+      throw error;
+    } finally { operation.done(); }
+  });
   app.post('/api/guilds/:guildId/actions', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
     const action = musicAction(request.body);
     const operation = beginOperation(request, reply.raw);
@@ -449,6 +488,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     for (const controller of loads.values()) controller.abort();
     for (const operation of operations) operation.controller.abort();
     states.clear();
+    if (!options.lyricsService) lyrics.close();
   });
   app.addHook('onClose', async () => { if (!options.database && database.sqlite.open) database.close(); });
   if (config.staticRoot && existsSync(config.staticRoot)) {
@@ -462,6 +502,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   return app;
   } catch (error) {
     closing = true;
+    if (!options.lyricsService) lyrics.close();
     clearInterval(expiryCleanup);
     for (const stream of streams) stream.close();
     for (const operation of operations) { operation.controller.abort(); operation.done(); }

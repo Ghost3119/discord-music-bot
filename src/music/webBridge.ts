@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Client, Guild, GuildMember, VoiceBasedChannel } from 'discord.js';
 import { Queue, Song } from 'distube';
 import type { GuildPermissions, MusicAction, MusicBridge, PlaybackSnapshot, Track, WebAccessMode } from '../web/contracts';
@@ -11,6 +12,7 @@ import { getPlayerPanels } from './playerPanel';
 import { controlError, installQueueControlGuard, musicSessionVersion, withMusicAccess } from './controlAccess';
 import { requestPlayback } from './playbackRequest';
 import { YtDlpSearchPlugin } from './ytDlpSearchPlugin';
+import { playbackIdentity } from '../web/playback-identity';
 
 export interface MusicBridgeOptions {
   accessMode?: WebAccessMode;
@@ -102,6 +104,9 @@ function webQuery(input: string | undefined): string {
 export function createMusicBridge(client: Client, history?: HistoryStore, options?: MusicBridgeOptions): MusicBridge {
   const distube = client.distube;
   const clock = options?.now ?? Date.now;
+  let snapshotSequence = 0;
+  const snapshotEpoch = randomUUID();
+  playbackIdentity(distube, undefined);
   const cacheTtlMs = options ? Math.max(0, options.membershipCacheTtlMs ?? 5_000) : 0;
   const allowedGuilds = options?.allowedGuildIds
     ? new Set(options.allowedGuildIds)
@@ -215,6 +220,7 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
       }
       return { guildId, status: !queue || queue.stopped ? 'idle' : state?.blocked ? 'blocked' : state && ['recovering', 'alternative'].includes(state.mode) ? 'recovering' : queue.paused ? 'paused' : 'playing',
         current: queue?.songs[0] ? track(queue.songs[0]) : null, queue: queue?.songs.slice(1, 501).map(track) ?? [],
+        playbackId: playbackIdentity(distube, queue), sampledAt: clock(), sequence: ++snapshotSequence, snapshotEpoch,
         currentTime: queue && Number.isFinite(queue.currentTime) ? Math.max(0, queue.currentTime) : 0,
         volume: queue?.volume ?? 50, repeat: queue?.repeatMode ?? 0,
         voice: queue?.voiceChannel ? { id: queue.voiceChannel.id, name: boundedText(queue.voiceChannel.name, 100), members: queue.voiceChannel.members.size } : null,

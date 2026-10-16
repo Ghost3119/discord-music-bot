@@ -7,6 +7,7 @@ export interface Track {
   duration: number;
   thumbnail: string | null;
   source: string;
+  album?: string;
 }
 export type WebAccessMode = 'allowlist' | 'guild_members';
 export type WebRole = 'member' | 'voice' | 'admin';
@@ -28,6 +29,13 @@ export interface PlaybackSnapshot {
   current: Track | null;
   queue: Track[];
   currentTime: number;
+  /** Authoritative playback instance; changes even when the same song repeats. */
+  playbackId?: string | null;
+  /** Server epoch milliseconds, informational; never compare to browser performance.now(). */
+  sampledAt?: number;
+  /** Monotonic within this bridge lifetime. */
+  sequence?: number;
+  snapshotEpoch?: string;
   volume: number;
   repeat: number;
   voice: { id: string; name: string; members: number } | null;
