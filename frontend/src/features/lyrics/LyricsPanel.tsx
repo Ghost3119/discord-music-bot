@@ -6,9 +6,16 @@ import { findActiveLine } from './playback-clock';
 import { LyricsLine } from './LyricsLine';
 import { useLyrics } from './use-lyrics';
 
-export interface LyricsPanelProps { snapshot: PlaybackSnapshot | null; positionSeconds: number; discontinuity: number; enabled?: boolean }
-export function LyricsPanel({ snapshot, positionSeconds, discontinuity, enabled = true }: LyricsPanelProps) {
-  const lyrics = useLyrics(snapshot, enabled);
+export interface LyricsPanelProps {
+  snapshot: PlaybackSnapshot | null;
+  positionSeconds: number;
+  discontinuity: number;
+  enabled?: boolean;
+  lyricsQuery?: ReturnType<typeof useLyrics>;
+}
+export function LyricsPanel({ snapshot, positionSeconds, discontinuity, enabled = true, lyricsQuery }: LyricsPanelProps) {
+  const internalLyrics = useLyrics(snapshot, enabled && !lyricsQuery);
+  const lyrics = lyricsQuery ?? internalLyrics;
   const regionId = useId();
   const scroller = useRef<HTMLDivElement>(null);
   const playbackKey = JSON.stringify([snapshot?.guildId, snapshot?.current?.id, snapshot?.playbackId]);
@@ -85,8 +92,11 @@ function LyricsFeedback({ status, data, error, canRetry, retry }: { status: stri
   const detail = data?.status === 'temporary_error' && data.reason ? reasons[data.reason] : fallbackDetail;
   const retryable = ['temporary_error', 'stale', 'error'].includes(kind || '');
   return <div className="immersive-lyrics-feedback" role={kind === 'loading' ? 'status' : undefined}>
-    <AudioLines size={32} strokeWidth={1.3} aria-hidden="true" />
-    <h3>{title}</h3><p>{detail}</p>
-    {retryable && <button className="immersive-retry" disabled={!canRetry} onClick={retry}><RefreshCw size={16} aria-hidden="true" />Volver a consultar</button>}
+    <AudioLines size={24} strokeWidth={1.3} aria-hidden="true" />
+    <div className="immersive-feedback-copy">
+      <h3>{title}</h3>
+      <p>{detail}</p>
+    </div>
+    {retryable && <button className="immersive-retry" disabled={!canRetry} onClick={retry}><RefreshCw size={15} aria-hidden="true" />Volver a consultar</button>}
   </div>;
 }
