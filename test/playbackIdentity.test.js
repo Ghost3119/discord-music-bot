@@ -1,0 +1,23 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const { playbackIdentity } = require('../dist/web/playback-identity');
+test('playback identity is stable between reads and changes for repeat, same-title songs and queue recreation', () => {
+  const engine = new EventEmitter();
+  const a = { id: 'a', name: 'Same title' }, b = { id: 'b', name: 'Same title' };
+  const queue = { songs: [a], stopped: false };
+  const first = playbackIdentity(engine, queue);
+  assert.match(first, /^[0-9a-f-]{36}$/);
+  assert.equal(playbackIdentity(engine, queue), first);
+  engine.emit('playSong', queue, a);
+  const repeated = playbackIdentity(engine, queue);
+  assert.notEqual(repeated, first);
+  queue.songs[0] = b;
+  const second = playbackIdentity(engine, queue);
+  assert.notEqual(second, repeated);
+  assert.notEqual(playbackIdentity(engine, { songs: [b], stopped: false }), second);
+  assert.equal(engine.listenerCount('playSong'), 1);
+  queue.stopped = true;
+  assert.equal(playbackIdentity(engine, queue), null);
+  assert.equal(playbackIdentity(engine, undefined), null);
+});

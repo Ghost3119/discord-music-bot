@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type PlaybackSnapshot } from '../lib/api';
 import { connectPlayback } from '../lib/playback-stream';
+import { markPlaybackReceived } from '../lib/playback-receipt';
 
 export function usePlayback(guildId: string, onError: (error: unknown) => void) {
   const [state, setState] = useState<PlaybackSnapshot | null>(null);
@@ -16,7 +17,7 @@ export function usePlayback(guildId: string, onError: (error: unknown) => void) 
       guildId,
       fetchState: (signal) => api<PlaybackSnapshot>(`/api/guilds/${encodeURIComponent(guildId)}/state`, { signal }),
       createSource: (url) => new EventSource(url, { withCredentials: true }),
-      onState: setState,
+      onState: (snapshot) => { markPlaybackReceived(snapshot); setState(snapshot); },
       onConnection: setConnection,
       onError: (error) => errorRef.current(error),
       onInvalidate: () => { setState(null); setConnection('reconnecting'); },

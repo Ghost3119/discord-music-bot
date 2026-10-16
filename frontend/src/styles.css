@@ -169,6 +169,16 @@ button svg { flex-shrink: 0; }
 .track-row { display: flex; align-items: center; gap: 12px; padding: 10px 7px; border-bottom: 1px solid #1e2228; min-height: 68px; border-radius: 5px; }
 .track-row:hover { background: #ffffff04; }
 .track-index { font-size: 10px; width: 19px; color: #5c6571; flex-shrink: 0; text-align: center; }
+.track-drag-handle { display: grid; place-items: center; height: 30px; padding: 0; border: 0; border-radius: 4px; background: none; font: inherit; font-size: 10px; cursor: grab; touch-action: none; }
+.track-drag-handle > * { grid-area: 1 / 1; transition: opacity .15s ease; }
+.track-drag-handle .track-grip { opacity: 0; color: #8b95a3; width: 15px; }
+.track-drag-handle:disabled { cursor: default; }
+.track-row:hover .track-drag-handle:not(:disabled) .track-grip, .track-drag-handle:focus-visible .track-grip, .track-row.is-dragging .track-grip { opacity: 1; }
+.track-row:hover .track-drag-handle:not(:disabled) .track-index-number, .track-drag-handle:focus-visible .track-index-number, .track-row.is-dragging .track-index-number { opacity: 0; }
+.track-drag-handle:not(:disabled):hover .track-grip { color: var(--primary); }
+.track-row.is-dragging { position: relative; z-index: 2; background: #161a20; box-shadow: 0 12px 28px #00000080; }
+.track-row.is-dragging, .track-row.is-dragging .track-drag-handle { cursor: grabbing; }
+@media (hover: none) { .track-drag-handle:not(:disabled) .track-grip { opacity: 1; } .track-drag-handle:not(:disabled) .track-index-number { opacity: 0; } }
 .track-art { width: 41px; height: 41px; border-radius: 5px; flex-shrink: 0; }
 .track-title { min-width: 90px; flex: 1; }
 .track-title strong { display: block; color: #cccfd5; font-size: 11px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.7; }

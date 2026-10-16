@@ -9,7 +9,7 @@ import { Sidebar } from '../src/components/layout/Sidebar';
 import { PlayerBar, type PlaybackBindings } from '../src/components/player/PlayerBar';
 import { MobilePlaybackTools } from '../src/components/player/MobilePlaybackTools';
 import { NowPlaying } from '../src/components/player/NowPlaying';
-import { QueueSection, TrackItem, TrackList, type TrackActions } from '../src/components/queue/TrackList';
+import { QueueSection, TrackItem, TrackList, trackSortIds, type TrackActions } from '../src/components/queue/TrackList';
 import { Login } from '../src/features/auth/Login';
 import { PlayerView } from '../src/features/dashboard/PlayerView';
 import { DiagnosticsView } from '../src/features/diagnostics/DiagnosticsView';
@@ -179,52 +179,67 @@ describe('player and queue regression', () => {
     expect(tag(html, 'input', 'id', id)).toContain('type="range"');
   });
 
-  it('preserves row siblings and queue order, duration and move/remove callback indices', () => {
+  it('preserves row siblings and queue order, duration and drag/remove wiring', () => {
     const callbacks = actions();
     const tracks = [track('first'), track('middle'), track('last')];
     const html = renderToStaticMarkup(<TrackList tracks={tracks} context="queue" actions={callbacks} />);
-    expect(html).toMatch(/^<div class="track-row">/);
+    expect(html).toMatch(/^<div class="track-row"/);
     expect(html.match(/class="track-row"/g)).toHaveLength(3);
-    expect(html).toContain('<span class="track-index">01</span>');
-    expect(html).toContain('<span class="track-index">03</span>');
+    expect(html).toContain('<span class="track-index-number">01</span>');
+    expect(html).toContain('<span class="track-index-number">03</span>');
     expect(html.indexOf('Canción first')).toBeLessThan(html.indexOf('Canción middle'));
-    expect(tag(html, 'button', 'aria-label', 'Subir Canción first')).toContain('disabled=""');
-    expect(tag(html, 'button', 'aria-label', 'Bajar Canción last')).toContain('disabled=""');
-    const middle = TrackItem({ track: tracks[1], index: 1, length: 3, context: 'queue', actions: callbacks });
-    click(middle, 'Subir Canción middle');
-    click(middle, 'Bajar Canción middle');
+    const handle = tag(html, 'button', 'aria-label', 'Reordenar Canción first');
+    expect(handle).toContain('aria-roledescription="sortable"');
+    expect(handle).not.toContain('disabled=""');
+    expect(html).not.toContain('aria-label="Subir');
+    expect(html).not.toContain('aria-label="Bajar');
+    const middle = TrackItem({ track: tracks[1], index: 1, context: 'queue', actions: callbacks });
     click(middle, 'Retirar Canción middle');
     click(middle, 'Guardar Canción middle en playlist');
-    expect(callbacks.onMove).toHaveBeenNthCalledWith(1, 1, 0, undefined);
-    expect(callbacks.onMove).toHaveBeenNthCalledWith(2, 1, 2, undefined);
     expect(callbacks.onRemove).toHaveBeenCalledWith(tracks[1], 1, undefined);
     expect(callbacks.onSave).toHaveBeenCalledWith(tracks[1]);
+    const busy = renderToStaticMarkup(<TrackList tracks={tracks} context="queue" actions={actions({ busy: true })} />);
+    expect(tag(busy, 'button', 'aria-label', 'Reordenar Canción middle')).toContain('disabled=""');
+    const single = renderToStaticMarkup(<TrackList tracks={[tracks[0]]} context="queue" actions={callbacks} />);
+    expect(tag(single, 'button', 'aria-label', 'Reordenar Canción first')).toContain('disabled=""');
     const queue = renderToStaticMarkup(<QueueSection state={snapshot({ queue: tracks })} controlsDisabled={false} onShuffle={vi.fn()} actions={callbacks} />);
     expect(queue).toContain('3 canciones · 6:00 de buena música');
+  });
+
+  it('gives duplicated queue entries unique sortable ids', () => {
+    const repeated = track('same');
+    expect(trackSortIds([repeated, track('other'), repeated, repeated])).toEqual([
+      repeated.id,
+      track('other').id,
+      `${repeated.id}#1`,
+      `${repeated.id}#2`,
+    ]);
   });
 
   it('keeps playlist ownership and favorites without queue-only controls', () => {
     const saved = playlist();
     const callbacks = actions({ isFavorite: () => true });
-    const row = TrackItem({ track: saved.tracks[1], index: 1, length: 2, context: 'playlist', owner: saved, actions: callbacks });
-    click(row, 'Subir Canción track-b');
+    const row = TrackItem({ track: saved.tracks[1], index: 1, context: 'playlist', owner: saved, actions: callbacks });
     click(row, 'Retirar Canción track-b');
-    expect(callbacks.onMove).toHaveBeenCalledWith(1, 0, saved);
     expect(callbacks.onRemove).toHaveBeenCalledWith(saved.tracks[1], 1, saved);
-    const favorite = TrackItem({ track: saved.tracks[0], index: 0, length: 1, context: 'favorites', actions: callbacks });
+    const sortable = renderToStaticMarkup(<TrackList tracks={saved.tracks} context="playlist" owner={saved} actions={callbacks} />);
+    expect(sortable).toContain('aria-label="Reordenar Canción track-b"');
+    const favorite = TrackItem({ track: saved.tracks[0], index: 0, context: 'favorites', actions: callbacks });
     click(favorite, 'Reproducir Canción track-a');
     click(favorite, 'Quitar de favoritos: Canción track-a');
     expect(callbacks.onPlay).toHaveBeenCalledWith(saved.tracks[0]);
     expect(callbacks.onToggleFavorite).toHaveBeenCalledWith(saved.tracks[0]);
     const html = renderToStaticMarkup(favorite);
     expect(html).toContain('aria-pressed="true"');
-    expect(html).not.toContain('aria-label="Subir');
+    expect(html).not.toContain('aria-label="Reordenar');
     expect(html).not.toContain('aria-label="Retirar');
     expect(html).not.toContain('en playlist');
+    const favorites = renderToStaticMarkup(<TrackList tracks={saved.tracks} context="favorites" actions={callbacks} />);
+    expect(favorites).not.toContain('aria-label="Reordenar');
   });
 
   it('keeps collection actions busy and playback disabled until state is available', () => {
-    const html = renderToStaticMarkup(<TrackItem track={track()} index={0} length={1} context="playlist" owner={playlist()} actions={actions({ busy: true, playbackReady: false })} />);
+    const html = renderToStaticMarkup(<TrackItem track={track()} index={0} context="playlist" owner={playlist()} actions={actions({ busy: true, playbackReady: false })} />);
     for (const label of ['Reproducir Canción track-a', 'Guardar en favoritos: Canción track-a', 'Retirar Canción track-a']) {
       expect(tag(html, 'button', 'aria-label', label)).toContain('disabled=""');
     }

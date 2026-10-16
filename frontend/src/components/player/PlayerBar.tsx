@@ -1,4 +1,4 @@
-import { Heart, ListMusic, Pause, Play, Repeat, Shuffle, SkipForward, Square, Volume2 } from 'lucide-react';
+import { Heart, ListMusic, Maximize2, Pause, Play, Repeat, Shuffle, SkipForward, Square, Volume2 } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import { Artwork } from '../artwork';
 import { IconButton } from '../common/IconButton';
@@ -21,9 +21,11 @@ export interface PlaybackBindings {
 export interface PlayerBarProps {
   playback: PlaybackBindings;
   onShowQueue: () => void;
+  onOpenImmersive?: () => void;
+  immersiveDisabled?: boolean;
 }
 
-export function PlayerBar({ playback, onShowQueue }: PlayerBarProps) {
+export function PlayerBar({ playback, onShowQueue, onOpenImmersive, immersiveDisabled }: PlayerBarProps) {
   const { state, busy, controlsDisabled, volumeDraft, setVolumeDraft, action, isFavorite, toggleFavorite } =
     playback;
   const current = state?.current;
@@ -49,6 +51,7 @@ export function PlayerBar({ playback, onShowQueue }: PlayerBarProps) {
           <Heart size={17} fill={current && isFavorite(current) ? 'currentColor' : 'none'} />
         </IconButton>
       </div>
+      {onOpenImmersive && <IconButton className="immersive-trigger" label="Abrir reproductor inmersivo" disabled={immersiveDisabled} onClick={onOpenImmersive}><Maximize2 size={18} /></IconButton>}
       <div className="player-center">
         <div className="player-buttons">
           <IconButton

@@ -1,7 +1,28 @@
+import { useMemo, useState, type CSSProperties } from 'react';
 import {
-  ArrowDown,
-  ArrowUp,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DraggableAttributes,
+  type DraggableSyntheticListeners,
+  type UniqueIdentifier,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import { CSS } from '@dnd-kit/utilities';
+import {
   CircleHelp,
+  GripVertical,
   Heart,
   ListMusic,
   LoaderCircle,
@@ -13,7 +34,7 @@ import {
 import { Artwork } from '../artwork';
 import { IconButton } from '../common/IconButton';
 import { Button } from '../ui/button';
-import { duration } from '../../lib/utils';
+import { cn, duration } from '../../lib/utils';
 import type { PlaybackSnapshot, Playlist, Track } from '../../lib/api';
 
 export type TrackContext = 'queue' | 'favorites' | 'playlist';
@@ -37,18 +58,47 @@ export type TrackListProps = TrackOwnership & {
   tracks: Track[];
   actions: TrackActions;
 };
+
+/** Wiring provided by the sortable wrapper; absent for non-reorderable lists. */
+export interface TrackDragBindings {
+  rowRef: (element: HTMLElement | null) => void;
+  handleRef: (element: HTMLElement | null) => void;
+  style: CSSProperties;
+  attributes: DraggableAttributes;
+  listeners: DraggableSyntheticListeners;
+  dragging: boolean;
+  disabled: boolean;
+}
+
 export type TrackItemProps = TrackOwnership & {
   track: Track;
   index: number;
-  length: number;
   actions: TrackActions;
+  drag?: TrackDragBindings;
 };
 
-export function TrackItem({ track, index, length, context, owner, actions }: TrackItemProps) {
-  const { busy, playbackReady, isFavorite, onPlay, onToggleFavorite, onSave, onMove, onRemove } = actions;
+export function TrackItem({ track, index, context, owner, actions, drag }: TrackItemProps) {
+  const { busy, playbackReady, isFavorite, onPlay, onToggleFavorite, onSave, onRemove } = actions;
+  const position = String(index + 1).padStart(2, '0');
   return (
-    <div className="track-row">
-      <span className="track-index">{String(index + 1).padStart(2, '0')}</span>
+    <div ref={drag?.rowRef} style={drag?.style} className={cn('track-row', drag?.dragging && 'is-dragging')}>
+      {drag ? (
+        <button
+          type="button"
+          ref={drag.handleRef}
+          className="track-index track-drag-handle"
+          title="Arrastra para reordenar"
+          disabled={drag.disabled}
+          {...drag.attributes}
+          {...drag.listeners}
+          aria-label={`Reordenar ${track.title}`}
+        >
+          <span className="track-index-number">{position}</span>
+          <GripVertical className="track-grip" size={15} aria-hidden />
+        </button>
+      ) : (
+        <span className="track-index">{position}</span>
+      )}
       <Artwork track={track} className="track-art" decorative />
       <div className="track-title">
         <strong>{track.title}</strong>
@@ -85,44 +135,107 @@ export function TrackItem({ track, index, length, context, owner, actions }: Tra
           </IconButton>
         )}
         {context !== 'favorites' && (
-          <>
-            <IconButton
-              label={`Subir ${track.title}`}
-              disabled={busy || index === 0}
-              onClick={() => onMove(index, index - 1, owner)}
-            >
-              <ArrowUp size={15} />
-            </IconButton>
-            <IconButton
-              label={`Bajar ${track.title}`}
-              disabled={busy || index === length - 1}
-              onClick={() => onMove(index, index + 1, owner)}
-            >
-              <ArrowDown size={15} />
-            </IconButton>
-            <IconButton
-              label={`Retirar ${track.title}`}
-              disabled={busy}
-              onClick={() => onRemove(track, index, owner)}
-            >
-              <X size={16} />
-            </IconButton>
-          </>
+          <IconButton
+            label={`Retirar ${track.title}`}
+            disabled={busy}
+            onClick={() => onRemove(track, index, owner)}
+          >
+            <X size={16} />
+          </IconButton>
         )}
       </div>
     </div>
   );
 }
 
-export function TrackList({ tracks, ...itemProps }: TrackListProps) {
-  return tracks.map((track, index) => (
+/** Stable, unique sortable ids even when the same song is queued more than once. */
+export function trackSortIds(tracks: Track[]) {
+  const seen = new Map<string, number>();
+  return tracks.map((track) => {
+    const occurrence = seen.get(track.id) ?? 0;
+    seen.set(track.id, occurrence + 1);
+    return occurrence ? `${track.id}#${occurrence}` : track.id;
+  });
+}
+
+function SortableTrackItem({ id, disabled, item }: { id: string; disabled: boolean; item: TrackItemProps }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled,
+  });
+  return (
     <TrackItem
-      key={`${track.id}-${index}`}
-      track={track}
-      index={index}
-      length={tracks.length}
-      {...itemProps}
+      {...item}
+      drag={{
+        rowRef: setNodeRef,
+        handleRef: setActivatorNodeRef,
+        style: { transform: CSS.Translate.toString(transform), transition },
+        attributes,
+        listeners,
+        dragging: isDragging,
+        disabled,
+      }}
     />
+  );
+}
+
+const screenReaderInstructions = {
+  draggable:
+    'Para reordenar, pulsa espacio o Enter. Usa las flechas arriba y abajo para mover la canción y vuelve a pulsar espacio o Enter para soltarla. Pulsa Escape para cancelar.',
+};
+
+function SortableTrackList({ tracks, ...itemProps }: TrackListProps) {
+  // Optimistic order shown between the drop and the server-confirmed refresh.
+  const [pending, setPending] = useState<Track[] | null>(null);
+  const items = pending ?? tracks;
+  const ids = useMemo(() => trackSortIds(items), [items]);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const locked = itemProps.actions.busy || pending !== null || items.length < 2;
+  const position = (id: UniqueIdentifier) => ids.indexOf(String(id)) + 1;
+
+  function handleDragEnd({ active, over }: DragEndEvent) {
+    if (!over || active.id === over.id) return;
+    const from = ids.indexOf(String(active.id));
+    const to = ids.indexOf(String(over.id));
+    if (from < 0 || to < 0) return;
+    setPending(arrayMove(items, from, to));
+    void Promise.resolve()
+      .then(() => itemProps.actions.onMove(from, to, itemProps.owner))
+      .finally(() => setPending(null));
+  }
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+      onDragEnd={handleDragEnd}
+      accessibility={{
+        screenReaderInstructions,
+        announcements: {
+          onDragStart: ({ active }) => `Canción tomada en la posición ${position(active.id)}.`,
+          onDragOver: ({ over }) => (over ? `Canción sobre la posición ${position(over.id)}.` : undefined),
+          onDragEnd: ({ over }) => (over ? `Canción soltada en la posición ${position(over.id)}.` : 'Canción soltada.'),
+          onDragCancel: () => 'Reordenamiento cancelado.',
+        },
+      }}
+    >
+      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+        {items.map((track, index) => (
+          <SortableTrackItem key={ids[index]} id={ids[index]} disabled={locked} item={{ ...itemProps, track, index }} />
+        ))}
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+export function TrackList({ tracks, ...itemProps }: TrackListProps) {
+  if (itemProps.context !== 'favorites') return <SortableTrackList tracks={tracks} {...itemProps} />;
+  return tracks.map((track, index) => (
+    <TrackItem key={`${track.id}-${index}`} track={track} index={index} {...itemProps} />
   ));
 }
 

@@ -2,7 +2,7 @@
 
 Bot privado de musica para Discord hecho con `discord.js`, `DisTube`, `yt-dlp` y TypeScript.
 
-Incluye **SONORA**, un panel web privado con acceso mediante Discord, reproductor y cola en tiempo real, biblioteca de playlists, favoritos y diagnósticos.
+Incluye **SONORA**, un panel web privado con acceso mediante Discord, reproductor y cola en tiempo real, biblioteca de playlists, favoritos, diagnósticos y un modo inmersivo con letras y fondos derivados de la portada.
 
 ## Levantar toda la aplicación
 
@@ -317,7 +317,7 @@ npm run deploy:check
 git diff --check
 ```
 
-La última validación documentada, del **16 de octubre de 2026**, aprobó **461 pruebas: 380 backend y 81 frontend**, incluidas **26 pruebas React montadas** del editor. Cubren respuestas tardías, cancelación, desmontaje, cambios de sesión/servidor y StrictMode. El build comprueba también los contratos TypeScript positivos y negativos. Consulta el [informe de validación](docs/LIBRARY_EDITOR_INVARIANTS.md).
+La validación del **16 de octubre de 2026** aprobó **574 pruebas: 413 backend y 161 frontend**. Se conserva la suite previa y se añaden 113 pruebas para letras, identidad, reloj y lifecycle inmersivo. El build comprueba contratos TypeScript; deploy:check valida los 19 comandos sin contactar Discord. Consulta el [informe inmersivo](docs/IMMERSIVE_PLAYER.md) y las [invariantes del editor](docs/LIBRARY_EDITOR_INVARIANTS.md).
 
 Para ejecutar únicamente las pruebas montadas del editor:
 
@@ -366,3 +366,14 @@ Solo puede arrancar una instancia por `CLIENT_ID` en el mismo equipo. Una segund
 - Si cambias opciones de comandos slash, corre `npm run deploy` otra vez.
 - Si una plataforma falla, revisa si `yt-dlp` soporta ese enlace.
 - Para playlists grandes, la resolucion puede tardar porque cada cancion necesita buscar una fuente reproducible.
+
+
+## Reproductor inmersivo
+El botón **Abrir reproductor inmersivo** de la barra musical muestra una portada grande, controles y letras, sin interrumpir audio ni crear otra conexión SSE. En móvil puedes alternar Portada y Letras; Escape o Volver regresan al dashboard conservando su estado.
+
+Las letras se consultan en el backend mediante LRCLIB, con autorización, matching conservador, límites y caché temporal en memoria. No necesita claves nuevas. Distingue letras sincronizadas, texto normal, instrumental, sin coincidencia y fallos temporales. El navegador estima posición entre snapshots; el audio sigue en Discord. El progreso web es informativo: los saltos con /seek en Discord se reflejan al recibir un nuevo snapshot.
+
+La [arquitectura, evidencias y pruebas manuales](docs/IMMERSIVE_PLAYER.md) documentan los límites: no se midió sincronización audible real ni se promete ausencia de desfase. El [informe de LRCLIB](docs/LYRICS_PROVIDER.md) registra condiciones consultadas y política prudente de retención.
+
+
+Las cargas de playlist disponen de un plazo de hasta5min y no se cortan por el timeout de inactividad de15s. Si vence el plazo, revisa la cola antes de reintentar para evitar duplicados. Los errores temporales de letras distinguen timeout, límite del proveedor, conexión, respuesta inválida y consultas pendientes. Véase el [diagnóstico y la validación](docs/IMMERSIVE_PLAYER.md#corrección-posterior-socket-y-mensajes-de-letras-2026-10-16).

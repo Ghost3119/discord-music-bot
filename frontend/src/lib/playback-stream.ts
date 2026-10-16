@@ -21,6 +21,23 @@ export function connectPlayback(options: Options) {
   let closed = false;
   let revision = 0;
   let fetchRevision = 0;
+  let latest: PlaybackSnapshot | null = null;
+  const retiredEpochs = new Set<string>();
+  const accept = (state: PlaybackSnapshot): boolean => {
+    if (state.guildId !== options.guildId) return false;
+    if (state.snapshotEpoch && retiredEpochs.has(state.snapshotEpoch)) return false;
+    if (latest?.snapshotEpoch && state.snapshotEpoch && latest.snapshotEpoch !== state.snapshotEpoch) {
+      retiredEpochs.add(latest.snapshotEpoch);
+      if (retiredEpochs.size > 8) retiredEpochs.delete(retiredEpochs.values().next().value!);
+    }
+    if (latest && latest.snapshotEpoch === state.snapshotEpoch) {
+      if (typeof latest.sequence === 'number' && typeof state.sequence === 'number' && state.sequence <= latest.sequence) return false;
+      if (state.sequence === undefined && typeof latest.sampledAt === 'number' && typeof state.sampledAt === 'number' && state.sampledAt < latest.sampledAt) return false;
+    }
+    latest = state;
+    options.onState(state);
+    return true;
+  };
   const close = () => { closed = true; abort.abort(); source.onopen = null; source.onerror = null; source.close(); };
   const refresh = async () => {
     if (closed) return;
@@ -28,7 +45,7 @@ export function connectPlayback(options: Options) {
     const request = ++fetchRevision;
     try {
       const state = await options.fetchState(abort.signal);
-      if (!closed && request === fetchRevision && revisionAtStart === revision && state.guildId === options.guildId) options.onState(state);
+      if (!closed && request === fetchRevision && revisionAtStart === revision) accept(state);
     } catch (error) {
       if (!closed && !abort.signal.aborted) {
         if (error instanceof ApiError && [401, 403].includes(error.status)) {
@@ -55,7 +72,7 @@ export function connectPlayback(options: Options) {
       const state = JSON.parse(event.data) as PlaybackSnapshot;
       if (state.guildId !== options.guildId) return;
       revision++;
-      options.onState(state);
+      accept(state);
       options.onConnection('live');
     } catch { options.onError(new Error('Se recibió una actualización inválida.')); }
   });
