@@ -1,5 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, AudioLines, Check, ChevronDown, CircleHelp, Disc3, ExternalLink, Headphones, Heart, Library, ListMusic, LoaderCircle, LogOut, Menu, Music2, Pause, Pencil, Play, Plus, Radio, RefreshCw, Repeat, Search, ShieldCheck, Shuffle, SkipForward, Square, Trash2, Volume2, Wifi, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, AudioLines, Check, CircleHelp, Disc3, ExternalLink, Headphones, Heart, Library, ListMusic, LoaderCircle, LogOut, Menu, Music2, Pause, Pencil, Play, Plus, Radio, RefreshCw, Repeat, Search, ShieldCheck, Shuffle, SkipForward, Square, Trash2, Volume2, Wifi, X } from 'lucide-react';
+import { Brand } from './components/common/Brand';
+import { IconButton } from './components/common/IconButton';
+import { CustomSelect } from './components/common/CustomSelect';
+import { Loading, EmptyState } from './components/common/StateFeedback';
 import { Artwork } from './components/artwork';
 import { Button } from './components/ui/button';
 import { Dialog } from './components/ui/dialog';
@@ -13,10 +17,6 @@ type View = 'player' | 'library' | 'favorites' | 'diagnostics';
 type Modal = { type: 'playlist'; playlist?: Playlist } | { type: 'delete'; playlist: Playlist } | { type: 'save'; track: Track } | { type: 'add'; playlist: Playlist } | null;
 const labels = { idle: 'En espera', playing: 'Reproduciendo', paused: 'En pausa', recovering: 'Recuperando audio', blocked: 'Reproducción bloqueada' };
 const navigation = [{ id: 'player', name: 'Ahora suena', icon: AudioLines }, { id: 'library', name: 'Mi biblioteca', icon: Library }, { id: 'favorites', name: 'Favoritos', icon: Heart }, { id: 'diagnostics', name: 'Diagnóstico', icon: Activity }] as const;
-
-function IconButton({ label, children, active, className, ...props }: { label: string; children: ReactNode; active?: boolean } & React.ComponentProps<typeof Button>) {
-  return <Button variant="ghost" size="icon" title={label} aria-label={label} className={cn(active && 'is-active', className)} {...props}>{children}</Button>;
-}
 
 function UserAvatar({ session }: { session: Session }) {
   const avatar = session.user.avatar;
@@ -39,136 +39,6 @@ function Login({ error, retry, loading }: { error: string; retry: () => void; lo
 }
 
 function DiscordIcon() { return <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.7 5.3a18 18 0 0 0-4.4-1.4l-.6 1.2a16.2 16.2 0 0 0-5.4 0l-.6-1.2a18 18 0 0 0-4.4 1.4C1.5 9.4.7 13.4 1.1 17.3a18 18 0 0 0 5.4 2.8l1.1-1.8-1.7-.8.4-.3a12.8 12.8 0 0 0 11.4 0l.4.3-1.7.8 1.1 1.8a18 18 0 0 0 5.4-2.8c.5-4.5-.8-8.5-3.2-12ZM8.5 14.8c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Zm7 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Z" /></svg>; }
-function Brand() { return <div className="brand"><span className="brand-mark"><AudioLines size={23} strokeWidth={2.3} /></span>SONORA<span className="brand-dot">®</span></div>; }
-
-interface SelectOption {
-  value: string;
-  label: string;
-  sublabel?: string;
-  icon?: ReactNode;
-}
-
-function CustomSelect({
-  id,
-  label,
-  value,
-  options,
-  placeholder = 'Selecciona una opción',
-  disabled = false,
-  onChange,
-  variant = 'field',
-  leadingIcon,
-}: {
-  id?: string;
-  label?: string;
-  value: string;
-  options: SelectOption[];
-  placeholder?: string;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-  variant?: 'guild' | 'field';
-  leadingIcon?: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const selected = options.find((item) => item.value === value);
-
-  useEffect(() => {
-    if (!open) return;
-    const selectedIdx = options.findIndex((item) => item.value === value);
-    setActiveIndex(selectedIdx >= 0 ? selectedIdx : 0);
-    const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open, options, value]);
-
-  useEffect(() => {
-    if (disabled && open) setOpen(false);
-  }, [disabled, open]);
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (disabled || !options.length) return;
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      if (!open) { setOpen(true); return; }
-      setActiveIndex((prev) => (prev + 1) % options.length);
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      if (!open) { setOpen(true); return; }
-      setActiveIndex((prev) => (prev - 1 + options.length) % options.length);
-    } else if (event.key === 'Enter' || event.key === ' ') {
-      if (open && activeIndex >= 0 && options[activeIndex]) {
-        event.preventDefault();
-        onChange(options[activeIndex].value);
-        setOpen(false);
-      }
-    }
-  };
-
-  return (
-    <div ref={rootRef} className={cn('custom-select', variant === 'guild' ? 'guild-picker' : 'field-select', open && 'is-open')}>
-      <button
-        id={id}
-        type="button"
-        role="combobox"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-controls={id ? `${id}-listbox` : undefined}
-        disabled={disabled}
-        className="custom-select-trigger"
-        onClick={() => !disabled && options.length > 0 && setOpen((prev) => !prev)}
-        onKeyDown={handleKeyDown}
-      >
-        {leadingIcon && <span className="guild-avatar">{leadingIcon}</span>}
-        <span className="custom-select-copy">
-          {label && <span className="custom-select-label">{label}</span>}
-          <span className="custom-select-value">{selected ? selected.label : placeholder}</span>
-        </span>
-        <ChevronDown size={15} className={cn('custom-select-chevron', open && 'is-open')} aria-hidden="true" />
-      </button>
-      {open && options.length > 0 && (
-        <div id={id ? `${id}-listbox` : undefined} role="listbox" aria-label={label || placeholder} className="custom-select-menu">
-          {options.map((option, index) => {
-            const isSelected = option.value === value;
-            const isHighlighted = index === activeIndex;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                className={cn('custom-select-option', isSelected && 'is-selected', isHighlighted && 'is-highlighted')}
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-              >
-                {option.icon && <span className="custom-select-option-icon">{option.icon}</span>}
-                <span className="custom-select-option-text">
-                  <strong>{option.label}</strong>
-                  {option.sublabel && <small>{option.sublabel}</small>}
-                </span>
-                {isSelected && <Check size={15} className="custom-select-check" aria-hidden="true" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -557,9 +427,6 @@ export default function App() {
     </Dialog>
   </div>;
 }
-
-function Loading({ text }: { text: string }) { return <div className="loading-block" role="status"><LoaderCircle size={22} className="spin" />{text}</div>; }
-function EmptyState({ icon, title, text, action }: { icon: ReactNode; title: string; text: string; action?: ReactNode }) { return <div className="empty-state"><span className="empty-icon">{icon}</span><h2>{title}</h2><p>{text}</p>{action}</div>; }
 
 function Diagnostics({ state, connection, refresh }: { state: PlaybackSnapshot | null; connection: string; refresh: () => void }) {
   const healthEntries = healthRows(state?.health || {});
