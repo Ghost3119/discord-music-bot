@@ -14,7 +14,16 @@ interface LibraryOptions {
 }
 
 /** Keeps collection data, its editor and abortable metadata lookup in one feature. */
-export function useLibrary({ guildId, session, reportError, run, mutate, setNotice, setView, refresh }: LibraryOptions) {
+export function useLibrary({
+  guildId,
+  session,
+  reportError,
+  run,
+  mutate,
+  setNotice,
+  setView,
+  refresh,
+}: LibraryOptions) {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [favorites, setFavorites] = useState<Track[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
@@ -52,8 +61,12 @@ export function useLibrary({ guildId, session, reportError, run, mutate, setNoti
           setFavorites(saved.favorites);
         }
       })
-      .catch((problem) => { if (!abort.signal.aborted) reportError(problem); })
-      .finally(() => { if (!abort.signal.aborted) setLibraryLoading(false); });
+      .catch((problem) => {
+        if (!abort.signal.aborted) reportError(problem);
+      })
+      .finally(() => {
+        if (!abort.signal.aborted) setLibraryLoading(false);
+      });
     return () => abort.abort();
   }, [libraryRevision, guildId, session, reportError]);
 
@@ -82,15 +95,28 @@ export function useLibrary({ guildId, session, reportError, run, mutate, setNoti
     const abort = new AbortController();
     setResolvingTrack(true);
     const timer = window.setTimeout(() => {
-      api<{ track: Omit<Track, 'id'> }>(`/api/guilds/${guildId}/tracks/resolve?url=${encodeURIComponent(raw)}`, { signal: abort.signal })
+      api<{ track: Omit<Track, 'id'> }>(
+        `/api/guilds/${guildId}/tracks/resolve?url=${encodeURIComponent(raw)}`,
+        { signal: abort.signal },
+      )
         .then(({ track }) => {
           if (abort.signal.aborted) return;
           setResolvedTrack(track);
           setName((prev) => (!titleTouched || !prev.trim() ? track.title : prev));
-          setTrackArtist((prev) => (!artistTouched || !prev.trim() ? (track.artist === 'Artista desconocido' ? '' : track.artist) : prev));
+          setTrackArtist((prev) =>
+            !artistTouched || !prev.trim()
+              ? track.artist === 'Artista desconocido'
+                ? ''
+                : track.artist
+              : prev,
+          );
         })
-        .catch(() => { if (!abort.signal.aborted) setResolvedTrack(null); })
-        .finally(() => { if (!abort.signal.aborted) setResolvingTrack(false); });
+        .catch(() => {
+          if (!abort.signal.aborted) setResolvedTrack(null);
+        })
+        .finally(() => {
+          if (!abort.signal.aborted) setResolvingTrack(false);
+        });
     }, 180);
     return () => {
       window.clearTimeout(timer);
@@ -99,7 +125,10 @@ export function useLibrary({ guildId, session, reportError, run, mutate, setNoti
   }, [modal?.type, trackUrl, guildId, session, titleTouched, artistTouched]);
 
   const reloadLibrary = useCallback(() => setLibraryRevision((value) => value + 1), []);
-  const clearLibrary = useCallback(() => { setPlaylists([]); setFavorites([]); }, []);
+  const clearLibrary = useCallback(() => {
+    setPlaylists([]);
+    setFavorites([]);
+  }, []);
 
   function onTrackTitleChange(value: string) {
     setTitleTouched(true);
@@ -118,7 +147,11 @@ export function useLibrary({ guildId, session, reportError, run, mutate, setNoti
   function toggleFavorite(track: Track) {
     const saved = favorites.find((item) => item.url === track.url);
     return run('favorite', async () => {
-      await mutate(`/api/guilds/${guildId}/favorites${saved ? `/${saved.id}` : ''}`, saved ? 'DELETE' : 'POST', saved ? undefined : trackMetadata(track));
+      await mutate(
+        `/api/guilds/${guildId}/favorites${saved ? `/${saved.id}` : ''}`,
+        saved ? 'DELETE' : 'POST',
+        saved ? undefined : trackMetadata(track),
+      );
       reloadLibrary();
       setNotice(saved ? 'Canción retirada de favoritos.' : 'Guardada en tus favoritos.');
     });
@@ -143,7 +176,9 @@ export function useLibrary({ guildId, session, reportError, run, mutate, setNoti
   function loadPlaylist(playlist: Playlist) {
     return run('load', async () => {
       await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/load`, 'POST');
-      setNotice(`«${playlist.name}» (${playlist.tracks.length} ${playlist.tracks.length === 1 ? 'canción' : 'canciones'}) enviada a la cola.`);
+      setNotice(
+        `«${playlist.name}» (${playlist.tracks.length} ${playlist.tracks.length === 1 ? 'canción' : 'canciones'}) enviada a la cola.`,
+      );
       setView('player');
       await refresh();
     });
@@ -155,13 +190,18 @@ export function useLibrary({ guildId, session, reportError, run, mutate, setNoti
     await run('save', async () => {
       const base = `/api/guilds/${guildId}/playlists`;
       if (modal.type === 'playlist') {
-        await mutate(`${base}${modal.playlist ? `/${modal.playlist.id}` : ''}`, modal.playlist ? 'PATCH' : 'POST', { name: name.trim() });
+        await mutate(
+          `${base}${modal.playlist ? `/${modal.playlist.id}` : ''}`,
+          modal.playlist ? 'PATCH' : 'POST',
+          { name: name.trim() },
+        );
       }
       if (modal.type === 'delete') {
         await mutate(`${base}/${modal.playlist.id}`, 'DELETE');
         if (selectedPlaylist === modal.playlist.id) setSelectedPlaylist('');
       }
-      if (modal.type === 'save') await mutate(`${base}/${targetPlaylist}/tracks`, 'POST', trackMetadata(modal.track));
+      if (modal.type === 'save')
+        await mutate(`${base}/${targetPlaylist}/tracks`, 'POST', trackMetadata(modal.track));
       if (modal.type === 'add') {
         await mutate(`${base}/${modal.playlist.id}/tracks`, 'POST', {
           url: trackUrl.trim(),
@@ -179,12 +219,35 @@ export function useLibrary({ guildId, session, reportError, run, mutate, setNoti
   }
 
   return {
-    playlists, favorites, libraryLoading, selectedPlaylist, setSelectedPlaylist,
+    playlists,
+    favorites,
+    libraryLoading,
+    selectedPlaylist,
+    setSelectedPlaylist,
     playlist: playlists.find((item) => item.id === selectedPlaylist),
-    modal, setModal, name, setName, targetPlaylist, setTargetPlaylist,
-    trackUrl, setTrackUrl, trackArtist, setTrackArtist, resolvedTrack, resolvingTrack,
-    setTitleTouched, setArtistTouched, onTrackTitleChange, onTrackArtistChange,
-    isFavorite, toggleFavorite, reorderPlaylist,
-    removePlaylistTrack, loadPlaylist, submitModal, reloadLibrary, clearLibrary,
+    modal,
+    setModal,
+    name,
+    setName,
+    targetPlaylist,
+    setTargetPlaylist,
+    trackUrl,
+    setTrackUrl,
+    trackArtist,
+    setTrackArtist,
+    resolvedTrack,
+    resolvingTrack,
+    setTitleTouched,
+    setArtistTouched,
+    onTrackTitleChange,
+    onTrackArtistChange,
+    isFavorite,
+    toggleFavorite,
+    reorderPlaylist,
+    removePlaylistTrack,
+    loadPlaylist,
+    submitModal,
+    reloadLibrary,
+    clearLibrary,
   };
 }

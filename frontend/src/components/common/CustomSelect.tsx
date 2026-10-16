@@ -63,11 +63,17 @@ export function CustomSelect({
     if (disabled || !options.length) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      if (!open) { setOpen(true); return; }
+      if (!open) {
+        setOpen(true);
+        return;
+      }
       setActiveIndex((prev) => (prev + 1) % options.length);
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
-      if (!open) { setOpen(true); return; }
+      if (!open) {
+        setOpen(true);
+        return;
+      }
       setActiveIndex((prev) => (prev - 1 + options.length) % options.length);
     } else if (event.key === 'Enter' || event.key === ' ') {
       if (open && activeIndex >= 0 && options[activeIndex]) {
@@ -79,7 +85,14 @@ export function CustomSelect({
   };
 
   return (
-    <div ref={rootRef} className={cn('custom-select', variant === 'guild' ? 'guild-picker' : 'field-select', open && 'is-open')}>
+    <div
+      ref={rootRef}
+      className={cn(
+        'custom-select',
+        variant === 'guild' ? 'guild-picker' : 'field-select',
+        open && 'is-open',
+      )}
+    >
       <button
         id={id}
         type="button"
@@ -97,10 +110,19 @@ export function CustomSelect({
           {label && <span className="custom-select-label">{label}</span>}
           <span className="custom-select-value">{selected ? selected.label : placeholder}</span>
         </span>
-        <ChevronDown size={15} className={cn('custom-select-chevron', open && 'is-open')} aria-hidden="true" />
+        <ChevronDown
+          size={15}
+          className={cn('custom-select-chevron', open && 'is-open')}
+          aria-hidden="true"
+        />
       </button>
       {open && options.length > 0 && (
-        <div id={id ? `${id}-listbox` : undefined} role="listbox" aria-label={label || placeholder} className="custom-select-menu">
+        <div
+          id={id ? `${id}-listbox` : undefined}
+          role="listbox"
+          aria-label={label || placeholder}
+          className="custom-select-menu"
+        >
           {options.map((option, index) => {
             const isSelected = option.value === value;
             const isHighlighted = index === activeIndex;
@@ -110,7 +132,11 @@ export function CustomSelect({
                 type="button"
                 role="option"
                 aria-selected={isSelected}
-                className={cn('custom-select-option', isSelected && 'is-selected', isHighlighted && 'is-highlighted')}
+                className={cn(
+                  'custom-select-option',
+                  isSelected && 'is-selected',
+                  isHighlighted && 'is-highlighted',
+                )}
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => {
                   onChange(option.value);
@@ -131,4 +157,3 @@ export function CustomSelect({
     </div>
   );
 }
-

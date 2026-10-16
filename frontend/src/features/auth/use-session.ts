@@ -16,17 +16,20 @@ export function useSession({ onError, onExpire }: SessionOptions) {
   const [guildId, setGuildId] = useState('');
   const [guildsLoading, setGuildsLoading] = useState(false);
 
-  const reportError = useCallback((problem: unknown) => {
-    if (problem instanceof ApiError && problem.status === 401) {
-      onExpire();
-      setSession(null);
-      setGuildId('');
-      setGuilds([]);
-      setAuthError('Tu sesión terminó. Inicia sesión de nuevo para continuar.');
-    } else {
-      onError(problem instanceof Error ? problem.message : 'Ocurrió un error. Vuelve a intentarlo.');
-    }
-  }, [onError, onExpire]);
+  const reportError = useCallback(
+    (problem: unknown) => {
+      if (problem instanceof ApiError && problem.status === 401) {
+        onExpire();
+        setSession(null);
+        setGuildId('');
+        setGuilds([]);
+        setAuthError('Tu sesión terminó. Inicia sesión de nuevo para continuar.');
+      } else {
+        onError(problem instanceof Error ? problem.message : 'Ocurrió un error. Vuelve a intentarlo.');
+      }
+    },
+    [onError, onExpire],
+  );
 
   useEffect(() => {
     const abort = new AbortController();
@@ -40,7 +43,9 @@ export function useSession({ onError, onExpire }: SessionOptions) {
           setAuthError(problem instanceof Error ? problem.message : 'No se pudo conectar al servidor.');
         }
       })
-      .finally(() => { if (!abort.signal.aborted) setAuthLoading(false); });
+      .finally(() => {
+        if (!abort.signal.aborted) setAuthLoading(false);
+      });
     return () => abort.abort();
   }, [authAttempt]);
 
@@ -54,8 +59,12 @@ export function useSession({ onError, onExpire }: SessionOptions) {
         setGuilds(next);
         setGuildId(next[0]?.id || '');
       })
-      .catch((problem) => { if (!abort.signal.aborted) reportError(problem); })
-      .finally(() => { if (!abort.signal.aborted) setGuildsLoading(false); });
+      .catch((problem) => {
+        if (!abort.signal.aborted) reportError(problem);
+      })
+      .finally(() => {
+        if (!abort.signal.aborted) setGuildsLoading(false);
+      });
     return () => abort.abort();
   }, [session, reportError]);
 
@@ -67,8 +76,15 @@ export function useSession({ onError, onExpire }: SessionOptions) {
   }, []);
 
   return {
-    session, authLoading, authError, retryAuth,
-    guilds, guildId, setGuildId, guildsLoading,
-    reportError, completeLogout,
+    session,
+    authLoading,
+    authError,
+    retryAuth,
+    guilds,
+    guildId,
+    setGuildId,
+    guildsLoading,
+    reportError,
+    completeLogout,
   };
 }

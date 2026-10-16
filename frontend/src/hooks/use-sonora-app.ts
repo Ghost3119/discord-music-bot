@@ -45,10 +45,16 @@ export function useSonoraApp() {
 
   async function mutate(path: string, method: string, data?: unknown) {
     if (!session) return;
-    await operationScope.current.run(() => api(path, {
-      method,
-      ...(data === undefined ? {} : { body: JSON.stringify(data) }),
-    }, session.csrfToken));
+    await operationScope.current.run(() =>
+      api(
+        path,
+        {
+          method,
+          ...(data === undefined ? {} : { body: JSON.stringify(data) }),
+        },
+        session.csrfToken,
+      ),
+    );
   }
 
   const library = useLibrary({ guildId, session, reportError, run, mutate, setNotice, setView, refresh });
@@ -60,7 +66,9 @@ export function useSonoraApp() {
   }, [notice]);
 
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
-  useEffect(() => { setVolumeDraft(null); }, [state?.volume, guildId]);
+  useEffect(() => {
+    setVolumeDraft(null);
+  }, [state?.volume, guildId]);
 
   async function logout() {
     if (!session || loggingOut) return;
@@ -106,15 +114,37 @@ export function useSonoraApp() {
 
   const current = state?.current;
   return {
-    session, authLoading: auth.authLoading, authError: auth.authError, retryAuth: auth.retryAuth,
-    guilds: auth.guilds, guildId, setGuildId, guildsLoading: auth.guildsLoading,
+    session,
+    authLoading: auth.authLoading,
+    authError: auth.authError,
+    retryAuth: auth.retryAuth,
+    guilds: auth.guilds,
+    guildId,
+    setGuildId,
+    guildsLoading: auth.guildsLoading,
     guild: auth.guilds.find((item) => item.id === guildId),
-    view, setView, mobileNav, setMobileNav, error, setError, notice, busy, loggingOut, logout,
-    state, connection, refresh, current, controlsDisabled: !!busy || loggingOut || !state,
+    view,
+    setView,
+    mobileNav,
+    setMobileNav,
+    error,
+    setError,
+    notice,
+    busy,
+    loggingOut,
+    logout,
+    state,
+    connection,
+    refresh,
+    current,
+    controlsDisabled: !!busy || loggingOut || !state,
     playing: state?.status === 'playing',
-    progress: current?.duration ? Math.min(100, Math.max(0, (state!.currentTime / current.duration) * 100)) : 0,
-    queueDuration: state?.queue.reduce((sum, track) => sum + track.duration, 0) || 0,
-    volumeDraft, setVolumeDraft, action, query, setQuery, addToQueue,
+    volumeDraft,
+    setVolumeDraft,
+    action,
+    query,
+    setQuery,
+    addToQueue,
     ...library,
   };
 }

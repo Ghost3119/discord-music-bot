@@ -9,6 +9,16 @@ export interface IconButtonProps extends ComponentProps<typeof Button> {
 }
 
 export function IconButton({ label, children, active, className, ...props }: IconButtonProps) {
-  return <Button variant="ghost" size="icon" title={label} aria-label={label} className={cn(active && 'is-active', className)} {...props}>{children}</Button>;
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      title={label}
+      aria-label={label}
+      className={cn(active && 'is-active', className)}
+      {...props}
+    >
+      {children}
+    </Button>
+  );
 }
-
