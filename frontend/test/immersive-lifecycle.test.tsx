@@ -3,7 +3,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ImmersivePlayer } from '../src/features/immersive/ImmersivePlayer';
-import { AmbientBackground } from '../src/features/immersive/AmbientBackground';
+import { AmbientBackground, AMBIENT_CROSSFADE_MS } from '../src/features/immersive/AmbientBackground';
 import { useArtworkPalette, FALLBACK_PALETTE } from '../src/features/immersive/use-artwork-palette';
 import type { PlaybackBindings } from '../src/components/player/PlayerBar';
 import { snapshot } from './regression-fixtures';
@@ -138,21 +138,21 @@ describe('artwork extraction effects', () => {
     expect(screen.current).toEqual(FALLBACK_PALETTE);
     pixels = new Uint8ClampedArray([20, 70, 240, 255]);
     await act(async () => images[1].onload?.());
-    expect(screen.current.primary).toBe('rgb(10, 34, 116)');
+    expect(screen.current.primary).toBe('rgb(36, 69, 178)');
   });
   it('reuses a cached palette across unmount without another image request', async () => {
     const url = `https://art.test/reopen-${testId}.jpg`, screen = await palette(url);
     await act(async () => images[0].onload?.());
     await act(async () => screen.root.unmount()); roots = roots.filter((root) => root !== screen.root);
     const reopened = await palette(url);
-    expect(images).toHaveLength(1); expect(reopened.current.primary).toBe('rgb(116, 35, 10)');
+    expect(images).toHaveLength(1); expect(reopened.current.primary).toBe('rgb(178, 70, 36)');
   });
   it('removes the outgoing ambient layer after the chromatic transition', async () => {
     const screen = await createTestRoot();
     await act(async () => screen.root.render(<AmbientBackground thumbnail={`https://art.test/ambient-${testId}.jpg`} />));
     await act(async () => images[0].onload?.());
     expect(screen.container.querySelector('.is-leaving')).not.toBeNull();
-    await act(async () => vi.advanceTimersByTimeAsync(851));
+    await act(async () => vi.advanceTimersByTimeAsync(AMBIENT_CROSSFADE_MS + 1));
     expect(screen.container.querySelector('.is-leaving')).toBeNull();
   });
   it('propagates extracted ambient CSS custom properties to the parent element', async () => {
@@ -161,8 +161,12 @@ describe('artwork extraction effects', () => {
     pixels = new Uint8ClampedArray([180, 50, 40, 255]);
     await act(async () => images[0].onload?.());
     const primary = screen.container.style.getPropertyValue('--ambient-primary');
+    const secondary = screen.container.style.getPropertyValue('--ambient-secondary');
+    const accent = screen.container.style.getPropertyValue('--ambient-accent');
     expect(primary).toBeTruthy();
     expect(primary).toContain('rgb(');
+    expect(secondary).toContain('rgb(');
+    expect(accent).toContain('rgb(');
   });
   it('adapts layout state data-has-lyrics when lyrics are present vs absent', async () => {
     const bindings = playback();

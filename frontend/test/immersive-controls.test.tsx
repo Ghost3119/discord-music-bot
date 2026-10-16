@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ImmersiveControls } from '../src/features/immersive/ImmersiveControls';
-import { paletteFromPixels, FALLBACK_PALETTE } from '../src/features/immersive/use-artwork-palette';
+import { paletteFromPixels, FALLBACK_PALETTE, sampleableArtworkUrl } from '../src/features/immersive/use-artwork-palette';
 import type { PlaybackBindings } from '../src/components/player/PlayerBar';
 import { snapshot } from './regression-fixtures';
 
@@ -70,11 +70,33 @@ describe('bounded artwork colors', () => {
     expect(paletteFromPixels(new Uint8ClampedArray([]))).toEqual(FALLBACK_PALETTE);
     expect(paletteFromPixels(new Uint8ClampedArray([255, 255, 255, 255, 0, 0, 0, 255, 255, 0, 0, 0]))).toEqual(FALLBACK_PALETTE);
   });
-  it('derives distinct restrained chromatic palettes from artwork', () => {
+  it('derives distinct restrained chromatic palettes from artwork across color families', () => {
     const warm = paletteFromPixels(new Uint8ClampedArray([240, 80, 20, 255, 240, 80, 20, 255]));
     const cool = paletteFromPixels(new Uint8ClampedArray([20, 70, 240, 255, 20, 70, 240, 255]));
     expect(warm.primary).not.toBe(cool.primary);
-    expect(warm.primary).toBe('rgb(116, 39, 10)');
-    expect(cool.primary).toBe('rgb(10, 34, 116)');
+    expect(warm.primary).toBe('rgb(178, 75, 36)');
+    expect(cool.primary).toBe('rgb(36, 69, 178)');
+
+    // 5 color families
+    const orangeYellow = paletteFromPixels(new Uint8ClampedArray([245, 165, 25, 255, 230, 110, 15, 255]));
+    expect(orangeYellow.primary).toBe('rgb(165, 92, 34)');
+
+    const red = paletteFromPixels(new Uint8ClampedArray([220, 25, 35, 255, 140, 15, 25, 255]));
+    expect(red.primary).toBe('rgb(178, 36, 44)');
+
+    const blue = paletteFromPixels(new Uint8ClampedArray([25, 95, 230, 255, 15, 160, 220, 255]));
+    expect(blue.primary).toBe('rgb(31, 117, 152)');
+
+    const green = paletteFromPixels(new Uint8ClampedArray([35, 185, 85, 255, 20, 120, 90, 255]));
+    expect(green.primary).toBe('rgb(26, 127, 60)');
+
+    const monochrome = paletteFromPixels(new Uint8ClampedArray([120, 120, 122, 255, 75, 75, 78, 255]));
+    expect(monochrome.primary).toBe('rgb(89, 97, 109)');
+  });
+  it('normalizes ytimg webp URLs to CORS-accessible hqdefault.jpg and keeps generic URLs unchanged', () => {
+    expect(sampleableArtworkUrl('https://i.ytimg.com/vi_webp/abc-DEF_123/maxresdefault.webp')).toBe('https://i.ytimg.com/vi/abc-DEF_123/hqdefault.jpg');
+    expect(sampleableArtworkUrl('https://img.ytimg.com/vi_webp/xyz-789/hqdefault.webp?sqp=abc')).toBe('https://img.ytimg.com/vi/xyz-789/hqdefault.jpg');
+    expect(sampleableArtworkUrl('https://images.example.com/art.png')).toBe('https://images.example.com/art.png');
   });
 });
+
