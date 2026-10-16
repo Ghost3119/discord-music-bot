@@ -142,6 +142,8 @@ describe('authoritative snapshot ordering', () => {
     const next = { ...snapshot(), playbackId: 'second', snapshotEpoch: 'server-B', sequence: 1 };
     source.emit(next);
     expect(onState).toHaveBeenLastCalledWith(next);
+    source.emit({ ...snapshot(), playbackId: 'late old server', snapshotEpoch: 'server-A', sequence: 101 });
+    expect(onState).toHaveBeenLastCalledWith(next);
     stream.close();
   });
 });

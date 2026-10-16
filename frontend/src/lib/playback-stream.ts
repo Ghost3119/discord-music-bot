@@ -22,8 +22,14 @@ export function connectPlayback(options: Options) {
   let revision = 0;
   let fetchRevision = 0;
   let latest: PlaybackSnapshot | null = null;
+  const retiredEpochs = new Set<string>();
   const accept = (state: PlaybackSnapshot): boolean => {
     if (state.guildId !== options.guildId) return false;
+    if (state.snapshotEpoch && retiredEpochs.has(state.snapshotEpoch)) return false;
+    if (latest?.snapshotEpoch && state.snapshotEpoch && latest.snapshotEpoch !== state.snapshotEpoch) {
+      retiredEpochs.add(latest.snapshotEpoch);
+      if (retiredEpochs.size > 8) retiredEpochs.delete(retiredEpochs.values().next().value!);
+    }
     if (latest && latest.snapshotEpoch === state.snapshotEpoch) {
       if (typeof latest.sequence === 'number' && typeof state.sequence === 'number' && state.sequence <= latest.sequence) return false;
       if (state.sequence === undefined && typeof latest.sampledAt === 'number' && typeof state.sampledAt === 'number' && state.sampledAt < latest.sampledAt) return false;

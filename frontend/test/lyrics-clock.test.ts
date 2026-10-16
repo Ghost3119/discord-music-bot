@@ -91,6 +91,17 @@ describe('monotonic presentation playback clock', () => {
     expect(clock.read(1000)).toMatchObject({ positionSeconds: 2, discontinuity: old + 1 });
   });
 
+  it('rejects delayed snapshots from a retired backend epoch after a restart', () => {
+    const clock = new PlaybackClock();
+    clock.accept(snapshot({ sequence: 100 }), 'live', 0, 0);
+    clock.accept(snapshot({ snapshotEpoch: 'epoch-b', sequence: 1, playbackId: 'new-playback', currentTime: 2 }), 'live', 1000, 1000);
+    const restarted = clock.read(1000);
+    expect(clock.accept(snapshot({ sequence: 101, currentTime: 90 }), 'live', 2000, 2000)).toBe(false);
+    expect(clock.read(2000)).toMatchObject({ positionSeconds: 3, discontinuity: restarted.discontinuity });
+    expect(clock.accept(snapshot({ snapshotEpoch: 'epoch-b', sequence: 2, playbackId: 'new-playback', currentTime: 3 }), 'live', 2000, 2000)).toBe(true);
+    expect(clock.read(3000)).toMatchObject({ positionSeconds: 4, discontinuity: restarted.discontinuity });
+  });
+
   it('compares fallback server timestamps only within their own temporal domain', () => {
     const clock = new PlaybackClock();
     clock.accept(snapshot({ sequence: undefined, sampledAt: 9999999999999 }), 'live', 10, 10);

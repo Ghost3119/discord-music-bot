@@ -52,6 +52,7 @@ const clampPosition = (position: number, duration: number | null) => Math.min(du
 export class PlaybackClock {
   private anchor: Anchor | null = null;
   private discontinuity = 0;
+  private readonly retiredEpochs = new Set<string>();
 
   read(now: number): PlaybackClockReading {
     const anchor = this.anchor;
@@ -80,6 +81,8 @@ export class PlaybackClock {
       this.anchor = null;
       return true;
     }
+    // An older in-flight response cannot revive a backend instance already superseded.
+    if (snapshot.snapshotEpoch && this.retiredEpochs.has(snapshot.snapshotEpoch)) return false;
     const previous = this.anchor;
     const sameGuild = previous?.guildId === snapshot.guildId;
     const sameEpoch = previous?.snapshotEpoch === snapshot.snapshotEpoch;
@@ -90,6 +93,11 @@ export class PlaybackClock {
       } else if (finite(snapshot.sampledAt) && finite(previous.sampledAt) && snapshot.sampledAt < previous.sampledAt) {
         return false;
       }
+    }
+
+    if (previous?.snapshotEpoch && snapshot.snapshotEpoch && !sameEpoch) {
+      this.retiredEpochs.add(previous.snapshotEpoch);
+      while (this.retiredEpochs.size > 8) this.retiredEpochs.delete(this.retiredEpochs.values().next().value!);
     }
 
     const track = snapshot.current;
