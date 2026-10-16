@@ -38,6 +38,7 @@ export interface PlaybackSnapshot {
 export interface MusicAction {
   action: 'play' | 'pause' | 'resume' | 'skip' | 'stop' | 'volume' | 'shuffle' | 'repeat' | 'remove' | 'move';
   query?: string;
+  track?: Omit<Track, 'id'>;
   volume?: number;
   mode?: number;
   index?: number;

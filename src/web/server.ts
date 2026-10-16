@@ -8,7 +8,7 @@ import type { ServerResponse } from 'node:http';
 import type { GuildPermissions, GuildSummary, MusicBridge, PlaybackSnapshot } from './contracts';
 import { WebConfig, validateWebConfig } from './config';
 import { WebDatabase, WebError, WebSession, csrfTokenFor, hashToken, openWebDatabase } from './database';
-import { musicAction, object, playlistName, trackMetadata } from './validation';
+import { musicAction, object, playlistName, resolveTrackUrlMetadata, trackMetadata } from './validation';
 
 declare module 'fastify' { interface FastifyRequest { webSession: WebSession | null } }
 export interface WebServerOptions {
@@ -52,7 +52,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const pendingStreams = new Map<string, number>();
   let expiryCleanup: ReturnType<typeof setInterval> | undefined;
   let closing = false;
-  const app = Fastify({ logger: false, bodyLimit: 16_384, requestTimeout: 15_000, connectionTimeout: 15_000, trustProxy: false });
+  const app = Fastify({ logger: false, bodyLimit: 16_384, requestTimeout: 120_000, connectionTimeout: 15_000, trustProxy: false });
   // Listener errors are isolated from the process hosting the music engine.
   app.server.on('error', () => { console.warn('[Web] Dashboard HTTP listener error; audio remains available.'); });
   try {
@@ -347,13 +347,33 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     send(initial);
   });
 
+  app.get('/api/guilds/:guildId/tracks/resolve', async request => ({
+    track: await resolveTrackUrlMetadata((request.query as Record<string, unknown>)['url'], oauthFetch),
+  }));
+  app.post('/api/guilds/:guildId/tracks/resolve', async request => ({
+    track: await resolveTrackUrlMetadata(object(request.body)['url'], oauthFetch),
+  }));
   app.get('/api/guilds/:guildId/playlists', async request => ({ playlists: database.listPlaylists(request.webSession!.user.id, params(request)['guildId']!) }));
   app.post('/api/guilds/:guildId/playlists', async request => ({ playlist: database.createPlaylist(request.webSession!.user.id, params(request)['guildId']!, playlistName(request.body), now()) }));
   app.patch('/api/guilds/:guildId/playlists/:playlistId', async request => ({ playlist: database.renamePlaylist(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, playlistName(request.body)) }));
   app.delete('/api/guilds/:guildId/playlists/:playlistId', async request => {
     database.deletePlaylist(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!); return { ok: true };
   });
-  app.post('/api/guilds/:guildId/playlists/:playlistId/tracks', async request => ({ track: database.addPlaylistTrack(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, trackMetadata(request.body)) }));
+  app.post('/api/guilds/:guildId/playlists/:playlistId/tracks', async request => {
+    const raw = object(request.body);
+    const needsResolve = typeof raw['title'] !== 'string' || !raw['title'].trim();
+    const resolved = needsResolve ? await resolveTrackUrlMetadata(raw['url'], oauthFetch) : null;
+    const candidate = resolved ? {
+      ...resolved,
+      ...raw,
+      title: typeof raw['title'] === 'string' && raw['title'].trim() ? raw['title'] : resolved.title,
+      artist: typeof raw['artist'] === 'string' && raw['artist'].trim() && raw['artist'].trim() !== 'Artista desconocido' ? raw['artist'] : resolved.artist,
+      duration: typeof raw['duration'] === 'number' && raw['duration'] > 0 ? raw['duration'] : resolved.duration,
+      thumbnail: raw['thumbnail'] ?? resolved.thumbnail,
+      source: raw['source'] ?? resolved.source,
+    } : raw;
+    return { track: database.addPlaylistTrack(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, trackMetadata(candidate)) };
+  });
   app.delete('/api/guilds/:guildId/playlists/:playlistId/tracks/:trackId', async request => {
     database.deletePlaylistTrack(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, params(request)['trackId']!); return { ok: true };
   });
@@ -372,14 +392,40 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const operation = beginOperation(request, reply.raw);
     const controller = operation.controller;
     loads.set(key, controller);
+    const fatalErrorCodes = new Set([
+      'GUILD_ACCESS_DENIED',
+      'CONTROL_CHANNEL_REQUIRED',
+      'VOICE_PERMISSIONS',
+      'SESSION_CHANGED',
+      'QUEUE_BLOCKED',
+      'NO_QUEUE',
+      'INVALID_ACTION',
+    ]);
     try {
+      let loaded = 0;
+      let lastError: unknown;
       for (const item of playlist.tracks) {
         if (controller.signal.aborted) throw new WebError(409, 'Playlist load cancelled');
         authenticate(request);
         await assertGuildAccess(userId, guildId);
-        await bridge.control(userId, guildId, { action: 'play', query: item.url }, controller.signal);
+        try {
+          await bridge.control(userId, guildId, { action: 'play', query: item.url, track: item }, controller.signal);
+          loaded++;
+        } catch (trackError) {
+          if (controller.signal.aborted) throw new WebError(409, 'Playlist load cancelled');
+          const candidate = trackError as Error & { statusCode?: number; errorCode?: string };
+          if (
+            candidate.name === 'AbortError' ||
+            (candidate.errorCode && fatalErrorCodes.has(candidate.errorCode)) ||
+            (candidate.statusCode && candidate.statusCode >= 400 && candidate.statusCode < 500)
+          ) {
+            throw trackError;
+          }
+          lastError = trackError;
+        }
       }
-      return { ok: true };
+      if (!loaded && lastError) throw lastError;
+      return { ok: true, loaded };
     } catch (error) {
       if (controller.signal.aborted) throw new WebError(409, 'Playback operation cancelled');
       throw error;

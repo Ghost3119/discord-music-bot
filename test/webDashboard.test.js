@@ -620,3 +620,92 @@ test('Discord REST unavailability denies login and active guild access, and leav
   const failedLogin = await h.finishLogin(await h.startLogin());
   assert.equal(failedLogin.statusCode, 403);
 });
+
+test('track URL resolution auto-fills metadata for YouTube/Spotify and playlist load enqueues all tracks with resilient fallback', async t => {
+  const customFetch = async (url, options) => {
+    if (String(url).endsWith('/token')) {
+      assert.equal(options.method, 'POST');
+      return new Response(JSON.stringify({ access_token: 'tok', token_type: 'Bearer' }));
+    }
+    if (String(url).endsWith('/users/@me')) {
+      return new Response(JSON.stringify({ id: USER, username: 'Tester', avatar: null }));
+    }
+    if (String(url).startsWith('https://www.youtube.com/oembed')) {
+      return new Response(JSON.stringify({
+        title: 'Blessd - QUEMAROPA (Video Oficial)',
+        author_name: 'Blessd - Topic',
+        thumbnail_url: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
+      }));
+    }
+    if (String(url).startsWith('https://open.spotify.com/oembed')) {
+      return new Response(JSON.stringify({
+        title: 'Xapiadora',
+        author_name: 'Ovy On The Drums',
+        thumbnail_url: 'https://i.scdn.co/image/ab67616d0000b273123456',
+      }));
+    }
+    return new Response('{}', { status: 404 });
+  };
+
+  const h = await harness(t, { oauthFetch: customFetch });
+  const auth = await h.login();
+
+  // 1. Resolve track metadata via GET /api/guilds/:guildId/tracks/resolve
+  const ytResolved = await h.app.inject({
+    url: `${BASE}/tracks/resolve?url=${encodeURIComponent('https://www.youtube.com/watch?v=dQw4w9WgXcQ')}`,
+    headers: { cookie: auth.cookie },
+  });
+  assert.equal(ytResolved.statusCode, 200);
+  assert.equal(ytResolved.json().track.title, 'Blessd - QUEMAROPA (Video Oficial)');
+  assert.equal(ytResolved.json().track.artist, 'Blessd');
+  assert.equal(ytResolved.json().track.source, 'youtube');
+  assert.equal(ytResolved.json().track.thumbnail, 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg');
+
+  const spResolved = await h.app.inject({
+    url: `${BASE}/tracks/resolve?url=${encodeURIComponent('https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC')}`,
+    headers: { cookie: auth.cookie },
+  });
+  assert.equal(spResolved.statusCode, 200);
+  assert.equal(spResolved.json().track.title, 'Xapiadora');
+  assert.equal(spResolved.json().track.artist, 'Ovy On The Drums');
+  assert.equal(spResolved.json().track.source, 'spotify');
+  assert.equal(spResolved.json().track.thumbnail, 'https://i.scdn.co/image/ab67616d0000b273123456');
+
+  // 2. Adding a track to a playlist with only the link (empty title) automatically fills metadata on the server
+  const created = await h.mutate(auth, 'POST', `${BASE}/playlists`, { name: 'Regueton' });
+  const playlistId = created.json().playlist.id;
+  const addedFromUrlOnly = await h.mutate(auth, 'POST', `${BASE}/playlists/${playlistId}/tracks`, {
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    title: '',
+  });
+  assert.equal(addedFromUrlOnly.statusCode, 200, addedFromUrlOnly.body);
+  assert.equal(addedFromUrlOnly.json().track.title, 'Blessd - QUEMAROPA (Video Oficial)');
+  assert.equal(addedFromUrlOnly.json().track.artist, 'Blessd');
+  assert.equal(addedFromUrlOnly.json().track.thumbnail, 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg');
+
+  // 3. Add 4 more songs (5 total) and load the entire playlist -> all 5 tracks are sent with metadata and non-fatal extractor hiccups do not abort remaining tracks
+  const extraSongs = [
+    { url: 'https://www.youtube.com/watch?v=aaaaaaaaaaa', title: 'descontrol', artist: 'Blessd', duration: 180, thumbnail: null, source: 'YouTube' },
+    { url: 'https://www.youtube.com/watch?v=bbbbbbbbbbb', title: '01-800', artist: 'Roa', duration: 195, thumbnail: null, source: 'YouTube' },
+    { url: 'https://www.youtube.com/watch?v=ccccccccccc', title: 'Xapiadora', artist: 'Ovy', duration: 205, thumbnail: null, source: 'YouTube' },
+    { url: 'https://www.youtube.com/watch?v=ddddddddddd', title: 'Maripilili', artist: 'Blessd', duration: 172, thumbnail: null, source: 'YouTube' },
+  ];
+  for (const song of extraSongs) {
+    const res = await h.mutate(auth, 'POST', `${BASE}/playlists/${playlistId}/tracks`, song);
+    assert.equal(res.statusCode, 200);
+  }
+
+  let callCount = 0;
+  h.state.control = async () => {
+    callCount++;
+    // Simulate a non-fatal provider/extractor glitch on track 3 while tracks 1, 2, 4, 5 succeed
+    if (callCount === 3) throw new Error('Transient extractor failure on single video');
+  };
+
+  const loadRes = await h.mutate(auth, 'POST', `${BASE}/playlists/${playlistId}/load`);
+  assert.equal(loadRes.statusCode, 200, loadRes.body);
+  assert.equal(loadRes.json().loaded, 4);
+  assert.equal(h.state.calls.length, 5);
+  assert.equal(h.state.calls[0].action.track.title, 'Blessd - QUEMAROPA (Video Oficial)');
+  assert.equal(h.state.calls[4].action.track.title, 'Maripilili');
+});

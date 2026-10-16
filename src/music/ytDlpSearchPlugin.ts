@@ -235,6 +235,7 @@ async function runWithConcurrency<T>(
 
 export class YtDlpSearchPlugin extends ExtractorPlugin {
   private readonly searchCache = new TtlCache<YtDlpInfo>(SEARCH_CACHE_MAX_ITEMS, SEARCH_CACHE_TTL_MS);
+  private readonly urlInfoCache = new TtlCache<YtDlpInfo>(SEARCH_CACHE_MAX_ITEMS, SEARCH_CACHE_TTL_MS);
   private readonly streamUrlCache = new TtlCache<string>(STREAM_CACHE_MAX_ITEMS, STREAM_CACHE_TTL_MS);
   private readonly mixCache = new TtlCache<YtDlpInfo[]>(MIX_CACHE_MAX_ITEMS, MIX_CACHE_TTL_MS);
   private readonly pendingSearches = new Map<string, PendingRequest<YtDlpInfo | null>>();
@@ -243,15 +244,51 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
   private readonly refreshAfter = new WeakMap<Song, number>();
   private readonly sourceCooldowns = new Map<SearchSource, { until: number; error: unknown }>();
 
+  seedTrackInfo(track: { url: string; title: string; artist?: string; duration?: number; thumbnail?: string | null; source?: string }): void {
+    const url = track.url?.trim();
+    const title = track.title?.trim();
+    const source = track.source?.toLowerCase();
+    if (!url || !title || (source !== 'youtube' && source !== 'soundcloud')) return;
+    let id = url;
+    try {
+      const parsed = new URL(url);
+      const v = parsed.searchParams.get('v');
+      if (source === 'youtube' && v && /^[\w-]{11}$/.test(v)) id = v;
+    } catch { return; }
+    const info: YtDlpInfo = {
+      id,
+      title,
+      webpage_url: url,
+      extractor: source,
+      ...(track.artist?.trim() ? { uploader: track.artist.trim() } : {}),
+      ...(typeof track.duration === 'number' && track.duration > 0 ? { duration: track.duration } : {}),
+      ...(track.thumbnail ? { thumbnail: track.thumbnail } : {}),
+    };
+    this.urlInfoCache.set(normalizeUrlCacheKey(url), info);
+  }
+
   override validate(url: string): boolean {
     return URL_PATTERN.test(url);
   }
 
   override async resolve<T>(url: string, options: ResolveOptions<T>): Promise<Song<T> | Playlist<T>> {
+    const cacheKey = normalizeUrlCacheKey(url);
+    const cached = this.urlInfoCache.get(cacheKey);
+    if (cached && !hasEntries(cached)) {
+      return this.createSong(cached, options);
+    }
+
     const info = await this.fetchInfo(url, { playlistEnd: 500, flatPlaylist: true });
 
     if (hasEntries(info)) {
       return this.createPlaylist(info, options);
+    }
+
+    this.urlInfoCache.set(cacheKey, info);
+    const canonical = getPlayableUrl(info);
+    if (canonical) this.urlInfoCache.set(normalizeUrlCacheKey(canonical), info);
+    if (info.url && info.url !== (canonical ?? url)) {
+      this.streamUrlCache.set(normalizeUrlCacheKey(canonical ?? url), info.url);
     }
 
     return this.createSong(info, options);
@@ -278,7 +315,10 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
 
     const cacheKey = normalizeUrlCacheKey(song.url);
     const cachedStreamUrl = this.streamUrlCache.get(cacheKey);
-    if (cachedStreamUrl) return cachedStreamUrl;
+    if (cachedStreamUrl) {
+      this.hydrateSongMetadata(song, this.urlInfoCache.get(cacheKey));
+      return cachedStreamUrl;
+    }
 
     let pending = this.pendingStreamUrls.get(cacheKey);
     if (!pending) {
@@ -296,7 +336,19 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
       this.pendingStreamUrls.set(cacheKey, request);
       pending = request;
     }
-    return this.consumeRequest(this.pendingStreamUrls, cacheKey, pending, signal);
+    const streamUrl = await this.consumeRequest(this.pendingStreamUrls, cacheKey, pending, signal);
+    this.hydrateSongMetadata(song, this.urlInfoCache.get(cacheKey));
+    return streamUrl;
+  }
+
+  private hydrateSongMetadata(song: Song, info: YtDlpInfo | undefined): void {
+    if (!info) return;
+    const duration = toPositiveNumber(info.duration);
+    if (!song.duration && duration) song.duration = duration;
+    const thumbnail = getBestThumbnail(info);
+    if (!song.thumbnail && thumbnail) song.thumbnail = thumbnail;
+    const uploaderName = toStringValue(info.uploader);
+    if (!song.uploader?.name && uploaderName) song.uploader = { ...song.uploader, name: uploaderName };
   }
 
   private consumeRequest<T>(requests: Map<string, PendingRequest<T>>, cacheKey: string, request: PendingRequest<T>, signal?: AbortSignal): Promise<T> {
@@ -475,6 +527,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
       throw new Error(`yt-dlp did not return a playable stream URL for ${url}.`);
     }
 
+    this.urlInfoCache.set(normalizeUrlCacheKey(url), info);
     return streamUrl;
   }
 

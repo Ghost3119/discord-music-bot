@@ -37,6 +37,105 @@ export function publicTrackUrl(value: unknown): { url: string; source: string } 
   if (host === 'music.apple.com' && /^\/[a-z]{2}\/song\/[^/]+\/\d+$/.test(url.pathname)) return { url: `https://music.apple.com${url.pathname}`, source: 'apple_music' };
   throw new WebError(400, 'Use a permanent YouTube, SoundCloud, Spotify track or Apple Music song URL');
 }
+const IMAGE_HOSTS = [
+  'i.ytimg.com', 'img.youtube.com',
+  'i.scdn.co', 'image-cdn-ak.spotifycdn.com', 'image-cdn-fa.spotifycdn.com', 'mosaic.scdn.co',
+  'images.genius.com',
+  'is1-ssl.mzstatic.com', 'is2-ssl.mzstatic.com', 'is3-ssl.mzstatic.com', 'is4-ssl.mzstatic.com', 'is5-ssl.mzstatic.com',
+  'i1.sndcdn.com', 'i2.sndcdn.com', 'i3.sndcdn.com', 'i4.sndcdn.com',
+];
+
+function safeThumbnail(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim() || value.length > 2048) return null;
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || !IMAGE_HOSTS.includes(parsed.hostname)) return null;
+    return parsed.toString();
+  } catch { return null; }
+}
+
+function cleanMetadataText(value: unknown, max: number): string {
+  if (typeof value !== 'string') return '';
+  return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function fallbackTitleFromUrl(url: string, source: string): string {
+  try {
+    const parsed = new URL(url);
+    if (source === 'youtube') return `YouTube (${parsed.searchParams.get('v') ?? 'video'})`;
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const slug = source === 'apple_music' ? segments[2] : segments.at(-1);
+    if (slug) {
+      const decoded = decodeURIComponent(slug).replace(/[-_]+/g, ' ').trim();
+      if (decoded) return decoded.slice(0, 300);
+    }
+  } catch { /* ignore */ }
+  return 'Canción sin título';
+}
+
+export async function resolveTrackUrlMetadata(value: unknown, fetchImpl: typeof fetch = fetch): Promise<TrackMetadata> {
+  const { url, source } = publicTrackUrl(value);
+  let title = '';
+  let artist = '';
+  let duration = 0;
+  let thumbnail: string | null = null;
+
+  if (source === 'youtube') {
+    const videoId = new URL(url).searchParams.get('v');
+    if (videoId) thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+  }
+
+  try {
+    if (source === 'apple_music') {
+      const parsed = new URL(url);
+      const id = parsed.searchParams.get('i') ?? parsed.pathname.split('/').at(-1);
+      if (id && /^\d+$/.test(id)) {
+        const res = await fetchImpl(`https://itunes.apple.com/lookup?id=${id}`, { signal: AbortSignal.timeout(6_000) });
+        if (res.ok) {
+          const data = await res.json() as { results?: Array<Record<string, unknown>> };
+          const list = Array.isArray(data?.results) ? data.results : [];
+          const track = list.find(item => item['wrapperType'] === 'track') ?? list[0];
+          if (track) {
+            title = cleanMetadataText(track['trackName'] ?? track['collectionName'], 300);
+            artist = cleanMetadataText(track['artistName'], 300);
+            const millis = track['trackTimeMillis'];
+            if (typeof millis === 'number' && Number.isFinite(millis) && millis > 0) {
+              duration = Math.min(604800, Math.round(millis / 1000));
+            }
+            const art = typeof track['artworkUrl100'] === 'string' ? track['artworkUrl100'].replace(/\/100x100bb\./, '/600x600bb.') : null;
+            thumbnail = safeThumbnail(art) ?? thumbnail;
+          }
+        }
+      }
+    } else {
+      const endpoint = source === 'youtube'
+        ? `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`
+        : source === 'soundcloud'
+          ? `https://soundcloud.com/oembed?url=${encodeURIComponent(url)}&format=json`
+          : `https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`;
+      const res = await fetchImpl(endpoint, { signal: AbortSignal.timeout(6_000) });
+      if (res.ok) {
+        const data = await res.json() as Record<string, unknown>;
+        title = cleanMetadataText(data['title'], 300);
+        const rawAuthor = cleanMetadataText(data['author_name'], 300).replace(/\s*-\s*Topic$/i, '').trim();
+        artist = rawAuthor;
+        thumbnail = safeThumbnail(data['thumbnail_url']) ?? thumbnail;
+      }
+    }
+  } catch {
+    // Fallback gracefully to URL-derived metadata if upstream oEmbed/lookup is unreachable.
+  }
+
+  return {
+    url,
+    source,
+    title: title || fallbackTitleFromUrl(url, source),
+    artist: artist || 'Artista desconocido',
+    duration,
+    thumbnail,
+  };
+}
+
 export function trackMetadata(value: unknown): TrackMetadata {
   const item = object(value);
   const { url, source } = publicTrackUrl(item['url']);
@@ -46,8 +145,7 @@ export function trackMetadata(value: unknown): TrackMetadata {
     const candidate = text(item['thumbnail'], 2048, 'thumbnail');
     let parsed: URL;
     try { parsed = new URL(candidate); } catch { throw new WebError(400, 'Invalid thumbnail'); }
-    const imageHosts = ['i.ytimg.com', 'img.youtube.com', 'i.scdn.co', 'images.genius.com', 'is1-ssl.mzstatic.com', 'is2-ssl.mzstatic.com', 'is3-ssl.mzstatic.com', 'is4-ssl.mzstatic.com', 'is5-ssl.mzstatic.com', 'i1.sndcdn.com'];
-    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || !imageHosts.includes(parsed.hostname)) throw new WebError(400, 'Invalid thumbnail host');
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || !IMAGE_HOSTS.includes(parsed.hostname)) throw new WebError(400, 'Invalid thumbnail host');
     thumbnail = parsed.toString();
   }
   return { url, source, title: text(item['title'], 300, 'title'), artist: text(item['artist'] ?? '', 300, 'artist', true), duration: Math.round(number(item['duration'], 0, 604800, 'duration')), thumbnail };

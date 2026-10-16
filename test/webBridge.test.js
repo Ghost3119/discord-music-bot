@@ -447,3 +447,33 @@ test('short membership cache coalesces reads, invalidates on guildMemberRemove o
   restUnavailable = false;
   await bridge.assertGuildAccess(userId, guildId);
 });
+
+test('playlist playback seeds YtDlpSearchPlugin metadata so all 5 tracks enqueue immediately without redundant yt-dlp spawns', async t => {
+  const f = await fixture(t);
+  f.queue.songs = [];
+
+  const songs = [
+    { url: 'https://www.youtube.com/watch?v=11111111111', title: 'QUEMAROPA', artist: 'Blessd', duration: 168, thumbnail: 'https://i.ytimg.com/vi/11111111111/hqdefault.jpg', source: 'youtube' },
+    { url: 'https://www.youtube.com/watch?v=22222222222', title: 'descontrol', artist: 'Blessd', duration: 182, thumbnail: 'https://i.ytimg.com/vi/22222222222/hqdefault.jpg', source: 'youtube' },
+    { url: 'https://www.youtube.com/watch?v=33333333333', title: '01-800', artist: 'Roa', duration: 195, thumbnail: 'https://i.ytimg.com/vi/33333333333/hqdefault.jpg', source: 'youtube' },
+    { url: 'https://www.youtube.com/watch?v=44444444444', title: 'Xapiadora', artist: 'Ovy', duration: 210, thumbnail: 'https://i.ytimg.com/vi/44444444444/hqdefault.jpg', source: 'youtube' },
+    { url: 'https://www.youtube.com/watch?v=55555555555', title: 'Maripilili', artist: 'Blessd', duration: 175, thumbnail: 'https://i.ytimg.com/vi/55555555555/hqdefault.jpg', source: 'youtube' },
+  ];
+
+  // Override f.distube.handler.resolve to delegate directly to f.plugin.resolve (which would fail if yt-dlp were spawned in test env)
+  f.distube.handler.resolve = async (input, options) => f.plugin.resolve(input, options);
+  f.distube.play = async (_voice, input, options) => {
+    await f.queue._taskQueue.queuing(true);
+    try { f.queue.addToQueue(await f.distube.handler.resolve(input, options)); }
+    finally { f.queue._taskQueue.resolve(); }
+  };
+
+  for (const song of songs) {
+    await f.bridge.control(userId, guildId, { action: 'play', query: song.url, track: song });
+  }
+
+  const state = await f.bridge.getState(userId, guildId);
+  assert.equal(state.current.title, 'QUEMAROPA');
+  assert.equal(state.queue.length, 4);
+  assert.deepEqual(state.queue.map(item => item.title), ['descontrol', '01-800', 'Xapiadora', 'Maripilili']);
+});

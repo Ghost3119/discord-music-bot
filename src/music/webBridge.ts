@@ -10,6 +10,7 @@ import { checkpointQueue } from './queueChanges';
 import { getPlayerPanels } from './playerPanel';
 import { controlError, installQueueControlGuard, musicSessionVersion, withMusicAccess } from './controlAccess';
 import { requestPlayback } from './playbackRequest';
+import { YtDlpSearchPlugin } from './ytDlpSearchPlugin';
 
 export interface MusicBridgeOptions {
   accessMode?: WebAccessMode;
@@ -41,7 +42,7 @@ function artwork(input: unknown): string | null {
   if (typeof input !== 'string' || input.length > 2000) return null;
   try {
     const url = new URL(input);
-    const allowed = ['ytimg.com', 'scdn.co', 'sndcdn.com', 'mzstatic.com'];
+    const allowed = ['ytimg.com', 'scdn.co', 'spotifycdn.com', 'sndcdn.com', 'mzstatic.com'];
     if (url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash &&
       allowed.some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) return url.href;
   } catch { /* Artwork is optional; signed media URLs are never exposed. */ }
@@ -242,6 +243,10 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
           throw controlError('SESSION_CHANGED', 'La sesión cambió durante la carga de la playlist.');
         }
         const query = webQuery(action.query);
+        if (action.track) {
+          const plugin = distube.plugins?.find((item): item is YtDlpSearchPlugin => item instanceof YtDlpSearchPlugin);
+          plugin?.seedTrackInfo({ ...action.track, url: query });
+        }
         await requestPlayback(distube, { guildId, member, voiceChannel: voice, query, searchSource: 'youtube', authorize, ...(signal ? { signal } : {}) });
         const current = distube.getQueue(guildId);
         if (signal) {
