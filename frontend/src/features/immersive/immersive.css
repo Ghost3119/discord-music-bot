@@ -4,37 +4,53 @@
 .immersive-player[data-state="closed"], .immersive-overlay[data-state="closed"] { animation: immersive-close 200ms var(--immersive-ease) both; }
 
 /* Dynamic Ambient Background with extracted palette */
-.immersive-ambient { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; background: #0c0e12; }
+.immersive-ambient {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background: #0c0e12;
+  --ambient-opacity: 0.74;
+}
 .immersive-ambient-color {
   position: absolute;
   inset: -14%;
   background:
-    radial-gradient(ellipse 75% 65% at 20% 34%, var(--ambient-primary, #3f475a) 0%, transparent 60%),
-    radial-gradient(ellipse 85% 75% at 84% 76%, var(--ambient-secondary, #423747) 0%, transparent 64%);
-  opacity: .66;
-  transition: opacity 320ms var(--immersive-ease);
+    radial-gradient(ellipse 68% 62% at 22% 38%, var(--ambient-primary, #343f58) 0%, transparent 65%),
+    radial-gradient(ellipse 76% 68% at 76% 42%, var(--ambient-secondary, #382d46) 0%, transparent 70%),
+    radial-gradient(ellipse 90% 65% at 68% 84%, var(--ambient-accent, #263224) 0%, transparent 74%);
+  opacity: var(--ambient-opacity, 0.74);
+  animation: immersive-ambient-enter 800ms var(--immersive-ease) both;
+  will-change: opacity, transform;
 }
-.immersive-ambient-color.is-leaving { animation: immersive-ambient-leave 800ms ease both; }
+.immersive-ambient-color.is-leaving {
+  animation: immersive-ambient-leave 1200ms cubic-bezier(.2,.7,.2,1) both;
+  pointer-events: none;
+}
 .immersive-ambient-veil {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(105deg, rgba(12, 14, 18, 0.25) 0%, rgba(12, 14, 18, 0.5) 45%, rgba(12, 14, 18, 0.86) 100%),
-    linear-gradient(0deg, rgba(12, 14, 18, 0.72) 0%, transparent 40%);
-  transition: background 320ms var(--immersive-ease);
+    linear-gradient(105deg, rgba(12, 14, 18, 0.22) 0%, rgba(12, 14, 18, 0.38) 48%, rgba(12, 14, 18, 0.64) 100%),
+    linear-gradient(0deg, rgba(12, 14, 18, 0.72) 0%, rgba(12, 14, 18, 0.15) 35%, transparent 55%);
+  transition: background 360ms var(--immersive-ease);
 }
 
-/* Focused Ambient Atmosphere when no lyrics exist */
+/* Focused Ambient Atmosphere when no lyrics exist (more prominent & centered) */
+.immersive-player[data-has-lyrics="false"] {
+  --ambient-opacity: 0.82;
+}
 .immersive-player[data-has-lyrics="false"] .immersive-ambient-color {
   background:
-    radial-gradient(ellipse 70% 60% at 50% 36%, var(--ambient-primary, #3f475a) 0%, transparent 66%),
-    radial-gradient(ellipse 85% 60% at 50% 82%, var(--ambient-secondary, #423747) 0%, transparent 72%);
-  opacity: .58;
+    radial-gradient(ellipse 74% 64% at 50% 36%, var(--ambient-primary, #343f58) 0%, transparent 68%),
+    radial-gradient(ellipse 88% 68% at 50% 74%, var(--ambient-secondary, #382d46) 0%, transparent 72%),
+    radial-gradient(circle 520px at 50% 36%, var(--ambient-accent, #263224) 0%, transparent 78%);
 }
 .immersive-player[data-has-lyrics="false"] .immersive-ambient-veil {
   background:
-    radial-gradient(circle at 50% 36%, transparent 20%, rgba(12, 14, 18, 0.6) 65%, rgba(12, 14, 18, 0.95) 100%),
-    linear-gradient(0deg, rgba(12, 14, 18, 0.85) 0%, transparent 40%);
+    radial-gradient(ellipse 68% 58% at 50% 36%, transparent 32%, rgba(12, 14, 18, 0.35) 66%, rgba(12, 14, 18, 0.88) 100%),
+    linear-gradient(0deg, rgba(12, 14, 18, 0.82) 0%, rgba(12, 14, 18, 0.25) 38%, transparent 55%);
 }
 
 /* Player Header */
@@ -337,7 +353,8 @@
 @keyframes immersive-close { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(12px); } }
 @keyframes immersive-artwork-enter { from { opacity: .1; } to { opacity: 1; } }
 @keyframes immersive-artwork-leave { to { opacity: 0; } }
-@keyframes immersive-ambient-leave { from { opacity: .66; } to { opacity: 0; } }
+@keyframes immersive-ambient-enter { from { opacity: 0; transform: scale(0.97); } to { opacity: var(--ambient-opacity, 0.74); transform: scale(1); } }
+@keyframes immersive-ambient-leave { from { opacity: var(--ambient-opacity, 0.74); transform: scale(1); } to { opacity: 0; transform: scale(1.04); } }
 @keyframes immersive-copy-enter { from { opacity: .3; } to { opacity: 1; } }
 @keyframes immersive-status-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
@@ -418,8 +435,8 @@
   .immersive-lyrics-feedback { padding: 30px 0; gap: 13px; }
   .immersive-lyrics-feedback h3 { font-size: 28px; }
   .immersive-lyrics-feedback p { font-size: 14px; }
-  .immersive-lyrics-source { padding: 9px 3px 0; font-size: 10px; }
-  .immersive-ambient-color { opacity: .52; }
+  .immersive-ambient { --ambient-opacity: 0.62; }
+  .immersive-player[data-has-lyrics="false"] { --ambient-opacity: 0.72; }
 
   /* Mobile No-Lyrics Adaptation */
   .immersive-stage[data-has-lyrics="false"] .immersive-mobile-switch {
