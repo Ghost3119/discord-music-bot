@@ -224,7 +224,7 @@ describe('player and queue regression', () => {
   });
 
   it('keeps collection actions busy and playback disabled until state is available', () => {
-    const html = renderToStaticMarkup(<TrackItem track={track()} index={0} length={1} context="playlist" actions={actions({ busy: true, playbackReady: false })} />);
+    const html = renderToStaticMarkup(<TrackItem track={track()} index={0} length={1} context="playlist" owner={playlist()} actions={actions({ busy: true, playbackReady: false })} />);
     for (const label of ['Reproducir Canción track-a', 'Guardar en favoritos: Canción track-a', 'Retirar Canción track-a']) {
       expect(tag(html, 'button', 'aria-label', label)).toContain('disabled=""');
     }

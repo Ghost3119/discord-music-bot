@@ -158,7 +158,7 @@ export function LibraryDialog({ dialog }: LibraryDialogProps) {
                     id: 'preview',
                     ...resolvedTrack,
                     title: name.trim() || resolvedTrack.title,
-                    artist: trackArtist.trim() || resolvedTrack.artist,
+                    artist: trackArtist.trim() || 'Artista desconocido',
                   }}
                   className="track-preview-art"
                   decorative
@@ -167,7 +167,7 @@ export function LibraryDialog({ dialog }: LibraryDialogProps) {
                   <span className="track-preview-badge">{resolvedTrack.source}</span>
                   <strong>{name.trim() || resolvedTrack.title}</strong>
                   <span>
-                    {trackArtist.trim() || resolvedTrack.artist}
+                    {trackArtist.trim() || 'Artista desconocido'}
                     {resolvedTrack.duration > 0 ? ` · ${duration(resolvedTrack.duration)}` : ''}
                   </span>
                 </div>

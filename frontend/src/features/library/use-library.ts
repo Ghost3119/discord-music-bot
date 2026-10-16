@@ -29,15 +29,35 @@ export function useLibrary({
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [selectedPlaylist, setSelectedPlaylist] = useState('');
   const [modal, setModal] = useState<Modal>(null);
-  const [name, setName] = useState('');
+  const [nameDraft, setName] = useState('');
   const [targetPlaylist, setTargetPlaylist] = useState('');
   const [trackUrl, setTrackUrl] = useState('');
-  const [trackArtist, setTrackArtist] = useState('');
-  const [resolvedTrack, setResolvedTrack] = useState<Omit<Track, 'id'> | null>(null);
+  const [artistDraft, setTrackArtist] = useState('');
+  const [resolution, setResolution] = useState<{
+    editor: Modal;
+    inputUrl: string;
+    track: Omit<Track, 'id'>;
+  } | null>(null);
   const [resolvingTrack, setResolvingTrack] = useState(false);
   const [titleTouched, setTitleTouched] = useState(false);
   const [artistTouched, setArtistTouched] = useState(false);
   const [libraryRevision, setLibraryRevision] = useState(0);
+
+  const inputUrl = trackUrl.trim();
+  // A result belongs to one URL and one opening of the editor. Filtering during
+  // render also protects submit before the previous lookup's effect is cleaned up.
+  const resolvedTrack =
+    modal?.type === 'add' && resolution?.editor === modal && resolution.inputUrl === inputUrl
+      ? resolution.track
+      : null;
+  // Automatic fields are derived, so changing URL cannot retain another track's
+  // autofill. Explicit edits, including an empty string, remain owned by the user.
+  const name = modal?.type === 'add' && !titleTouched ? resolvedTrack?.title || '' : nameDraft;
+  const trackArtist = !artistTouched
+    ? resolvedTrack?.artist === 'Artista desconocido'
+      ? ''
+      : resolvedTrack?.artist || ''
+    : artistDraft;
 
   useEffect(() => {
     setPlaylists([]);
@@ -71,24 +91,30 @@ export function useLibrary({
   }, [libraryRevision, guildId, session, reportError]);
 
   useEffect(() => {
+    setResolution(null);
+    setResolvingTrack(false);
     if (modal?.type === 'playlist') setName(modal.playlist?.name || '');
-    if (modal?.type === 'save') setTargetPlaylist(playlists[0]?.id || '');
+    if (modal?.type === 'save') setTargetPlaylist('');
     if (modal?.type === 'add') {
       setName('');
       setTrackUrl('');
       setTrackArtist('');
-      setResolvedTrack(null);
-      setResolvingTrack(false);
       setTitleTouched(false);
       setArtistTouched(false);
     }
+  }, [modal]);
+
+  useEffect(() => {
+    if (modal?.type !== 'save') return;
+    setTargetPlaylist((selected) =>
+      playlists.some((item) => item.id === selected) ? selected : playlists[0]?.id || '',
+    );
   }, [modal, playlists]);
 
   useEffect(() => {
     if (modal?.type !== 'add' || !guildId || !session) return;
-    const raw = trackUrl.trim();
-    if (!/^https:\/\/\S+\.\S+/i.test(raw)) {
-      setResolvedTrack(null);
+    if (!/^https:\/\/\S+\.\S+/i.test(inputUrl)) {
+      setResolution(null);
       setResolvingTrack(false);
       return;
     }
@@ -96,23 +122,15 @@ export function useLibrary({
     setResolvingTrack(true);
     const timer = window.setTimeout(() => {
       api<{ track: Omit<Track, 'id'> }>(
-        `/api/guilds/${guildId}/tracks/resolve?url=${encodeURIComponent(raw)}`,
+        `/api/guilds/${guildId}/tracks/resolve?url=${encodeURIComponent(inputUrl)}`,
         { signal: abort.signal },
       )
         .then(({ track }) => {
           if (abort.signal.aborted) return;
-          setResolvedTrack(track);
-          setName((prev) => (!titleTouched || !prev.trim() ? track.title : prev));
-          setTrackArtist((prev) =>
-            !artistTouched || !prev.trim()
-              ? track.artist === 'Artista desconocido'
-                ? ''
-                : track.artist
-              : prev,
-          );
+          setResolution({ editor: modal, inputUrl, track });
         })
         .catch(() => {
-          if (!abort.signal.aborted) setResolvedTrack(null);
+          if (!abort.signal.aborted) setResolution(null);
         })
         .finally(() => {
           if (!abort.signal.aborted) setResolvingTrack(false);
@@ -122,7 +140,7 @@ export function useLibrary({
       window.clearTimeout(timer);
       abort.abort();
     };
-  }, [modal?.type, trackUrl, guildId, session, titleTouched, artistTouched]);
+  }, [modal, inputUrl, guildId, session]);
 
   const reloadLibrary = useCallback(() => setLibraryRevision((value) => value + 1), []);
   const clearLibrary = useCallback(() => {
@@ -205,8 +223,8 @@ export function useLibrary({
       if (modal.type === 'add') {
         await mutate(`${base}/${modal.playlist.id}/tracks`, 'POST', {
           url: trackUrl.trim(),
-          title: name.trim() || resolvedTrack?.title || '',
-          artist: trackArtist.trim() || resolvedTrack?.artist || 'Artista desconocido',
+          title: name.trim(),
+          artist: trackArtist.trim() || 'Artista desconocido',
           duration: resolvedTrack?.duration || 0,
           thumbnail: resolvedTrack?.thumbnail || null,
           source: resolvedTrack?.source || 'youtube',
@@ -234,11 +252,8 @@ export function useLibrary({
     trackUrl,
     setTrackUrl,
     trackArtist,
-    setTrackArtist,
     resolvedTrack,
     resolvingTrack,
-    setTitleTouched,
-    setArtistTouched,
     onTrackTitleChange,
     onTrackArtistChange,
     isFavorite,
