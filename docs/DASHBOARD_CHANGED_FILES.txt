@@ -34,6 +34,8 @@ frontend/vite.config.ts
 migrations/0001_dashboard.sql
 package-lock.json
 package.json
+scripts/dev-app.cjs
+scripts/supervise.cjs
 src/bootstrap.ts
 src/commands/loop.ts
 src/commands/play.ts
@@ -56,6 +58,7 @@ src/web/server.ts
 src/web/validation.ts
 test/dashboardLifecycle.test.js
 test/dashboardStatic.test.js
+test/devApp.test.js
 test/helpers/dashboard-preview.cjs
 test/webBridge.test.js
 test/webDashboard.test.js

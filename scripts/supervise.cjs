@@ -26,15 +26,17 @@ function supervise(options = {}) {
     clearInterval(watchdog);
     clearTimeout(timer);
     process.exitCode = code;
+    options.onExit?.(code);
   };
 
   function start() {
     if (stopping) return;
     lastHeartbeat = lastStart = Date.now();
     child = fork(entry, options.args || [], { execArgv: ['--no-deprecation'], windowsHide: true,
-      env: { ...process.env, MUSIC_SUPERVISOR_IPC: '1' }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
+      env: { ...(options.env || process.env), MUSIC_SUPERVISOR_IPC: '1' }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
     child.on('message', (message) => {
       if (message && message.type === 'heartbeat') lastHeartbeat = Date.now();
+      options.onMessage?.(message);
       if (message && message.type === 'audioWorker' && Number.isSafeInteger(message.pid) && message.pid > 1 &&
         message.pid !== process.pid && message.pid !== child?.pid) {
         if (message.action === 'started') audioWorkers.add(message.pid);

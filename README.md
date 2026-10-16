@@ -2,6 +2,20 @@
 
 Bot privado de musica para Discord hecho con `discord.js`, `DisTube`, `yt-dlp` y TypeScript.
 
+## Levantar toda la aplicación
+
+Desde la raíz del proyecto, usa una sola terminal:
+
+```powershell
+npm run dev
+```
+
+Ese comando instala las dependencias que falten, compila el backend, inicia el bot con su supervisor y levanta la vista cuando Fastify está listo. Abre **http://127.0.0.1:5173**. **Ctrl+C cierra todo.** No necesitas ejecutar `dev:web` en otra terminal.
+
+Configura una sola vez `.env` con `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, `WEB_CLIENT_SECRET` y `WEB_ALLOWED_USER_IDS` (IDs de usuario separados por comas). En Discord OAuth2 registra exactamente `http://127.0.0.1:5173/auth/discord/callback`. El lanzador ajusta el origen y el callback de desarrollo en memoria; no modifica tu `.env` ni expone secretos a Vite.
+
+Si falta configuración o un puerto está ocupado, el comando muestra el motivo antes de iniciar el bot. Si dejaste Vite abierto por separado, cierra esa terminal primero. Para comprobar sin arrancar ni instalar nada: `npm run dev:check`.
+
 ## Que soporta
 
 El bot puede reproducir musica usando enlaces directos y busquedas por nombre.
@@ -21,7 +35,7 @@ Spotify y Apple Music se usan como entrada de metadata. El audio final viene de 
 - Node.js 22.12 o superior.
 - Un bot de Discord creado en el Developer Portal.
 - Permisos del bot para ver canales, conectarse y hablar en canales de voz.
-- Dependencias instaladas con `npm install`.
+- El lanzador `npm run dev` instala automáticamente las dependencias que falten.
 
 ## Configuracion
 
@@ -55,8 +69,11 @@ Sin ellas, el plugin intenta leer los datos públicos. Si no consigue un token, 
 
 ## Instalacion
 
+Para desarrollo local, basta `npm run dev` después de configurar `.env`. Los pasos siguientes son para preparar manualmente la versión compilada:
+
 ```powershell
 npm install
+npm run setup:web
 npm run build
 ```
 
@@ -82,11 +99,13 @@ Inicia el bot:
 npm run start
 ```
 
-Para desarrollo:
+Para levantar bot, backend y frontend juntos durante desarrollo:
 
 ```powershell
 npm run dev
 ```
+
+`npm run dev:bot` conserva el arranque anterior de solo el bot. `npm run start` conserva el supervisor de la versión compilada; el panel estático requiere `WEB_ENABLED=true` y la configuración del puerto 8080 descrita en la guía del dashboard.
 
 ## Comandos
 
@@ -228,7 +247,7 @@ Ideas buenas para seguir mejorando el bot:
 
 El dashboard **SONORA** añade inicio de sesión con Discord, reproducción y cola en tiempo real, controles musicales, playlists y favoritos en SQLite. Usa la misma instancia de DisTube y las protecciones del bot. Está **desactivado por defecto** (`WEB_ENABLED=false`) y escucha en `127.0.0.1:8080` al configurarlo.
 
-Instala ambas partes con `npm ci` y `npm run setup:web`; `npm run build` compila bot y frontend, y `npm test` verifica ambos. Consulta [configuración OAuth, variables, endpoints, migraciones y validación](docs/DASHBOARD.md). `.env.example` contiene valores de ejemplo sin secretos. `npm run dev:web` inicia Vite en el puerto 5173 para desarrollar la interfaz.
+`npm run dev` levanta ambas partes en una sola terminal. Consulta [configuración OAuth, variables, endpoints, migraciones y validación](docs/DASHBOARD.md). `.env.example` contiene valores de ejemplo sin secretos. `npm run dev:web` queda disponible únicamente para iniciar Vite de forma independiente; necesita un backend ya activo.
 
 La implementación no activa ni reinicia el bot en producción. Las comprobaciones reales de OAuth y voz en Discord se hacen al activar una única instancia de pruebas.
 
@@ -236,7 +255,9 @@ La implementación no activa ni reinicia el bot en producción. Las comprobacion
 
 | Script | Descripcion |
 | --- | --- |
-| `npm run dev` | Ejecuta el bot con `ts-node`. |
+| `npm run dev` | Prepara y ejecuta bot, Fastify y React juntos; Ctrl+C cierra todo. |
+| `npm run dev:check` | Valida configuración, dependencias y puertos sin instalar ni iniciar procesos. |
+| `npm run dev:bot` | Ejecuta únicamente el bot con `ts-node`, como antes. |
 | `npm run build` | Compila el bot a `dist` y React a `frontend/dist`. |
 | `npm run build:bot` | Compila únicamente el bot. |
 | `npm run setup:web` | Instala las dependencias bloqueadas del frontend. |

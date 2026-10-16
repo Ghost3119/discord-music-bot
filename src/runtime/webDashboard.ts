@@ -40,7 +40,10 @@ export function createWebLifecycle(options: LifecycleOptions): { start(): Promis
 export function createWebDashboard(client: Client, history: HistoryStore): ReturnType<typeof createWebLifecycle> {
   return createWebLifecycle({
     enabled: () => process.env['WEB_ENABLED'] === 'true',
-    report: () => console.error('[Web] Panel no disponible. Revisa la configuración WEB_* y la disponibilidad del puerto; el audio continúa.'),
+    report: () => {
+      console.error('[Web] Panel no disponible. Revisa la configuración WEB_* y la disponibilidad del puerto; el audio continúa.');
+      if (process.connected) process.send?.({ type: 'webStartupFailed' }, () => {});
+    },
     open: async () => {
       const [{ readWebConfig }, { createWebServer }, { createMusicBridge }] = await Promise.all([
         import('../web/config'), import('../web/server'), import('../music/webBridge'),
@@ -50,6 +53,7 @@ export function createWebDashboard(client: Client, history: HistoryStore): Retur
       try {
         await app.listen({ host: config.host, port: config.port });
         console.log(`[Web] Panel disponible en ${config.origin}`);
+        if (process.connected) process.send?.({ type: 'webReady' }, () => {});
         return app;
       } catch (error) {
         await app.close();

@@ -24,32 +24,44 @@ frontend/test/            Pruebas del cliente
 
 Requiere Node.js **22.12 o superior**, npm y las dependencias existentes del bot. `better-sqlite3` utiliza un módulo nativo: ejecuta `npm ci` con la versión de Node que vayas a usar para arrancar. Si no hay un binario precompilado para tu plataforma, su instalador necesitará herramientas de compilación nativas.
 
+Configura una sola vez `.env` con los valores privados del bot y `WEB_CLIENT_SECRET` / `WEB_ALLOWED_USER_IDS`. En la aplicación del [Discord Developer Portal](https://discord.com/developers/applications) registra exactamente **`http://127.0.0.1:5173/auth/discord/callback`** como OAuth2 redirect. No pegues los secretos en React ni en variables `VITE_*`.
+
+Después, cada vez que quieras usar la app, basta un comando desde la raíz del repositorio:
+
 ```powershell
-cd C:\Users\picud\Repos\discord-music-bot
-git switch feat/discord-music-dashboard
-npm ci
-npm run setup:web
-npm run build
-npm test
-npm run deploy:check
+npm run dev
 ```
 
-Conserva tu `.env` existente y añade las variables web tomando `.env.example` como referencia. En la aplicación del [Discord Developer Portal](https://discord.com/developers/applications) registra exactamente `http://127.0.0.1:8080/auth/discord/callback` como OAuth2 redirect. Configura `WEB_CLIENT_SECRET` y los IDs de usuarios permitidos, y establece `WEB_ENABLED=true` cuando vayas a activar el panel.
+El lanzador valida primero las variables requeridas, instala dependencias faltantes, compila el bot y arranca su supervisor. Solo inicia Vite cuando Fastify confirma que ya escucha; muestra **http://127.0.0.1:5173** cuando la vista responde. **Ctrl+C detiene la vista, el backend y el bot.** Si uno termina, el lanzador cierra el conjunto. El supervisor conserva sus reinicios ante fallos del bot.
+
+No necesitas cambiar manualmente `WEB_ENABLED`, `WEB_ORIGIN` ni `WEB_REDIRECT_URI` para este modo: se ajustan en memoria, solo para el backend hijo. Vite recibe el destino del proxy y variables básicas del sistema, sin tokens o secretos del bot. `WEB_PORT` controla el backend (8080) y `WEB_DEV_PORT` la vista (5173). Si cambias el segundo, registra también su nuevo callback en Discord. Se usan puertos fijos; no se cambia silenciosamente a otro puerto que invalide OAuth.
+
+Para revisar sin iniciar el bot ni instalar dependencias, usa `npm run dev:check`. Un puerto ocupado se informa sin terminar el proceso que lo utiliza. Cierra la terminal de Vite o del bot anterior antes de volver a arrancar. Abrir solamente `dev:web` con el backend apagado produce los errores de proxy HTTP 500 vistos en `/api/session` y `/auth/discord`.
+
+Los dos valores propios del panel que debes completar son:
+
+```env
+WEB_CLIENT_SECRET=secreto_oauth2_de_tu_aplicacion_discord
+WEB_ALLOWED_USER_IDS=tu_id_de_usuario_discord
+```
+
+`WEB_CLIENT_SECRET` es el **Client Secret** de OAuth2, distinto del token del bot. `WEB_ALLOWED_USER_IDS` contiene IDs de personas autorizadas, no el ID del servidor ni el del bot. Conserva los valores reales únicamente en `.env`.
 
 El flujo usa un cliente confidencial con `client_secret`, el scope `identify` y `state` aleatorio ligado a una cookie de un solo uso. No se guardan access/refresh tokens. Discord documenta este flujo en su [referencia de OAuth2](https://docs.discord.com/developers/topics/oauth2); no se presupone soporte PKCE en el flujo confidencial documentado.
 
-Para usar el frontend compilado, inicia **una sola instancia del bot** con `npm run start` y abre `http://127.0.0.1:8080`. El servidor sirve `frontend/dist` y aplica migraciones al abrir SQLite. El build por sí solo no reinicia el bot ni activa el panel.
+**Versión compilada, como alternativa:** instala con `npm ci` y `npm run setup:web`, compila con `npm run build`, configura `WEB_ENABLED=true`, `WEB_ORIGIN=http://127.0.0.1:8080` y su callback en `.env`/Discord, e inicia **una sola instancia** con `npm run start`. Fastify sirve `frontend/dist` en el puerto 8080 y aplica migraciones al abrir SQLite. Este modo conserva el supervisor anterior y no ejecuta Vite. El build por sí solo no reinicia el bot.
 
-Para desarrollar React, configura `WEB_ORIGIN=http://127.0.0.1:5173` y `WEB_REDIRECT_URI=http://127.0.0.1:5173/auth/discord/callback`; registra también ese redirect en Discord. Ejecuta el bot de pruebas en una terminal y `npm run dev:web` en otra. Vite reenvía `/api` y `/auth` al puerto 8080 conservando el origen. Abre siempre el host exacto configurado; `localhost` y `127.0.0.1` son orígenes diferentes.
+`npm run dev:bot` y `npm run dev:web` permanecen como herramientas independientes para usos avanzados. Para el flujo habitual utiliza `npm run dev`. La vista tiene recarga automática; después de cambiar código TypeScript del bot, detén el conjunto y vuelve a ejecutar el mismo comando. Abre siempre el host exacto configurado; `localhost` y `127.0.0.1` son orígenes diferentes.
 
 ## Variables
 
 | Variable | Predeterminado / propósito |
 | --- | --- |
 | `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID` | Configuración existente del bot; solo backend. |
-| `WEB_ENABLED` | `false`; no abre HTTP ni SQLite hasta habilitarlo. |
+| `WEB_ENABLED` | `false` para el bot independiente; `npm run dev` lo habilita para su proceso hijo. |
 | `WEB_HOST` | `127.0.0.1`; escucha local. |
 | `WEB_PORT` | `8080`. |
+| `WEB_DEV_PORT` | `5173`; puerto de Vite con el lanzador único. |
 | `WEB_ORIGIN` | `http://127.0.0.1:8080`; origen público exacto para cookies y CSRF. |
 | `WEB_CLIENT_ID` | Opcional; utiliza `CLIENT_ID` si no se define. |
 | `WEB_CLIENT_SECRET` | Secreto OAuth2 de la aplicación de Discord. |
@@ -125,6 +137,12 @@ Resultado del 15 de octubre de 2026, Windows y Node.js 24.14.0:
 | Bundle React | Sin referencias a `DISCORD_TOKEN`, `WEB_CLIENT_SECRET` ni `SPOTIFY_CLIENT_SECRET`. |
 
 La huella de comandos permanece `3e86b2114dfce87c089fca414acbc597b3b22810bbb4f0273e3d576e927d168f`. Se añadieron 53 pruebas backend y 12 frontend. Las nuevas pruebas cubren OAuth state/replay/allowlist/CSRF/rate limit, sesiones y SQLite persistentes, aislamiento entre usuarios y servidores, restricciones de voz tras esperas, concurrencia Discord/web con el bloqueo nativo real, búsqueda/extracción/autoplay tardíos, cancelación durante conexión de voz, protección de una cola sucesora, Stop entre pistas de una carga, SSE y cierre HTTP, reordenamiento transaccional y respuestas antiguas del cliente. El runtime mínimo 22.12 se declara en ambos paquetes; esta ejecución se realizó en Node 24.14.0, no en cada versión soportada.
+
+### Validación adicional del arranque único
+
+Se añadieron 17 pruebas en `test/devApp.test.js`: validación de variables/puertos, exclusión de secretos del entorno de Vite, espera de backend y HTTP, fallos de cada componente, timeout, códigos 78/79 y cierre conjunto. Incluyen procesos Node HTTP reales y el supervisor real con un backend de prueba, comprobando que no se reinicie al cerrar y que el puerto se libere. No conectan a Discord.
+
+Después de este cambio, `npm run build`, `npm test` y `npm run deploy:check` pasaron: **372 pruebas backend + 12 frontend = 384 aprobadas**, cero fallos. La comprobación local `npm run dev:check` identificó correctamente `WEB_CLIENT_SECRET` y `WEB_ALLOWED_USER_IDS` ausentes, con salida 1 y sin iniciar el bot. No se activó producción ni se alteró el `.env` existente.
 
 ## Interfaz comprobada
 
