@@ -64,4 +64,3 @@ export function matchLyrics(query: LyricsQuery, records: LyricsRecord[]): Lyrics
   }));
   return signatures.size === 1 ? candidates[0]! : { status: 'ambiguous' };
 }
-

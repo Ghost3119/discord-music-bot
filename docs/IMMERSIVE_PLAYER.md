@@ -139,6 +139,6 @@ La revisión visual real de preferencia reducida activada y con lector de pantal
 ## Inventario y commits locales
 Inventario completo frente a main: [IMMERSIVE_CHANGED_FILES.txt](IMMERSIVE_CHANGED_FILES.txt). Incluye fuentes, pruebas, documentación y capturas; sin cambios en dependencias, lockfiles o variables de entorno.
 
-Commits de implementación: dcdfb9c (baseline/diseño),1b546cf (proveedor/API),4842176 (reloj),048fe93 (epochs retiradas),0da8fc0 (vista/fondo/letras). El commit final agrega documentación, fixture y capturas. Todos permanecen locales.
+Commits de implementación: dcdfb9c (baseline/diseño),1b546cf (proveedor/API),4842176 (reloj),048fe93 (epochs retiradas),0da8fc0 (vista/fondo/letras). El commit final agrega documentación, fixture y capturas. No se ejecutó push desde esta tarea. Al finalizar se detectó que origin ya referenciaba el commit de documentación; se preservó su historial y la corrección de formato se añadió en un commit separado.
 
 El preview de QA se cierra al terminar la revisión. Los logs de baseline/build/test/deploy se conservan fuera del checkout en la carpeta local de evidencias.
