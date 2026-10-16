@@ -4,3 +4,7 @@ dist/
 cookies.json
 data/
 logs/
+frontend/dist/
+frontend/coverage/
+frontend/.vite/
+*.tsbuildinfo

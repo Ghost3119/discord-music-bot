@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { Command } from './command.types';
-import { ensureGuild } from '../utils/guard';
+import { ensureControlChannel, ensureGuild } from '../utils/guard';
+import { setQueueSetting } from '../music/queueActions';
 import { BotColors } from '../utils/colors';
 
 export const volume: Command = {
@@ -27,9 +28,11 @@ export const volume: Command = {
     }
 
     const vol = interaction.options.getInteger('valor', true);
-    distube.setVolume(guild.id, vol);
+    if (!await ensureControlChannel(interaction, queue)) return;
+    await interaction.deferReply();
+    await setQueueSetting(distube, queue, 'volume', vol);
 
-    await interaction.reply({
+    await interaction.editReply({
       embeds: [new EmbedBuilder().setColor(BotColors.Info).setDescription(`🔊 Volumen ajustado a **${vol}%**`)],
     });
   },

@@ -15,6 +15,7 @@ import { HistoryStore } from './history';
 import { checkpointQueue } from './queueChanges';
 import { AudioPreloader, PreloaderOptions } from './audioPreloader';
 import { PrebufferedStream } from './prebufferedStream';
+import { installQueueControlGuard, musicSessionChanged, withoutMusicAccess } from './controlAccess';
 
 function findSearchPlugin(distube: DisTube): YtDlpSearchPlugin | undefined {
   return distube.plugins?.find((plugin): plugin is YtDlpSearchPlugin => plugin instanceof YtDlpSearchPlugin);
@@ -192,12 +193,14 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
   const observedVoices = new WeakSet<Queue['voice']>();
   const listeners: (() => void)[] = [];
   function on<E extends keyof DisTubeEvents>(event: E, handler: (...args: DisTubeEvents[E]) => unknown): void {
-    const listener = guardedEvent(`DisTube ${event}`, handler) as TypedDisTubeEvents[E];
+    const listener = guardedEvent(`DisTube ${event}`, (...args: DisTubeEvents[E]) => withoutMusicAccess(() => handler(...args))) as TypedDisTubeEvents[E];
     distube.on(event, listener);
     listeners.push(() => { distube.off(event, listener); });
   }
 
   on(Events.INIT_QUEUE, (queue) => {
+    musicSessionChanged(distube, queue.id);
+    installQueueControlGuard(queue);
     health.init(queue);
     observeVoiceErrors(queue.voice);
     if (!restoreControls.has(queue)) {
@@ -230,6 +233,11 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
           return result;
         }
         catch (error) {
+          const code = (error as { errorCode?: string; name?: string }).errorCode;
+          if (code && ['CONTROL_CHANNEL_REQUIRED', 'GUILD_ACCESS_DENIED', 'VOICE_PERMISSIONS', 'SESSION_CHANGED', 'QUEUE_BLOCKED'].includes(code) || (error as { name?: string }).name === 'AbortError') {
+            if (recovering && ownsQueue(queue) && queue.songs[0] === failed && !getPlaybackState(queue)?.blocked) await withoutMusicAccess(() => queue.play());
+            throw error;
+          }
           // Skip can reject (e.g. there is no next song, or radio lookup fails).
           // Do not leave an aborted recovery at the head with no active audio.
           if (recovering && recovery.abandonCancelled(queue, failed)) {
@@ -241,9 +249,16 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
       };
       if (stop) queue.stop = (...args) => {
         if (queue.stopped) return Promise.resolve();
+        const failed = queue.songs[0], recovering = failed && recovery.signalFor(queue, failed);
         const state = getPlaybackState(queue); if (state) state.closing = true;
         preloader.end(queue);
-        markQueueEdited(queue); recovery.cancelQueue(queue); return stop.apply(queue, args);
+        markQueueEdited(queue); recovery.cancelQueue(queue);
+        return stop.apply(queue, args).catch(async error => {
+          // A guarded stop can lose voice authorization while waiting. Keep the surviving session usable.
+          if (state && !queue.stopped && distube.getQueue(queue.id) === queue) state.closing = false;
+          if (recovering && ownsQueue(queue) && queue.songs[0] === failed && !state?.blocked) await withoutMusicAccess(() => queue.play());
+          throw error;
+        });
       };
       if (typeof seek === 'function') queue.seek = async (time) => {
         const song = queue.songs[0];
@@ -316,6 +331,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
   on(Events.FINISH, (queue) => panels.close(queue, '✓ Cola terminada'));
   on(Events.FINISH_SONG, (queue, song) => { if (song) { preloader.finished(queue); health.completed(queue, song); } });
   on(Events.DELETE_QUEUE, (queue) => {
+    musicSessionChanged(distube, queue.id);
     preloader.end(queue);
     health.end(queue);
     recovery.cancelQueue(queue);

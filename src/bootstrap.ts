@@ -39,12 +39,12 @@ async function boot(): Promise<void> {
   const { config } = await import('./config');
   releaseInstance = await acquireInstanceLock(config.clientId);
   if (stopping) { await releaseInstance(); return; }
-  const { client, queueRecovery, startBot, stopEmptyVoice, stopPlayerPanels, history } = await import('./index');
+  const { client, queueRecovery, startBot, stopEmptyVoice, stopPlayerPanels, history, stopWebDashboard } = await import('./index');
   stopBot = async () => {
     stopEmptyVoice();
     stopPlayerPanels();
     queueRecovery.stop();
-    await Promise.allSettled([history.close(), client.destroy()]);
+    await Promise.allSettled([stopWebDashboard(), history.close(), client.destroy()]);
   };
   if (stopping) { await stopBot(); return; }
   await startBot();

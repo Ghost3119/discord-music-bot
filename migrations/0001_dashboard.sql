@@ -1,0 +1,10 @@
+CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, username TEXT NOT NULL, avatar TEXT, updated_at INTEGER NOT NULL);
+CREATE TABLE web_sessions (token_hash TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, csrf_hash TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+CREATE INDEX web_sessions_expiry ON web_sessions(expires_at);
+CREATE TABLE guild_settings (guild_id TEXT PRIMARY KEY NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE playlists (id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, guild_id TEXT NOT NULL REFERENCES guild_settings(guild_id) ON DELETE CASCADE, name TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE INDEX playlists_owner_guild ON playlists(user_id, guild_id);
+CREATE TABLE playlist_tracks (id TEXT PRIMARY KEY NOT NULL, playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE, url TEXT NOT NULL, title TEXT NOT NULL, artist TEXT NOT NULL, duration INTEGER NOT NULL CHECK(duration >= 0), thumbnail TEXT, source TEXT NOT NULL, position INTEGER NOT NULL);
+CREATE UNIQUE INDEX playlist_tracks_order ON playlist_tracks(playlist_id, position);
+CREATE TABLE favorites (id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, guild_id TEXT NOT NULL REFERENCES guild_settings(guild_id) ON DELETE CASCADE, url TEXT NOT NULL, title TEXT NOT NULL, artist TEXT NOT NULL, duration INTEGER NOT NULL CHECK(duration >= 0), thumbnail TEXT, source TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE UNIQUE INDEX favorites_owner_url ON favorites(user_id, guild_id, url);

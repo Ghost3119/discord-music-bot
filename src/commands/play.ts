@@ -1,13 +1,12 @@
 import { ButtonInteraction, ChatInputCommandInteraction, GuildTextBasedChannel, SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
-import { DisTubeError, isURL, PlayOptions, Song } from 'distube';
 import { Command } from './command.types';
-import { resolveAppleMusic } from '../utils/appleMusic';
-import { PlaybackMetadata, SearchSource, YtDlpSearchPlugin } from '../music/ytDlpSearchPlugin';
+import { SearchSource } from '../music/ytDlpSearchPlugin';
 import { describeMusicError } from '../music/errors';
 import { ensureControlChannel, ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
 import { fetchSearchSuggestions } from '../utils/suggestions';
-import { getPlaybackState } from '../music/playbackState';
+import { requestPlayback } from '../music/playbackRequest';
+import { controlError } from '../music/controlAccess';
 
 function isGuildTextChannel(channel: unknown): channel is GuildTextBasedChannel {
   if (typeof channel !== 'object' || channel === null) return false;
@@ -100,50 +99,26 @@ export async function playRequest(interaction: ChatInputCommandInteraction | But
     const distube = interaction.client.distube;
     const initialQueue = distube.getQueue(guild.id);
     if (initialQueue && !await ensureControlChannel(interaction, initialQueue)) return;
-    const revision = initialQueue ? getPlaybackState(initialQueue)?.revision : undefined;
     if (!interaction.deferred && !interaction.replied) await interaction.deferReply(privateReply ? { flags: MessageFlags.Ephemeral } : {});
 
     try {
-      const resolved = await resolveAppleMusic(rawQuery);
-
-      const displayQuery = resolved.isAppleMusic && resolved.artist && resolved.title
-        ? `${resolved.artist} - ${resolved.title}`
-        : rawQuery;
-
-      await interaction.editReply({
-        embeds: [
-          new EmbedBuilder().setColor(BotColors.Gold).setDescription(`🔍 Buscando: **${displayQuery}**...`),
-        ],
-      });
-
-      const playOptions: PlayOptions<PlaybackMetadata> = {
-        member: member!,
-        metadata: { searchSource },
-      };
-      const textChannel = isGuildTextChannel(interaction.channel) ? interaction.channel : undefined;
-
-      if (textChannel) {
-        playOptions.textChannel = textChannel;
-      }
-
-      // DisTube replaces search errors with NO_RESULT, discarding the actual cause.
-      // Resolve text here so network and platform errors reach the user intact.
-      let input: string | Song<PlaybackMetadata> = resolved.query;
-      if (!isURL(input)) {
-        const plugin = distube.plugins.find((item): item is YtDlpSearchPlugin => item instanceof YtDlpSearchPlugin);
-        if (!plugin) throw new DisTubeError('NO_EXTRACTOR_PLUGIN');
-        const song = await plugin.searchSong(input, playOptions);
-        if (!song) throw new DisTubeError('CANNOT_RESOLVE_SONG', input);
-        input = song;
-      }
-
-      if (distube.getQueue(guild.id) !== initialQueue || initialQueue?.stopped || (initialQueue && getPlaybackState(initialQueue)?.closing) ||
-        (initialQueue && getPlaybackState(initialQueue)?.revision !== revision) || member?.voice.channel?.id !== voiceChannel.id) {
-        await interaction.editReply({ content: 'La sesión, la cola o tu canal de voz cambió mientras buscaba. Vuelve a intentarlo.', embeds: [], components: [] });
-        return;
-      }
-      await distube.play<PlaybackMetadata>(voiceChannel, input, playOptions);
-    } catch (error: unknown) {
+      await requestPlayback(distube, {
+        guildId: guild.id, member: member!, voiceChannel, query: rawQuery, searchSource,
+        ...(isGuildTextChannel(interaction.channel) ? { textChannel: interaction.channel } : {}),
+        authorize: () => {
+          const current = guild.members.cache.get(interaction.user.id)?.voice.channel;
+          if (current?.id !== voiceChannel.id || initialQueue && current?.id !== initialQueue.voiceChannel?.id) {
+            throw controlError('CONTROL_CHANNEL_REQUIRED', 'Debes seguir en el mismo canal de voz que el bot.');
+          }
+          const currentPermissions = current?.permissionsFor(interaction.client.user!.id);
+          if (!missingPermissions.every(({ flag }) => currentPermissions?.has(flag))) {
+            throw controlError('VOICE_PERMISSIONS', 'Faltan permisos para conectar o hablar en el canal de voz.');
+          }
+        },
+        searching: async displayQuery => {
+          await interaction.editReply({ embeds: [new EmbedBuilder().setColor(BotColors.Gold).setDescription(`🔍 Buscando: **${displayQuery}**...`)] });
+        },
+      });    } catch (error: unknown) {
       console.error('Error en /play:', error);
 
       const description = describeMusicError(error, { source: searchSource });
