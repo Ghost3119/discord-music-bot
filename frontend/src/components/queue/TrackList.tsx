@@ -29,20 +29,20 @@ export interface TrackActions {
   onRemove: (track: Track, index: number, owner?: Playlist) => void | Promise<void>;
 }
 
-export interface TrackListProps {
+type TrackOwnership =
+  | { context: 'playlist'; owner: Playlist }
+  | { context: Exclude<TrackContext, 'playlist'>; owner?: never };
+
+export type TrackListProps = TrackOwnership & {
   tracks: Track[];
-  context: TrackContext;
-  owner?: Playlist;
   actions: TrackActions;
-}
-export interface TrackItemProps {
+};
+export type TrackItemProps = TrackOwnership & {
   track: Track;
   index: number;
   length: number;
-  context: TrackContext;
-  owner?: Playlist;
   actions: TrackActions;
-}
+};
 
 export function TrackItem({ track, index, length, context, owner, actions }: TrackItemProps) {
   const { busy, playbackReady, isFavorite, onPlay, onToggleFavorite, onSave, onMove, onRemove } = actions;
@@ -114,16 +114,14 @@ export function TrackItem({ track, index, length, context, owner, actions }: Tra
   );
 }
 
-export function TrackList({ tracks, context, owner, actions }: TrackListProps) {
+export function TrackList({ tracks, ...itemProps }: TrackListProps) {
   return tracks.map((track, index) => (
     <TrackItem
       key={`${track.id}-${index}`}
       track={track}
       index={index}
       length={tracks.length}
-      context={context}
-      owner={owner}
-      actions={actions}
+      {...itemProps}
     />
   ));
 }
