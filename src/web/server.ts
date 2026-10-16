@@ -21,11 +21,13 @@ export interface WebServerOptions {
   oauthFetch?: typeof fetch;
   now?: () => number;
   sseIntervalMs?: number;
+  /** Bounded music-handler deadline; injectable for deterministic tests. */
+  musicOperationTimeoutMs?: number;
   /** Test/provider injection; no client-supplied upstream URLs. */
   lyricsService?: LyricsService;
 }
 interface LiveStream { response: ServerResponse; tokenHash: string; userId: string; guildId: string; close: () => void }
-interface PendingOperation { tokenHash: string; userId: string; guildId: string | undefined; controller: AbortController; done: () => void }
+interface PendingOperation { tokenHash: string; userId: string; guildId: string | undefined; controller: AbortController; timedOut: boolean; done: () => void }
 const SESSION_COOKIE = 'music_session';
 const STATE_COOKIE = 'music_oauth_state';
 
@@ -34,6 +36,18 @@ function safeEqual(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 function params(request: FastifyRequest): Record<string, string> { return request.params as Record<string, string>; }
+
+/** Stop waiting promptly even when an external resolver settles after cancellation. */
+function waitForOperation<T>(task: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const abort = (): void => { reject(new WebError(409, 'Playback operation cancelled')); };
+    const cleanup = (): void => { signal.removeEventListener('abort', abort); };
+    signal.addEventListener('abort', abort, { once: true });
+    task.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+    if (signal.aborted) { cleanup(); abort(); }
+  });
+}
+
 
 /** Creates an isolated server; the bot lifecycle explicitly decides whether to listen. */
 export async function createWebServer(options: WebServerOptions): Promise<FastifyInstance> {
@@ -114,10 +128,15 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     if (!session || (accessMode === 'allowlist' && !allowed.has(session.user.id))) throw new WebError(401, 'Sign in with an authorized Discord account');
     return session;
   }
-  function beginOperation(request: FastifyRequest, response: ServerResponse): PendingOperation {
+  function beginOperation(request: FastifyRequest, response: ServerResponse, timeoutMs: number): PendingOperation {
     const session = request.webSession!;
     const guildId = params(request)['guildId'];
     const controller = new AbortController();
+    const socket = request.raw.socket;
+    const previousSocketTimeout = socket?.timeout;
+    // Slow authenticated handlers use an explicit deadline instead of the global 15s idle reset.
+    socket?.setTimeout?.(timeoutMs + 1000);
+    let operationDeadline: ReturnType<typeof setTimeout>;
     const abort = (): void => { controller.abort(); };
     let deadline: ReturnType<typeof setTimeout>;
     const scheduleDeadline = (): void => {
@@ -131,13 +150,16 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       try { authenticate(request); } catch { abort(); }
     }, Math.max(20, options.sseIntervalMs ?? 2000));
     monitor.unref();
-    const operation: PendingOperation = { tokenHash: session.tokenHash, userId: session.user.id, guildId, controller, done: () => {
-      clearTimeout(deadline); clearInterval(monitor);
+    const operation: PendingOperation = { tokenHash: session.tokenHash, userId: session.user.id, guildId, controller, timedOut: false, done: () => {
+      clearTimeout(deadline); clearTimeout(operationDeadline); clearInterval(monitor);
+      if (!socket?.destroyed) socket?.setTimeout?.(previousSocketTimeout ?? 15_000);
       response.off('close', abort); request.raw.off('aborted', abort);
       operations.delete(operation);
     } };
     response.on('close', abort); request.raw.on('aborted', abort);
     operations.add(operation);
+    operationDeadline = setTimeout(() => { operation.timedOut = true; abort(); }, timeoutMs);
+    operationDeadline.unref();
     if (closing) abort();
     return operation;
   }
@@ -179,6 +201,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       INVALID_ACTION: [400, 'Invalid playback action'],
       INVALID_QUEUE_POSITION: [400, 'The queue position is no longer available'],
       NO_UP_NEXT: [400, 'There are no pending tracks'],
+      MUSIC_OPERATION_TIMEOUT: [504, 'La operación superó el tiempo de espera. Algunas canciones pueden estar ya en la cola; revísala antes de reintentar.'],
     };
     const known = candidate.errorCode && Object.hasOwn(bridgeErrors, candidate.errorCode) ? bridgeErrors[candidate.errorCode] : undefined;
     if (known) { void reply.code(known[0]).send({ error: known[1] }); return; }
@@ -289,14 +312,13 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     if (!before.current || before.status === 'idle') return { ...identity, status: 'idle' };
     // A legacy injected bridge without instance identity cannot safely attach lyrics.
     if (!identity.playbackId) return { ...identity, status: 'stale' };
-    const operation = beginOperation(request, reply.raw);
-    const timeout = AbortSignal.timeout(12_000);
-    const signal = AbortSignal.any([operation.controller.signal, timeout]);
+    const operation = beginOperation(request, reply.raw, 12_000);
+    const signal = operation.controller.signal;
     try {
-      const result = await lyrics.findLyrics({
+      const result = await waitForOperation(lyrics.findLyrics({
         title: before.current.title, artist: before.current.artist, duration: before.current.duration,
         ...(before.current.album ? { album: before.current.album } : {}),
-      }, signal);
+      }, signal), signal);
       signal.throwIfAborted();
       // Membership/session revocation during an upstream wait must take effect before returning text.
       authenticate(request);
@@ -310,19 +332,20 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     } catch (error) {
       if (signal.aborted) {
         authenticate(request);
-        return { ...identity, status: 'temporary_error', retryAfterMs: 5000 };
+        return { ...identity, status: 'temporary_error', retryAfterMs: 5000, reason: operation.timedOut ? 'timeout' : 'unavailable' };
       }
       throw error;
     } finally { operation.done(); }
   });
   app.post('/api/guilds/:guildId/actions', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
     const action = musicAction(request.body);
-    const operation = beginOperation(request, reply.raw);
+    const operation = beginOperation(request, reply.raw, options.musicOperationTimeoutMs ?? 120_000);
     try {
-      await bridge.control(request.webSession!.user.id, params(request)['guildId']!, action, operation.controller.signal);
+      await waitForOperation(bridge.control(request.webSession!.user.id, params(request)['guildId']!, action, operation.controller.signal), operation.controller.signal);
       if (operation.controller.signal.aborted) throw new WebError(409, 'Playback operation cancelled');
       return { ok: true };
     } catch (error) {
+      if (operation.timedOut) throw Object.assign(new WebError(504, 'Music operation timed out'), { errorCode: 'MUSIC_OPERATION_TIMEOUT' });
       if (operation.controller.signal.aborted) throw new WebError(409, 'Playback operation cancelled');
       throw error;
     } finally { operation.done(); }
@@ -428,7 +451,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     if (!playlist.tracks.length || playlist.tracks.length > 50) throw new WebError(400, 'Load playlists with 1–50 tracks');
     const key = `${guildId}:${userId}`;
     if (loads.has(key)) throw new WebError(409, 'A playlist is already loading');
-    const operation = beginOperation(request, reply.raw);
+    const operation = beginOperation(request, reply.raw, options.musicOperationTimeoutMs ?? 300_000);
     const controller = operation.controller;
     loads.set(key, controller);
     const fatalErrorCodes = new Set([
@@ -448,7 +471,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
         authenticate(request);
         await assertGuildAccess(userId, guildId);
         try {
-          await bridge.control(userId, guildId, { action: 'play', query: item.url, track: item }, controller.signal);
+          await waitForOperation(bridge.control(userId, guildId, { action: 'play', query: item.url, track: item }, controller.signal), controller.signal);
           loaded++;
         } catch (trackError) {
           if (controller.signal.aborted) throw new WebError(409, 'Playlist load cancelled');
@@ -466,6 +489,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       if (!loaded && lastError) throw lastError;
       return { ok: true, loaded };
     } catch (error) {
+      if (operation.timedOut) throw Object.assign(new WebError(504, 'Music operation timed out'), { errorCode: 'MUSIC_OPERATION_TIMEOUT' });
       if (controller.signal.aborted) throw new WebError(409, 'Playback operation cancelled');
       throw error;
     } finally { loads.delete(key); operation.done(); }

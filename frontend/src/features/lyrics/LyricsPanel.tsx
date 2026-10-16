@@ -74,7 +74,15 @@ function LyricsFeedback({ status, data, error, canRetry, retry }: { status: stri
     stale: ['La canción cambió', 'Vuelve a consultar las letras de la reproducción actual.'],
     error: ['No se pudieron cargar las letras', error],
   };
-  const [title, detail] = copy[kind || 'error'] || copy.error;
+  const reasons = {
+    rate_limited: 'LRCLIB limitó las consultas. Espera a que se habilite el botón para volver a consultar.',
+    timeout: 'La consulta tardó demasiado. Puedes volver a intentarlo cuando se habilite el botón.',
+    unavailable: 'No se pudo conectar con LRCLIB. La música puede continuar mientras vuelves a consultar.',
+    invalid_response: 'LRCLIB devolvió una respuesta que no pudimos utilizar. Puedes volver a consultar más tarde.',
+    busy: 'Hay otras consultas de letras en curso. Espera un momento para volver a consultar.',
+  };
+  const [title, fallbackDetail] = copy[kind || 'error'] || copy.error;
+  const detail = data?.status === 'temporary_error' && data.reason ? reasons[data.reason] : fallbackDetail;
   const retryable = ['temporary_error', 'stale', 'error'].includes(kind || '');
   return <div className="immersive-lyrics-feedback" role={kind === 'loading' ? 'status' : undefined}>
     <AudioLines size={32} strokeWidth={1.3} aria-hidden="true" />

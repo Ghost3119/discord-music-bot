@@ -1,4 +1,4 @@
-import type { LyricsProvider, LyricsQuery, LyricsResult } from './contracts';
+import type { LyricsProvider, LyricsQuery, LyricsResult, LyricsFailureReason } from './contracts';
 import { cleanLyricsQuery, isLyricsRecord, matchLyrics } from './matching';
 
 export interface LyricsService extends LyricsProvider { close(): void }
@@ -11,9 +11,9 @@ interface Job { key: string; query: LyricsQuery; controller: AbortController; su
 interface CacheEntry { result: LyricsResult; expiresAt: number }
 const MAX_BODY_BYTES = 262_144;
 const USER_AGENT = 'SONORA v1.0 (https://github.com/Ghost3119/discord-music-bot)';
-const temporary = (retryAfterMs = 30_000): LyricsResult => ({ status: 'temporary_error', retryAfterMs: Math.min(2_147_483_647, Math.max(1000, Math.ceil(retryAfterMs))) });
+const temporary = (retryAfterMs = 30_000, reason: LyricsFailureReason = 'unavailable'): LyricsResult => ({ status: 'temporary_error', retryAfterMs: Math.min(2_147_483_647, Math.max(1000, Math.ceil(retryAfterMs))), reason });
 const abortError = (): Error => Object.assign(new Error('Lyrics request cancelled'), { name: 'AbortError' });
-class ProviderFailure extends Error { constructor(readonly retryAfterMs: number) { super('Lyrics provider unavailable'); } }
+class ProviderFailure extends Error { constructor(readonly retryAfterMs: number, readonly reason: LyricsFailureReason = 'unavailable') { super('Lyrics provider unavailable'); } }
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(abortError());
   return new Promise((resolve, reject) => {
@@ -39,14 +39,14 @@ function retryDelay(header: string | null, now: number, fallback: number): numbe
   return Number.isFinite(date) ? Math.max(1000, date - now) : fallback;
 }
 async function readBoundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
-  if (!/^application\/(?:[a-z0-9!#$&^_.+-]+\+)?json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) throw new ProviderFailure(30_000);
+  if (!/^application\/(?:[a-z0-9!#$&^_.+-]+\+)?json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) throw new ProviderFailure(30_000, 'invalid_response');
   const length = response.headers.get('content-length');
   if (length !== null && Number(length) > MAX_BODY_BYTES) {
     void response.body?.cancel().catch(() => {});
-    throw new ProviderFailure(30_000);
+    throw new ProviderFailure(30_000, 'invalid_response');
   }
   const reader = response.body?.getReader();
-  if (!reader) throw new ProviderFailure(30_000);
+  if (!reader) throw new ProviderFailure(30_000, 'invalid_response');
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
@@ -54,7 +54,7 @@ async function readBoundedJson(response: Response, signal: AbortSignal): Promise
       const { done, value } = await raceAbort(reader.read(), signal);
       if (done) break;
       size += value.byteLength;
-      if (size > MAX_BODY_BYTES) throw new ProviderFailure(30_000);
+      if (size > MAX_BODY_BYTES) throw new ProviderFailure(30_000, 'invalid_response');
       chunks.push(value);
     }
     const bytes = new Uint8Array(size);
@@ -79,6 +79,7 @@ export function createLyricsService(options: LyricsServiceOptions = {}): LyricsS
   const inflight = new Map<string, Job>();
   const queue: Job[] = [];
   let running = false, closed = false, lastRequestFinished = -Infinity, cooldownUntil = 0, failures = 0;
+  let cooldownReason: LyricsFailureReason = 'unavailable';
 
   function remember(key: string, result: LyricsResult): void {
     if (result.status === 'temporary_error') return;
@@ -102,10 +103,10 @@ export function createLyricsService(options: LyricsServiceOptions = {}): LyricsS
   }
   async function search(query: LyricsQuery, signal: AbortSignal): Promise<unknown[]> {
     signal.throwIfAborted();
-    if (cooldownUntil > now()) throw new ProviderFailure(cooldownUntil - now());
+    if (cooldownUntil > now()) throw new ProviderFailure(cooldownUntil - now(), cooldownReason);
     await wait(Math.max(0, lastRequestFinished + delayMs - now()), signal);
     signal.throwIfAborted();
-    if (cooldownUntil > now()) throw new ProviderFailure(cooldownUntil - now());
+    if (cooldownUntil > now()) throw new ProviderFailure(cooldownUntil - now(), cooldownReason);
     const url = new URL('https://lrclib.net/api/search');
     url.searchParams.set('track_name', query.title);
     url.searchParams.set('artist_name', query.artist);
@@ -119,20 +120,22 @@ export function createLyricsService(options: LyricsServiceOptions = {}): LyricsS
       if (response.status === 429 || response.status === 503) {
         const retry = retryDelay(response.headers.get('retry-after'), now(), response.status === 429 ? 60_000 : 1000);
         cooldownUntil = Math.max(cooldownUntil, now() + retry);
-        throw new ProviderFailure(retry);
+        throw new ProviderFailure(retry, response.status === 429 ? 'rate_limited' : 'unavailable');
       }
       if (response.status === 404) { failures = 0; return []; }
       if (response.status !== 200) throw new ProviderFailure(30_000);
       const body = await readBoundedJson(response, combined);
-      if (!Array.isArray(body) || body.length > 20 || !body.every(isLyricsRecord)) throw new ProviderFailure(30_000);
+      if (!Array.isArray(body) || body.length > 20 || !body.every(isLyricsRecord)) throw new ProviderFailure(30_000, 'invalid_response');
       failures = 0;
       return body;
     } catch (error) {
       if (signal.aborted) throw abortError();
       const retry = error instanceof ProviderFailure ? error.retryAfterMs : 30_000;
+      const reason = timeout.signal.aborted ? 'timeout' : error instanceof ProviderFailure ? error.reason : error instanceof SyntaxError || error instanceof TypeError && response?.status === 200 ? 'invalid_response' : 'unavailable';
+      cooldownReason = reason;
       failures++;
       cooldownUntil = Math.max(cooldownUntil, now() + Math.min(retry, 1000 * 2 ** Math.min(5, failures - 1)));
-      throw new ProviderFailure(retry);
+      throw new ProviderFailure(retry, reason);
     } finally {
       clearTimeout(timer);
       lastRequestFinished = now();
@@ -162,7 +165,7 @@ export function createLyricsService(options: LyricsServiceOptions = {}): LyricsS
           const result = await lookup(job.query, job.controller.signal);
           if (!job.settled && !job.controller.signal.aborted) { remember(job.key, result); settle(job, result); }
         } catch (error) {
-          if (!job.settled) settle(job, job.controller.signal.aborted ? undefined : temporary(error instanceof ProviderFailure ? error.retryAfterMs : 30_000));
+          if (!job.settled) settle(job, job.controller.signal.aborted ? undefined : temporary(error instanceof ProviderFailure ? error.retryAfterMs : 30_000, error instanceof ProviderFailure ? error.reason : 'unavailable'));
         }
       }
     } finally { running = false; }
@@ -180,13 +183,13 @@ export function createLyricsService(options: LyricsServiceOptions = {}): LyricsS
       if (cached) cache.delete(key);
       let job = inflight.get(key);
       if (!job) {
-        if (cooldownUntil > now()) return Promise.resolve(temporary(cooldownUntil - now()));
-        if (inflight.size >= maxPending) return Promise.resolve(temporary(1000));
+        if (cooldownUntil > now()) return Promise.resolve(temporary(cooldownUntil - now(), cooldownReason));
+        if (inflight.size >= maxPending) return Promise.resolve(temporary(1000, 'busy'));
         const controller = new AbortController();
         job = { key, query: { ...query }, controller, subscribers: new Set(), settled: false, timer: setTimeout(() => {}, 0) };
         clearTimeout(job.timer);
         const pending = job;
-        job.timer = setTimeout(() => { settle(pending, temporary()); pending.controller.abort(); }, lookupTimeoutMs);
+        job.timer = setTimeout(() => { settle(pending, temporary(30_000, 'timeout')); pending.controller.abort(); }, lookupTimeoutMs);
         inflight.set(key, job);
         queue.push(job);
       }

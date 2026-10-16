@@ -317,7 +317,7 @@ npm run deploy:check
 git diff --check
 ```
 
-La validación del **16 de octubre de 2026** aprobó **565 pruebas: 409 backend y 156 frontend**. Se conserva la suite previa y se añaden 104 pruebas para letras, identidad, reloj y lifecycle inmersivo. El build comprueba contratos TypeScript; deploy:check valida los 19 comandos sin contactar Discord. Consulta el [informe inmersivo](docs/IMMERSIVE_PLAYER.md) y las [invariantes del editor](docs/LIBRARY_EDITOR_INVARIANTS.md).
+La validación del **16 de octubre de 2026** aprobó **574 pruebas: 413 backend y 161 frontend**. Se conserva la suite previa y se añaden 113 pruebas para letras, identidad, reloj y lifecycle inmersivo. El build comprueba contratos TypeScript; deploy:check valida los 19 comandos sin contactar Discord. Consulta el [informe inmersivo](docs/IMMERSIVE_PLAYER.md) y las [invariantes del editor](docs/LIBRARY_EDITOR_INVARIANTS.md).
 
 Para ejecutar únicamente las pruebas montadas del editor:
 
@@ -374,3 +374,6 @@ El botón **Abrir reproductor inmersivo** de la barra musical muestra una portad
 Las letras se consultan en el backend mediante LRCLIB, con autorización, matching conservador, límites y caché temporal en memoria. No necesita claves nuevas. Distingue letras sincronizadas, texto normal, instrumental, sin coincidencia y fallos temporales. El navegador estima posición entre snapshots; el audio sigue en Discord. El progreso web es informativo: los saltos con /seek en Discord se reflejan al recibir un nuevo snapshot.
 
 La [arquitectura, evidencias y pruebas manuales](docs/IMMERSIVE_PLAYER.md) documentan los límites: no se midió sincronización audible real ni se promete ausencia de desfase. El [informe de LRCLIB](docs/LYRICS_PROVIDER.md) registra condiciones consultadas y política prudente de retención.
+
+
+Las cargas de playlist disponen de un plazo de hasta5min y no se cortan por el timeout de inactividad de15s. Si vence el plazo, revisa la cola antes de reintentar para evitar duplicados. Los errores temporales de letras distinguen timeout, límite del proveedor, conexión, respuesta inválida y consultas pendientes. Véase el [diagnóstico y la validación](docs/IMMERSIVE_PLAYER.md#corrección-posterior-socket-y-mensajes-de-letras-2026-10-16).

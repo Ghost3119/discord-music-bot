@@ -125,7 +125,7 @@ test('provider honors 429 Retry-After globally and performs no automatic retry s
   let time = 10_000, calls = 0;
   const service = harness(t, async () => { calls++; return calls === 1 ? new Response('edge response is not JSON', { status: 429, headers: { 'Retry-After': '2' } }) : json([RECORD]); }, { now: () => time });
   const result = await service.findLyrics(QUERY);
-  assert.deepEqual(result, { status: 'temporary_error', retryAfterMs: 2000 });
+  assert.deepEqual(result, { status: 'temporary_error', retryAfterMs: 2000, reason: 'rate_limited' });
   assert.equal((await service.findLyrics({ ...QUERY, title: 'Another' })).status, 'temporary_error');
   assert.equal(calls, 1);
   time += 2001;
@@ -221,4 +221,33 @@ test('cache keys preserve version, duration and album so different recordings ne
   assert.equal(requests.length, 4);
   assert.equal((await service.findLyrics(QUERY)).status, 'synced');
   assert.equal(requests.length, 4);
+});
+
+
+test('public YouTube Topic metadata is normalized before matching the exact duration version', async t => {
+  // Public metadata only; lyric contents remain the original synthetic RECORD fixture.
+  const artists=[];
+  const service=harness(t,async url=>{
+    artists.push(new URL(url).searchParams.get('artist_name'));
+    return json(artists.length===1?[]:[{...RECORD,trackName:'QUEMAROPA',artistName:'SINAKA',duration:141},{...RECORD,id:2,trackName:'QUEMAROPA',artistName:'SINAKA',duration:136}]);
+  });
+  const result=await service.findLyrics({title:'QUEMAROPA',artist:'SINAKA - Topic',duration:136});
+  assert.equal(result.status,'synced');
+  assert.equal(result.source.recordId,2);
+  assert.deepEqual(artists,['SINAKA - Topic','SINAKA']);
+});
+
+test('transient errors explain rate limits, network errors and invalid provider responses without secrets',async t=>{
+  for(const [fetcher,reason] of [
+    [async()=>new Response('busy',{status:429,headers:{'Retry-After':'5'}}),'rate_limited'],
+    [async()=>{throw new Error('private-internal-detail');},'unavailable'],
+    [async()=>json({invalid:true}),'invalid_response'],
+    [()=>new Promise(()=>{}),'timeout'],
+  ]){
+    const service=harness(t,fetcher,{requestTimeoutMs:10});
+    const result=await service.findLyrics(QUERY);
+    assert.equal(result.status,'temporary_error');
+    assert.equal(result.reason,reason);
+    assert.equal(JSON.stringify(result).includes('private-internal-detail'),false);
+  }
 });

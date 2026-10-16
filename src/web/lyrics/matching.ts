@@ -38,7 +38,7 @@ function resultFor(record: LyricsRecord): LyricsResult {
     if (lines.length && lines.some(line => line.text.trim())) return { status: 'synced', lines, source };
   }
   if (record.plainLyrics?.trim()) return { status: 'plain', plainLyrics: record.plainLyrics.trim(), source };
-  return { status: 'temporary_error', retryAfterMs: 30_000 };
+  return { status: 'temporary_error', retryAfterMs: 30_000, reason: 'invalid_response' };
 }
 /** Exact normalized metadata and edition markers, duration +/-2s; never choose a partial title. */
 export function matchLyrics(query: LyricsQuery, records: LyricsRecord[]): LyricsResult {

@@ -50,3 +50,9 @@ Las búsquedas idénticas comparten un vuelo. Cancelar un consumidor no cancela 
 `test/lyricsProvider.test.js` utiliza exclusivamente respuestas sintéticas y texto original. Cubre matching, versiones, ambigüedad, estados, metadata inválida, normalización, caché, límites de cuerpo y cola, deduplicación, cancelación compartida, cierre, reapertura, timeouts de fetch y stream, errores HTTP, cooldown 429/503 y destino/redirecciones.
 
 Consulta real única realizada el **2026-10-16 a las 18:28:45 UTC** con los metadatos públicos del ejemplo oficial: resultado `synced`, 47 líneas y registro `3396226`. Solo se imprimieron estos datos de estado; no se guardó su texto. Esta comprobación confirma conectividad y compatibilidad del proveedor en ese momento. No mide sincronización audible con Discord ni garantiza disponibilidad o precisión para todas las pistas.
+
+
+## Diagnóstico de errores y comprobación adicional
+Las respuestas temporary_error incluyen opcionalmente reason (rate_limited,timeout,unavailable,invalid_response,busy), sin detalles internos ni contenido del proveedor. El plazo de la ruta es efectivo incluso si un adaptador tarda en aceptar cancelación. Los límites de consultas, caché y derechos anteriores se conservan.
+
+Una comprobación real adicional de QUEMAROPA/SINAKA (136s) confirmó50 líneas sincronizadas del registro28481733. La normalización del sufijo Topic seleccionó la versión136s y descartó la141s. Solo se inspeccionaron estado, metadatos públicos, conteos e ID; no se guardaron letras. Los tests de regresión utilizan letras sintéticas originales con esos metadatos públicos.

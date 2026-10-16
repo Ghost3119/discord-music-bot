@@ -150,6 +150,16 @@ describe('lyrics presentation and follow behavior', () => {
     expect(screen.container.textContent).toContain('Sin sincronización');
     expect(screen.container.querySelector('[aria-current]')).toBeNull();
   });
+  it.each([
+    ['rate_limited', 'limitó las consultas'],
+    ['timeout', 'tardó demasiado'],
+    ['unavailable', 'No se pudo conectar'],
+    ['invalid_response', 'respuesta que no pudimos utilizar'],
+    ['busy', 'otras consultas'],
+  ])('explains the temporary %s reason', async (reason, text) => {
+    const screen = await panel({ status: 'temporary_error', retryAfterMs: 2000, reason });
+    expect(screen.container.textContent).toContain(text);
+  });
   it.each([['instrumental', 'Esta pista es instrumental.'], ['not_found', 'No hay letras disponibles'], ['ambiguous', 'Sin una coincidencia confiable'], ['temporary_error', 'Las letras no están disponibles ahora']])('renders the explicit %s state', async (status, text) => {
     const screen = await panel({ status, retryAfterMs: 2000 });
     expect(screen.container.textContent).toContain(text);

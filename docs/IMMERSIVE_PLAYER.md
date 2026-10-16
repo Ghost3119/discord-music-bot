@@ -85,7 +85,7 @@ Accesibilidad verificada: Dialog con título/aria-modal, foco inicial y retorno 
 
 prefers-reduced-motion elimina animaciones/transiciones y scroll suave; comprobado en CSS cargado y pruebas montadas de matchMedia. El navegador de QA reportó preferencia false y su API no ofrece emulación de medios: activar preferencia real del sistema y revisar visualmente sigue pendiente. No se afirma una auditoría completa con lector de pantalla.
 
-## Validación ejecutada
+## Validación inicial ejecutada
 | Comprobación | Resultado real |
 | --- | --- |
 | Baseline npm run build / npm test | Correcto;380 backend+81 frontend=461 |
@@ -142,3 +142,17 @@ Inventario completo frente a main: [IMMERSIVE_CHANGED_FILES.txt](IMMERSIVE_CHANG
 Commits de implementación: dcdfb9c (baseline/diseño),1b546cf (proveedor/API),4842176 (reloj),048fe93 (epochs retiradas),0da8fc0 (vista/fondo/letras). El commit final agrega documentación, fixture y capturas. No se ejecutó push desde esta tarea. Al finalizar se detectó que origin ya referenciaba el commit de documentación; se preservó su historial y la corrección de formato se añadió en un commit separado.
 
 El preview de QA se cierra al terminar la revisión. Los logs de baseline/build/test/deploy se conservan fuera del checkout en la carpeta local de evidencias.
+
+
+## Corrección posterior: socket y mensajes de letras (2026-10-16)
+Se reprodujo el error reportado al cargar una playlist mediante un socket HTTP real: el timeout global de inactividad (15s) podía cerrar la conexión mientras el handler esperaba extracción/encolado. La regresión utiliza20ms de timeout y tres operaciones de60ms para verificar el mismo comportamiento sin esperar15s: falló antes con UND_ERR_SOCKET y pasa con la corrección.
+
+Las operaciones autenticadas mantienen ahora un deadline propio: acciones120s, playlist300s y letras12s. El timeout del socket se ajusta a ese deadline y se restaura al terminar; el timeout global y las reglas para solicitudes sin autorización permanecen. Se conserva cancelación por cierre del cliente, logout, expiración y cierre del servidor. El deadline devuelve una respuesta tipada; en música es HTTP504 con mensaje seguro que indica revisar la cola antes de reintentar, porque puede haber carga parcial. Una respuesta tardía no inicia la siguiente canción.
+
+El contrato de letras añade reason opcional: rate_limited, timeout, unavailable, invalid_response o busy. Se distingue espera del proveedor, conexión, formato y saturación; no se muestran errores internos ni se confunde fallo temporal con ausencia de letras. El frontend conserva Retry-After y las reglas de identidad/cancelación.
+
+Consulta real de diagnóstico con metadatos públicos de QUEMAROPA, SINAKA - Topic y136s: la búsqueda original no devuelve registros; la normalizada SINAKA devuelve versiones141s y136s. El servicio completo seleccionó correctamente el registro28481733 y devolvió50 líneas sincronizadas. No se imprimió ni almacenó texto de la canción. El error concreto histórico del proveedor no puede determinarse solo desde la captura; la consulta actual funciona.
+
+Validación de la corrección: npm run build correcto; npm test **413 backend+161 frontend=574**,9 pruebas nuevas sobre las565 iniciales; deploy:check y git diff --check correctos. JS372.05kB/gzip117.63kB; CSS sin cambios. Pruebas nuevas de socket/deadline, versión Topic/duración, clasificación de errores y cinco mensajes montados. No se reinició el bot activo para validar.
+
+Para aplicar el cambio al proceso que ya está ejecutándose, el usuario debe detenerlo con Ctrl+C y ejecutar npm run dev. Compilar archivos no recarga el backend en memoria. Tras reiniciar, pulsar Volver a consultar y probar la playlist; evitar recargar una playlist a ciegas si ya se añadieron canciones.

@@ -55,3 +55,4 @@ M	test/helpers/dashboard-preview.cjs
 A	test/lyricsEndpoint.test.js
 A	test/lyricsProvider.test.js
 A	test/playbackIdentity.test.js
+A	test/webOperationTimeout.test.js
