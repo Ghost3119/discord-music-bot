@@ -8,6 +8,19 @@ export interface Track {
   thumbnail: string | null;
   source: string;
 }
+export type WebAccessMode = 'allowlist' | 'guild_members';
+export type WebRole = 'member' | 'voice' | 'admin';
+export interface GuildPermissions {
+  role: WebRole;
+  isMember: boolean;
+  inVoiceChannel: boolean;
+  canControl: boolean;
+  isAdmin: boolean;
+  canRead: boolean;
+  canManageLibrary: boolean;
+  canViewDiagnostics: boolean;
+  canManageConfig: boolean;
+}
 export interface GuildSummary { id: string; name: string; icon: string | null }
 export interface PlaybackSnapshot {
   guildId: string;
@@ -20,6 +33,7 @@ export interface PlaybackSnapshot {
   voice: { id: string; name: string; members: number } | null;
   health: Record<string, unknown>;
   incidents: Array<{ code: string; message: string; at: string }>;
+  permissions?: GuildPermissions;
 }
 export interface MusicAction {
   action: 'play' | 'pause' | 'resume' | 'skip' | 'stop' | 'volume' | 'shuffle' | 'repeat' | 'remove' | 'move';
@@ -35,4 +49,6 @@ export interface MusicBridge {
   assertGuildAccess(userId: string, guildId: string): Promise<void>;
   getState(userId: string, guildId: string): Promise<PlaybackSnapshot>;
   control(userId: string, guildId: string, action: MusicAction, signal?: AbortSignal): Promise<void>;
+  getPermissions?(userId: string, guildId: string): Promise<GuildPermissions>;
+  invalidateMembership?(userId?: string, guildId?: string): void;
 }

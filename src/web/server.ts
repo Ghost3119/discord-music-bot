@@ -5,7 +5,7 @@ import serveStatic from '@fastify/static';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
-import type { MusicBridge, PlaybackSnapshot } from './contracts';
+import type { GuildPermissions, GuildSummary, MusicBridge, PlaybackSnapshot } from './contracts';
 import { WebConfig, validateWebConfig } from './config';
 import { WebDatabase, WebError, WebSession, csrfTokenFor, hashToken, openWebDatabase } from './database';
 import { musicAction, object, playlistName, trackMetadata } from './validation';
@@ -20,8 +20,8 @@ export interface WebServerOptions {
   now?: () => number;
   sseIntervalMs?: number;
 }
-interface LiveStream { response: ServerResponse; tokenHash: string; userId: string; close: () => void }
-interface PendingOperation { tokenHash: string; controller: AbortController; done: () => void }
+interface LiveStream { response: ServerResponse; tokenHash: string; userId: string; guildId: string; close: () => void }
+interface PendingOperation { tokenHash: string; userId: string; guildId: string | undefined; controller: AbortController; done: () => void }
 const SESSION_COOKIE = 'music_session';
 const STATE_COOKIE = 'music_oauth_state';
 
@@ -38,7 +38,13 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const database = options.database ?? openWebDatabase(config.databasePath);
   const now = options.now ?? Date.now;
   const oauthFetch = options.oauthFetch ?? fetch;
+  const accessMode = config.accessMode ?? 'allowlist';
   const allowed = new Set(config.allowedUserIds);
+  const allowedGuilds = config.allowedGuildIds?.length || accessMode === 'guild_members' ? new Set(config.allowedGuildIds ?? []) : null;
+  const adminUsers = config.adminUserIds !== undefined
+    ? new Set(config.adminUserIds)
+    : accessMode === 'allowlist' ? new Set(config.allowedUserIds) : new Set<string>();
+  const isAdmin = (userId: string): boolean => adminUsers.has(userId);
   const states = new Map<string, number>();
   const streams = new Set<LiveStream>();
   const operations = new Set<PendingOperation>();
@@ -56,13 +62,56 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const cookieOptions = { httpOnly: true, secure: config.secureCookies, sameSite: 'lax' as const, path: '/' };
   const stateOptions = { ...cookieOptions, path: '/auth/discord', maxAge: 300 };
 
+  function revokeUserAccess(userId: string, guildId?: string): void {
+    bridge.invalidateMembership?.(userId, guildId);
+    for (const stream of streams) if (stream.userId === userId && (!guildId || stream.guildId === guildId)) stream.close();
+  }
+  async function listAuthorizedGuilds(userId: string): Promise<GuildSummary[]> {
+    const guilds = await bridge.listGuilds(userId);
+    return allowedGuilds ? guilds.filter(guild => allowedGuilds.has(guild.id)) : guilds;
+  }
+  async function assertGuildAccess(userId: string, guildId: string): Promise<void> {
+    if (allowedGuilds && !allowedGuilds.has(guildId)) {
+      revokeUserAccess(userId, guildId);
+      throw new WebError(403, 'You do not have access to this Discord server');
+    }
+    try { await bridge.assertGuildAccess(userId, guildId); }
+    catch (error) { revokeUserAccess(userId, guildId); throw error; }
+  }
+  async function resolvePermissions(userId: string, guildId: string, snapshot?: PlaybackSnapshot): Promise<GuildPermissions> {
+    const admin = isAdmin(userId);
+    const base = snapshot?.permissions ?? (await bridge.getPermissions?.(userId, guildId));
+    const canControl = base ? base.canControl : true;
+    const inVoiceChannel = base ? base.inVoiceChannel : Boolean(snapshot?.voice);
+    return {
+      role: admin ? 'admin' : canControl ? 'voice' : 'member',
+      isMember: true,
+      inVoiceChannel,
+      canControl,
+      isAdmin: admin,
+      canRead: true,
+      canManageLibrary: true,
+      canViewDiagnostics: admin,
+      canManageConfig: admin,
+    };
+  }
+  async function projectSnapshot(userId: string, guildId: string, snapshot: PlaybackSnapshot): Promise<PlaybackSnapshot> {
+    const permissions = await resolvePermissions(userId, guildId, snapshot);
+    return {
+      ...snapshot,
+      health: permissions.canViewDiagnostics ? snapshot.health : {},
+      incidents: permissions.canViewDiagnostics ? snapshot.incidents : [],
+      permissions,
+    };
+  }
   function authenticate(request: FastifyRequest): WebSession {
     const session = database.getSession(request.cookies[SESSION_COOKIE], now());
-    if (!session || !allowed.has(session.user.id)) throw new WebError(401, 'Sign in with an authorized Discord account');
+    if (!session || (accessMode === 'allowlist' && !allowed.has(session.user.id))) throw new WebError(401, 'Sign in with an authorized Discord account');
     return session;
   }
   function beginOperation(request: FastifyRequest, response: ServerResponse): PendingOperation {
     const session = request.webSession!;
+    const guildId = params(request)['guildId'];
     const controller = new AbortController();
     const abort = (): void => { controller.abort(); };
     let deadline: ReturnType<typeof setTimeout>;
@@ -77,7 +126,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       try { authenticate(request); } catch { abort(); }
     }, Math.max(20, options.sseIntervalMs ?? 2000));
     monitor.unref();
-    const operation: PendingOperation = { tokenHash: session.tokenHash, controller, done: () => {
+    const operation: PendingOperation = { tokenHash: session.tokenHash, userId: session.user.id, guildId, controller, done: () => {
       clearTimeout(deadline); clearInterval(monitor);
       response.off('close', abort); request.raw.off('aborted', abort);
       operations.delete(operation);
@@ -110,7 +159,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const guildId = params(request)['guildId'];
     if (guildId) {
       if (!/^\d{17,20}$/.test(guildId)) throw new WebError(400, 'Invalid Discord guild ID');
-      await bridge.assertGuildAccess(session.user.id, guildId);
+      await assertGuildAccess(session.user.id, guildId);
     }
   });
   app.setErrorHandler((error, _request, reply) => {
@@ -160,7 +209,13 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const profileResponse = await oauthFetch('https://discord.com/api/v10/users/@me', { headers: { Authorization: `Bearer ${token['access_token']}` }, signal: AbortSignal.timeout(10_000) });
     if (!profileResponse.ok) throw new WebError(502, 'Discord sign-in is temporarily unavailable');
     const profile = object(await profileResponse.json());
-    if (typeof profile['id'] !== 'string' || !allowed.has(profile['id'])) throw new WebError(403, 'This Discord account is not authorized');
+    if (typeof profile['id'] !== 'string' || !/^\d{17,20}$/.test(profile['id'])) throw new WebError(403, 'This Discord account is not authorized');
+    if (accessMode === 'allowlist') {
+      if (!allowed.has(profile['id'])) throw new WebError(403, 'This Discord account is not authorized');
+    } else {
+      const guilds = await listAuthorizedGuilds(profile['id']).catch(() => []);
+      if (!guilds.length) throw new WebError(403, 'This Discord account is not authorized');
+    }
     if (typeof profile['username'] !== 'string' || !profile['username'] || profile['username'].length > 100) throw new WebError(502, 'Invalid Discord profile');
     const avatarHash = typeof profile['avatar'] === 'string' && /^[a-zA-Z0-9_]+$/.test(profile['avatar']) ? profile['avatar'] : null;
     const avatar = avatarHash ? `https://cdn.discordapp.com/avatars/${profile['id']}/${avatarHash}.png?size=128` : null;
@@ -174,9 +229,53 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     for (const operation of operations) if (operation.tokenHash === request.webSession!.tokenHash) operation.controller.abort();
     return reply.clearCookie(SESSION_COOKIE, cookieOptions).send({ ok: true });
   });
-  app.get('/api/session', async request => ({ user: request.webSession!.user, csrfToken: csrfTokenFor(request.cookies[SESSION_COOKIE]!) }));
-  app.get('/api/guilds', async request => ({ guilds: await bridge.listGuilds(request.webSession!.user.id) }));
-  app.get('/api/guilds/:guildId/state', async request => bridge.getState(request.webSession!.user.id, params(request)['guildId']!));
+  app.get('/api/session', async request => {
+    const session = request.webSession!;
+    if (accessMode === 'guild_members') {
+      const guilds = await listAuthorizedGuilds(session.user.id).catch(() => []);
+      if (!guilds.length) {
+        database.deleteSession(request.cookies[SESSION_COOKIE]);
+        revokeUserAccess(session.user.id);
+        throw new WebError(401, 'Sign in with an authorized Discord account');
+      }
+    }
+    const admin = isAdmin(session.user.id);
+    return { user: session.user, csrfToken: csrfTokenFor(request.cookies[SESSION_COOKIE]!), accessMode, role: admin ? 'admin' : 'member', isAdmin: admin };
+  });
+  app.get('/api/config', async request => {
+    const userId = request.webSession!.user.id;
+    if (accessMode === 'guild_members') {
+      const guilds = await listAuthorizedGuilds(userId).catch(() => []);
+      if (!guilds.length) {
+        database.deleteSession(request.cookies[SESSION_COOKIE]);
+        revokeUserAccess(userId);
+        throw new WebError(403, 'You do not have access to this Discord server');
+      }
+    }
+    if (!isAdmin(userId)) throw new WebError(403, 'Administrator access is required');
+    return {
+      accessMode,
+      allowedGuildIds: [...(allowedGuilds ?? [])],
+      adminUserIds: [...adminUsers],
+      sessionTtlMs: config.sessionTtlMs,
+      secureCookies: config.secureCookies,
+    };
+  });
+  app.get('/api/guilds', async request => ({ guilds: await listAuthorizedGuilds(request.webSession!.user.id) }));
+  app.get('/api/guilds/:guildId/permissions', async request => ({
+    permissions: await resolvePermissions(request.webSession!.user.id, params(request)['guildId']!),
+  }));
+  app.get('/api/guilds/:guildId/diagnostics', async request => {
+    const userId = request.webSession!.user.id;
+    if (!isAdmin(userId)) throw new WebError(403, 'Administrator access is required');
+    const snapshot = await bridge.getState(userId, params(request)['guildId']!);
+    return { guildId: snapshot.guildId, health: snapshot.health, incidents: snapshot.incidents };
+  });
+  app.get('/api/guilds/:guildId/state', async request => {
+    const userId = request.webSession!.user.id;
+    const guildId = params(request)['guildId']!;
+    return projectSnapshot(userId, guildId, await bridge.getState(userId, guildId));
+  });
   app.post('/api/guilds/:guildId/actions', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
     const action = musicAction(request.body);
     const operation = beginOperation(request, reply.raw);
@@ -196,7 +295,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const guildId = params(request)['guildId']!;
     let initial: PlaybackSnapshot;
     pendingStreams.set(session.user.id, pending + 1);
-    try { initial = await bridge.getState(session.user.id, guildId); }
+    try { initial = await projectSnapshot(session.user.id, guildId, await bridge.getState(session.user.id, guildId)); }
     finally {
       const remaining = (pendingStreams.get(session.user.id) ?? 1) - 1;
       if (remaining) pendingStreams.set(session.user.id, remaining); else pendingStreams.delete(session.user.id);
@@ -222,7 +321,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       response.end();
     };
     const drain = (): void => { blockedAt = null; };
-    const stream: LiveStream = { response, tokenHash: session.tokenHash, userId: session.user.id, close };
+    const stream: LiveStream = { response, tokenHash: session.tokenHash, userId: session.user.id, guildId, close };
     const send = (snapshot: PlaybackSnapshot): void => {
       const data = `event: state\ndata: ${JSON.stringify(snapshot)}\n\n`;
       if (Buffer.byteLength(data) > 1_048_576) { close(); return; }
@@ -238,8 +337,8 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       busy = true;
       try {
         const currentSession = authenticate(request);
-        await bridge.assertGuildAccess(currentSession.user.id, guildId);
-        const snapshot = await bridge.getState(currentSession.user.id, guildId);
+        await assertGuildAccess(currentSession.user.id, guildId);
+        const snapshot = await projectSnapshot(currentSession.user.id, guildId, await bridge.getState(currentSession.user.id, guildId));
         if (!closed) send(snapshot);
       } catch { close(); }
       finally { busy = false; }
@@ -277,12 +376,12 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       for (const item of playlist.tracks) {
         if (controller.signal.aborted) throw new WebError(409, 'Playlist load cancelled');
         authenticate(request);
-        await bridge.assertGuildAccess(userId, guildId);
+        await assertGuildAccess(userId, guildId);
         await bridge.control(userId, guildId, { action: 'play', query: item.url }, controller.signal);
       }
       return { ok: true };
     } catch (error) {
-      if (controller.signal.aborted) throw new WebError(409, 'Playlist load cancelled');
+      if (controller.signal.aborted) throw new WebError(409, 'Playback operation cancelled');
       throw error;
     } finally { loads.delete(key); operation.done(); }
   });

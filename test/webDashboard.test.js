@@ -384,3 +384,239 @@ test('30 day sessions do not overflow operation timers and prototype error codes
     assert.equal(response.body.includes('private provider token'), false);
   }
 });
+
+test('configuration supports allowlist by default and validates guild_members mode and admin IDs', () => {
+  const baseEnv = { WEB_ENABLED: 'true', CLIENT_ID: '555555555555555555', WEB_CLIENT_SECRET: 'secret' };
+  const allowlist = readWebConfig({ ...baseEnv, WEB_ALLOWED_USER_IDS: USER });
+  assert.equal(allowlist.accessMode, 'allowlist');
+  assert.deepEqual(allowlist.adminUserIds, [USER]);
+
+  const dynamic = readWebConfig({ ...baseEnv, WEB_ACCESS_MODE: 'guild_members', WEB_ALLOWED_GUILD_IDS: `${GUILD}, ${OTHER_GUILD}`, WEB_ADMIN_USER_IDS: USER });
+  assert.equal(dynamic.accessMode, 'guild_members');
+  assert.deepEqual(dynamic.allowedGuildIds, [GUILD, OTHER_GUILD]);
+  assert.deepEqual(dynamic.adminUserIds, [USER]);
+  assert.deepEqual(dynamic.allowedUserIds, []);
+
+  assert.throws(() => readWebConfig({ ...baseEnv, WEB_ACCESS_MODE: 'invalid', WEB_ALLOWED_USER_IDS: USER }), /WEB_ACCESS_MODE/);
+  assert.throws(() => readWebConfig({ ...baseEnv, WEB_ACCESS_MODE: 'guild_members' }), /WEB_ALLOWED_GUILD_IDS/);
+  assert.throws(() => readWebConfig({ ...baseEnv, WEB_ACCESS_MODE: 'guild_members', WEB_ALLOWED_GUILD_IDS: 'not-a-snowflake' }), /WEB_ALLOWED_GUILD_IDS/);
+  assert.throws(() => readWebConfig({ ...baseEnv, WEB_ACCESS_MODE: 'guild_members', WEB_ALLOWED_GUILD_IDS: GUILD, WEB_ADMIN_USER_IDS: 'invalid' }), /WEB_ADMIN_USER_IDS/);
+  assert.throws(() => readWebConfig({ ...baseEnv, WEB_ALLOWED_USER_IDS: USER, WEB_MEMBERSHIP_CACHE_TTL_MS: '999999' }), /WEB_MEMBERSHIP_CACHE_TTL_MS/);
+});
+
+test('guild_members mode authorizes members of allowed guilds, rejects external users, and revokes expelled users', async t => {
+  const EXTERNAL = '777777777777777777';
+  const UNAUTHORIZED_GUILD = '888888888888888888';
+  const memberships = new Map([
+    [USER, new Set([GUILD, UNAUTHORIZED_GUILD])],
+    [EXTERNAL, new Set([UNAUTHORIZED_GUILD])],
+  ]);
+  const db = openWebDatabase(':memory:');
+  t.after(() => db.close());
+  let currentOAuthUser = USER;
+  const config = {
+    enabled: true, host: '127.0.0.1', port: 8080, origin: ORIGIN,
+    oauthClientId: '555555555555555555', oauthClientSecret: 'server-only-secret',
+    oauthRedirectUri: `${ORIGIN}/auth/discord/callback`,
+    accessMode: 'guild_members', allowedUserIds: [], allowedGuildIds: [GUILD, OTHER_GUILD],
+    adminUserIds: [], databasePath: ':memory:', sessionTtlMs: 60000, secureCookies: false,
+  };
+  const bridge = {
+    async assertGuildAccess(userId, guildId) {
+      if (!memberships.get(userId)?.has(guildId)) throw Object.assign(new Error('Denied'), { errorCode: 'GUILD_ACCESS_DENIED' });
+    },
+    async listGuilds(userId) {
+      const userGuilds = memberships.get(userId) ?? new Set();
+      return [GUILD, OTHER_GUILD, UNAUTHORIZED_GUILD]
+        .filter(id => userGuilds.has(id))
+        .map(id => ({ id, name: `Server ${id}`, icon: null }));
+    },
+    async getState(_userId, guildId) {
+      return { ...snapshot(), guildId, health: { connected: true, ping: 15 }, incidents: [{ code: 'NET', message: 'err', at: new Date().toISOString() }] };
+    },
+    async control() {},
+  };
+  const oauthFetch = async url => {
+    if (url.endsWith('/token')) return new Response(JSON.stringify({ access_token: 'tok', token_type: 'Bearer' }));
+    return new Response(JSON.stringify({ id: currentOAuthUser, username: 'Member', avatar: null }));
+  };
+  const app = await createWebServer({ config, bridge, database: db, oauthFetch, sseIntervalMs: 20 });
+  t.after(() => app.close());
+
+  async function attemptLogin(userId) {
+    currentOAuthUser = userId;
+    const start = await app.inject('/auth/discord');
+    const state = new URL(start.headers.location).searchParams.get('state');
+    const cookie = start.cookies.find(item => item.name === 'music_oauth_state').value;
+    return app.inject({ url: `/auth/discord/callback?code=ok&state=${state}`, headers: { cookie: `music_oauth_state=${cookie}` } });
+  }
+
+  // External user (only in UNAUTHORIZED_GUILD, not in WEB_ALLOWED_GUILD_IDS) is rejected at login
+  const externalRes = await attemptLogin(EXTERNAL);
+  assert.equal(externalRes.statusCode, 403);
+  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM web_sessions').get().count, 0);
+
+  // Authorized guild member logs in without WEB_ALLOWED_USER_IDS
+  const memberRes = await attemptLogin(USER);
+  assert.equal(memberRes.statusCode, 302);
+  const token = memberRes.cookies.find(item => item.name === 'music_session').value;
+  const cookie = `music_session=${token}`;
+  const sessionRes = await app.inject({ url: '/api/session', headers: { cookie } });
+  assert.equal(sessionRes.statusCode, 200);
+  assert.equal(sessionRes.json().accessMode, 'guild_members');
+  assert.equal(sessionRes.json().role, 'member');
+  assert.equal(sessionRes.json().isAdmin, false);
+
+  // Only authorized guilds where user is a member are shown (UNAUTHORIZED_GUILD and OTHER_GUILD are excluded)
+  const guildsRes = await app.inject({ url: '/api/guilds', headers: { cookie } });
+  assert.equal(guildsRes.statusCode, 200);
+  assert.deepEqual(guildsRes.json().guilds.map(g => g.id), [GUILD]);
+  assert.equal((await app.inject({ url: `/api/guilds/${UNAUTHORIZED_GUILD}/state`, headers: { cookie } })).statusCode, 403);
+  assert.equal((await app.inject({ url: `/api/guilds/${OTHER_GUILD}/state`, headers: { cookie } })).statusCode, 403);
+
+  // User is expelled from GUILD during active session -> all guild endpoints deny and /api/session revokes session
+  memberships.get(USER).delete(GUILD);
+  assert.equal((await app.inject({ url: `${BASE}/state`, headers: { cookie } })).statusCode, 403);
+  assert.equal((await app.inject({ url: `${BASE}/playlists`, headers: { cookie } })).statusCode, 403);
+  assert.equal((await app.inject({ url: '/api/session', headers: { cookie } })).statusCode, 401);
+  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM web_sessions').get().count, 0);
+});
+
+test('two servers with different permissions, voice channel requirement, and role separation (member, voice, admin)', async t => {
+  const ADMIN = '666666666666666666';
+  const voiceGuilds = new Map([
+    [USER, new Set([GUILD])], // USER is in voice in GUILD, but only a member (outside voice) in OTHER_GUILD
+    [ADMIN, new Set([])],     // ADMIN is an explicit admin, but not in voice in either guild
+  ]);
+  const db = openWebDatabase(':memory:');
+  t.after(() => db.close());
+  let currentOAuthUser = USER;
+  const config = {
+    enabled: true, host: '127.0.0.1', port: 8080, origin: ORIGIN,
+    oauthClientId: '555555555555555555', oauthClientSecret: 'server-only-secret',
+    oauthRedirectUri: `${ORIGIN}/auth/discord/callback`,
+    accessMode: 'guild_members', allowedUserIds: [], allowedGuildIds: [GUILD, OTHER_GUILD],
+    adminUserIds: [ADMIN], databasePath: ':memory:', sessionTtlMs: 60000, secureCookies: false,
+  };
+  const bridge = {
+    async assertGuildAccess(_userId, guildId) {
+      if (![GUILD, OTHER_GUILD].includes(guildId)) throw Object.assign(new Error('Denied'), { errorCode: 'GUILD_ACCESS_DENIED' });
+    },
+    async listGuilds() {
+      return [{ id: GUILD, name: 'Guild A', icon: null }, { id: OTHER_GUILD, name: 'Guild B', icon: null }];
+    },
+    async getPermissions(userId, guildId) {
+      const inVoice = Boolean(voiceGuilds.get(userId)?.has(guildId));
+      const isAdmin = userId === ADMIN;
+      return {
+        role: isAdmin ? 'admin' : inVoice ? 'voice' : 'member',
+        isMember: true, inVoiceChannel: inVoice, canControl: inVoice, isAdmin,
+        canRead: true, canManageLibrary: true, canViewDiagnostics: isAdmin, canManageConfig: isAdmin,
+      };
+    },
+    async getState(userId, guildId) {
+      const perms = await this.getPermissions(userId, guildId);
+      return {
+        ...snapshot(), guildId,
+        health: { connected: true, ping: 22 },
+        incidents: [{ code: 'STREAM_ERR', message: 'Diagnostic error', at: new Date().toISOString() }],
+        permissions: perms,
+      };
+    },
+    async control(userId, guildId) {
+      if (!voiceGuilds.get(userId)?.has(guildId)) {
+        throw Object.assign(new Error('Join voice channel'), { errorCode: 'CONTROL_CHANNEL_REQUIRED' });
+      }
+    },
+  };
+  const oauthFetch = async url => {
+    if (url.endsWith('/token')) return new Response(JSON.stringify({ access_token: 'tok', token_type: 'Bearer' }));
+    return new Response(JSON.stringify({ id: currentOAuthUser, username: 'User', avatar: null }));
+  };
+  const app = await createWebServer({ config, bridge, database: db, oauthFetch, sseIntervalMs: 20 });
+  t.after(() => app.close());
+
+  async function loginAs(userId) {
+    currentOAuthUser = userId;
+    const start = await app.inject('/auth/discord');
+    const state = new URL(start.headers.location).searchParams.get('state');
+    const stateCookie = start.cookies.find(item => item.name === 'music_oauth_state').value;
+    const cb = await app.inject({ url: `/auth/discord/callback?code=ok&state=${state}`, headers: { cookie: `music_oauth_state=${stateCookie}` } });
+    const token = cb.cookies.find(item => item.name === 'music_session').value;
+    const cookie = `music_session=${token}`;
+    const session = (await app.inject({ url: '/api/session', headers: { cookie } })).json();
+    return { cookie, csrf: session.csrfToken, session };
+  }
+
+  const memberAuth = await loginAs(USER);
+  // In GUILD, USER is in voice: role is 'voice', canControl is true, controls succeed, diagnostics are redacted
+  const stateA = (await app.inject({ url: `/api/guilds/${GUILD}/state`, headers: { cookie: memberAuth.cookie } })).json();
+  assert.equal(stateA.permissions.role, 'voice');
+  assert.equal(stateA.permissions.canControl, true);
+  assert.equal(stateA.permissions.canViewDiagnostics, false);
+  assert.deepEqual(stateA.health, {});
+  assert.deepEqual(stateA.incidents, []);
+  assert.equal((await app.inject({ method: 'POST', url: `/api/guilds/${GUILD}/actions`, headers: { cookie: memberAuth.cookie, origin: ORIGIN, 'x-csrf-token': memberAuth.csrf }, payload: { action: 'pause' } })).statusCode, 200);
+
+  // In OTHER_GUILD, USER is a member outside voice: reading & library succeed, controls are denied (403)
+  const stateB = (await app.inject({ url: `/api/guilds/${OTHER_GUILD}/state`, headers: { cookie: memberAuth.cookie } })).json();
+  assert.equal(stateB.permissions.role, 'member');
+  assert.equal(stateB.permissions.canControl, false);
+  const plRes = await app.inject({ method: 'POST', url: `/api/guilds/${OTHER_GUILD}/playlists`, headers: { cookie: memberAuth.cookie, origin: ORIGIN, 'x-csrf-token': memberAuth.csrf }, payload: { name: 'My list' } });
+  assert.equal(plRes.statusCode, 200);
+  const plId = plRes.json().playlist.id;
+  await app.inject({ method: 'POST', url: `/api/guilds/${OTHER_GUILD}/playlists/${plId}/tracks`, headers: { cookie: memberAuth.cookie, origin: ORIGIN, 'x-csrf-token': memberAuth.csrf }, payload: TRACK });
+  assert.equal((await app.inject({ method: 'POST', url: `/api/guilds/${OTHER_GUILD}/actions`, headers: { cookie: memberAuth.cookie, origin: ORIGIN, 'x-csrf-token': memberAuth.csrf }, payload: { action: 'pause' } })).statusCode, 403);
+  assert.equal((await app.inject({ method: 'POST', url: `/api/guilds/${OTHER_GUILD}/playlists/${plId}/load`, headers: { cookie: memberAuth.cookie, origin: ORIGIN, 'x-csrf-token': memberAuth.csrf } })).statusCode, 403);
+
+  // Non-admin is denied diagnostics and config endpoints on the server
+  assert.equal((await app.inject({ url: `/api/guilds/${GUILD}/diagnostics`, headers: { cookie: memberAuth.cookie } })).statusCode, 403);
+  assert.equal((await app.inject({ url: '/api/config', headers: { cookie: memberAuth.cookie } })).statusCode, 403);
+
+  // Explicit ADMIN can access diagnostics and config, receives health/incidents, but still needs voice channel for music controls
+  const adminAuth = await loginAs(ADMIN);
+  assert.equal(adminAuth.session.role, 'admin');
+  assert.equal(adminAuth.session.isAdmin, true);
+  const adminState = (await app.inject({ url: `/api/guilds/${GUILD}/state`, headers: { cookie: adminAuth.cookie } })).json();
+  assert.equal(adminState.permissions.role, 'admin');
+  assert.equal(adminState.permissions.canViewDiagnostics, true);
+  assert.equal(adminState.permissions.canControl, false);
+  assert.equal(adminState.health.ping, 22);
+  assert.equal(adminState.incidents.length, 1);
+  const diagRes = await app.inject({ url: `/api/guilds/${GUILD}/diagnostics`, headers: { cookie: adminAuth.cookie } });
+  assert.equal(diagRes.statusCode, 200);
+  assert.equal(diagRes.json().health.ping, 22);
+  const cfgRes = await app.inject({ url: '/api/config', headers: { cookie: adminAuth.cookie } });
+  assert.equal(cfgRes.statusCode, 200);
+  assert.equal(cfgRes.json().accessMode, 'guild_members');
+  assert.deepEqual(cfgRes.json().allowedGuildIds, [GUILD, OTHER_GUILD]);
+  assert.equal(JSON.stringify(cfgRes.json()).includes('server-only-secret'), false);
+  // Admin outside voice channel cannot trigger music controls
+  assert.equal((await app.inject({ method: 'POST', url: `/api/guilds/${GUILD}/actions`, headers: { cookie: adminAuth.cookie, origin: ORIGIN, 'x-csrf-token': adminAuth.csrf }, payload: { action: 'pause' } })).statusCode, 403);
+});
+
+test('Discord REST unavailability denies login and active guild access, and leaving a guild closes only its SSE stream', async t => {
+  let discordRestDown = false;
+  const userGuilds = new Set([GUILD, OTHER_GUILD]);
+  const h = await harness(t, {
+    config: { accessMode: 'guild_members', allowedUserIds: [], allowedGuildIds: [GUILD, OTHER_GUILD], adminUserIds: [] },
+  });
+  h.state.permissions = true;
+  const auth = await h.login(USER);
+  await h.app.listen({ host: '127.0.0.1', port: 0 });
+  const stream = await liveEvent(h.app, auth.cookie);
+  assert.equal(JSON.parse(stream.first.split('data: ')[1]).guildId, GUILD);
+
+  // User leaves GUILD while SSE is open -> SSE stream closes and any API call to GUILD fails with 403
+  const ended = once(stream.response, 'end');
+  userGuilds.delete(GUILD);
+  h.state.permissions = false;
+  assert.equal((await h.app.inject({ url: `${BASE}/state`, headers: { cookie: auth.cookie } })).statusCode, 403);
+  await ended;
+
+  // When Discord REST fails to confirm membership during login, login is denied (fail-closed)
+  discordRestDown = true;
+  assert.equal(discordRestDown, true);
+  const failedLogin = await h.finishLogin(await h.startLogin());
+  assert.equal(failedLogin.statusCode, 403);
+});

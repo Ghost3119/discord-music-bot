@@ -339,3 +339,111 @@ test('web play rejects local, credentialed and arbitrary URL schemes before cont
   }
   assert.equal(plays, 0);
 });
+
+test('allowedGuildIds restricts listGuilds and access, and two guilds enforce independent voice permissions', async t => {
+  const f = await fixture(t);
+  const secondGuildId = '1082065100111872180';
+  const unauthorizedGuildId = '1082065100111872190';
+  let secondFetches = 0, unauthorizedFetches = 0;
+  // In secondGuild, user is a member but NOT in a voice channel
+  const secondMember = { id: userId, user: { bot: false }, voice: { channel: null } };
+  const secondGuild = {
+    id: secondGuildId, name: 'Segundo servidor', iconURL: () => null,
+    members: { me: { voice: { channel: null } }, cache: new Map([[userId, secondMember]]), fetch: async () => { secondFetches++; return secondMember; } },
+  };
+  const unauthorizedGuild = {
+    id: unauthorizedGuildId, name: 'Servidor no autorizado', iconURL: () => null,
+    members: { me: null, cache: new Map(), fetch: async () => { unauthorizedFetches++; return secondMember; } },
+  };
+  f.client.guilds.cache.set(secondGuildId, secondGuild);
+  f.client.guilds.cache.set(unauthorizedGuildId, unauthorizedGuild);
+
+  const bridge = createMusicBridge(f.client, undefined, {
+    accessMode: 'guild_members',
+    allowedGuildIds: [guildId, secondGuildId],
+    adminUserIds: [],
+    membershipCacheTtlMs: 0,
+  });
+
+  const guilds = await bridge.listGuilds(userId);
+  assert.deepEqual(guilds, [
+    { id: guildId, name: 'Servidor privado', icon: null },
+    { id: secondGuildId, name: 'Segundo servidor', icon: null },
+  ]);
+  assert.equal(unauthorizedFetches, 0, 'unauthorized guilds are never queried');
+  await assert.rejects(bridge.assertGuildAccess(userId, unauthorizedGuildId), { errorCode: 'GUILD_ACCESS_DENIED' });
+
+  // Guild 1: user is in bot's voice channel -> canControl is true, role is 'voice'
+  const state1 = await bridge.getState(userId, guildId);
+  assert.equal(state1.permissions.role, 'voice');
+  assert.equal(state1.permissions.canControl, true);
+  assert.equal(state1.permissions.isAdmin, false);
+  assert.deepEqual(state1.health, {});
+  assert.deepEqual(state1.incidents, []);
+  await bridge.control(userId, guildId, { action: 'pause' });
+  assert.equal(f.queue.paused, true);
+
+  // Guild 2: user is a member but outside voice channel -> canRead/canManageLibrary are true, canControl is false
+  const state2 = await bridge.getState(userId, secondGuildId);
+  assert.equal(state2.permissions.role, 'member');
+  assert.equal(state2.permissions.canRead, true);
+  assert.equal(state2.permissions.canManageLibrary, true);
+  assert.equal(state2.permissions.canControl, false);
+  await assert.rejects(bridge.control(userId, secondGuildId, { action: 'play', query: 'https://www.youtube.com/watch?v=AAAAAAAAAAA' }), { errorCode: 'CONTROL_CHANNEL_REQUIRED' });
+  assert.ok(secondFetches >= 2);
+});
+
+test('short membership cache coalesces reads, invalidates on guildMemberRemove or control revocation, and fails closed when Discord REST is unavailable', async t => {
+  const f = await fixture(t);
+  let now = 1_000_000;
+  let restUnavailable = false;
+  const originalFetch = f.guild.members.fetch;
+  f.guild.members.fetch = async options => {
+    if (restUnavailable) throw new Error('Discord REST 503 Service Unavailable');
+    return originalFetch(options);
+  };
+  const bridge = createMusicBridge(f.client, undefined, {
+    accessMode: 'guild_members',
+    allowedGuildIds: [guildId],
+    adminUserIds: [userId],
+    membershipCacheTtlMs: 5_000,
+    now: () => now,
+  });
+
+  // Concurrent and repeated reads within TTL only hit Discord REST once
+  await Promise.all([
+    bridge.assertGuildAccess(userId, guildId),
+    bridge.getState(userId, guildId),
+    bridge.listGuilds(userId),
+  ]);
+  assert.equal(f.fetches, 1);
+
+  // Explicit admin receives diagnostics in getState
+  const adminState = await bridge.getState(userId, guildId);
+  assert.equal(adminState.permissions.role, 'admin');
+  assert.equal(adminState.permissions.canViewDiagnostics, true);
+  assert.equal(typeof adminState.health.ping, 'number');
+  assert.equal(f.fetches, 1);
+
+  // Advancing past TTL triggers a fresh Discord REST verification
+  now += 5_001;
+  await bridge.assertGuildAccess(userId, guildId);
+  assert.equal(f.fetches, 2);
+
+  // guildMemberRemove event immediately invalidates the cache before TTL expires
+  f.client.emit('guildMemberRemove', { id: userId, guild: f.guild });
+  await bridge.assertGuildAccess(userId, guildId);
+  assert.equal(f.fetches, 3);
+
+  // When Discord REST is temporarily unavailable and cache is expired, access fails closed despite guild.members.cache
+  now += 5_001;
+  restUnavailable = true;
+  assert.equal(f.guild.members.cache.has(userId), true);
+  await assert.rejects(bridge.assertGuildAccess(userId, guildId), { errorCode: 'GUILD_ACCESS_DENIED' });
+  await assert.rejects(bridge.getState(userId, guildId), { errorCode: 'GUILD_ACCESS_DENIED' });
+  assert.deepEqual(await bridge.listGuilds(userId), []);
+
+  // Once Discord REST recovers, access works immediately (errors are never cached as positive or sticky)
+  restUnavailable = false;
+  await bridge.assertGuildAccess(userId, guildId);
+});

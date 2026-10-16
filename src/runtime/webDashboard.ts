@@ -49,7 +49,13 @@ export function createWebDashboard(client: Client, history: HistoryStore): Retur
         import('../web/config'), import('../web/server'), import('../music/webBridge'),
       ]);
       const config = readWebConfig();
-      const app = await createWebServer({ config, bridge: createMusicBridge(client, history) });
+      const bridge = createMusicBridge(client, history, {
+        ...(config.accessMode ? { accessMode: config.accessMode } : {}),
+        ...(config.allowedGuildIds ? { allowedGuildIds: config.allowedGuildIds } : {}),
+        ...(config.adminUserIds ? { adminUserIds: config.adminUserIds } : {}),
+        ...(config.membershipCacheTtlMs !== undefined ? { membershipCacheTtlMs: config.membershipCacheTtlMs } : {}),
+      });
+      const app = await createWebServer({ config, bridge });
       try {
         await app.listen({ host: config.host, port: config.port });
         console.log(`[Web] Panel disponible en ${config.origin}`);

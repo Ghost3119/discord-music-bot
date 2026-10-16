@@ -118,6 +118,13 @@ test('missing configuration reports variable names without exposing provided cre
     assert.doesNotMatch(error.message, /fixture-token-never-used/);
     return true;
   });
+  assert.throws(() => createDevEnvironment(environment({ WEB_ACCESS_MODE: 'guild_members', WEB_ALLOWED_USER_IDS: '' })), error => {
+    assert.deepEqual(error.missingKeys, ['WEB_ALLOWED_GUILD_IDS']);
+    return true;
+  });
+  const guildMode = createDevEnvironment(environment({ WEB_ACCESS_MODE: 'guild_members', WEB_ALLOWED_USER_IDS: '', WEB_ALLOWED_GUILD_IDS: '333333333333333333' }));
+  assert.equal(guildMode.backendEnv.WEB_ACCESS_MODE, 'guild_members');
+  assert.equal(guildMode.backendEnv.WEB_ALLOWED_GUILD_IDS, '333333333333333333');
 });
 
 test('port preflight refuses an occupied port without closing the existing server', async t => {

@@ -1,6 +1,6 @@
 import { Client, Guild, GuildMember, VoiceBasedChannel } from 'discord.js';
 import { Queue, Song } from 'distube';
-import type { MusicAction, MusicBridge, PlaybackSnapshot, Track } from '../web/contracts';
+import type { GuildPermissions, MusicAction, MusicBridge, PlaybackSnapshot, Track, WebAccessMode } from '../web/contracts';
 import { HistoryStore, publicMusicUrl } from './history';
 import { getPlaybackHealth } from './playbackHealth';
 import { getPlaybackState } from './playbackState';
@@ -11,9 +11,32 @@ import { getPlayerPanels } from './playerPanel';
 import { controlError, installQueueControlGuard, musicSessionVersion, withMusicAccess } from './controlAccess';
 import { requestPlayback } from './playbackRequest';
 
+export interface MusicBridgeOptions {
+  accessMode?: WebAccessMode;
+  allowedGuildIds?: Iterable<string>;
+  adminUserIds?: Iterable<string>;
+  membershipCacheTtlMs?: number;
+  now?: () => number;
+}
+
 const denied = () => controlError('GUILD_ACCESS_DENIED', 'No tienes acceso a este servidor.');
 const boundedText = (input: unknown, max = 200): string => typeof input === 'string' ? input.slice(0, max) : '';
 const safeCode = (input: unknown): string => typeof input === 'string' && /^[A-Z0-9_]{1,64}$/.test(input) ? input : 'PLAYBACK_ERROR';
+const clientInvalidators = new WeakMap<Client, Set<(guildId?: string, userId?: string) => void>>();
+
+function registerClientInvalidator(client: Client, invalidate: (guildId?: string, userId?: string) => void): void {
+  let listeners = clientInvalidators.get(client);
+  if (!listeners) {
+    listeners = new Set();
+    clientInvalidators.set(client, listeners);
+    if (typeof client.on === 'function') {
+      client.on('guildMemberRemove', member => { for (const fn of listeners!) fn(member.guild?.id, member.id); });
+      client.on('guildDelete', guild => { for (const fn of listeners!) fn(guild.id); });
+    }
+  }
+  listeners.add(invalidate);
+}
+
 function artwork(input: unknown): string | null {
   if (typeof input !== 'string' || input.length > 2000) return null;
   try {
@@ -44,6 +67,10 @@ function voiceFor(client: Client, member: GuildMember, queue?: Queue): VoiceBase
   permissions(client, voice);
   return voice;
 }
+function canControlVoice(client: Client, member: GuildMember, queue?: Queue): boolean {
+  try { voiceFor(client, member, queue); return true; }
+  catch { return false; }
+}
 function integer(value: unknown, minimum: number, maximum: number): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum || value > maximum) {
     throw controlError('INVALID_ACTION', 'Parámetro de control no válido.');
@@ -71,21 +98,99 @@ function webQuery(input: string | undefined): string {
 }
 
 /** User IDs originate in the server session. Membership and voice permissions always come from Discord. */
-export function createMusicBridge(client: Client, history?: HistoryStore): MusicBridge {
+export function createMusicBridge(client: Client, history?: HistoryStore, options?: MusicBridgeOptions): MusicBridge {
   const distube = client.distube;
+  const clock = options?.now ?? Date.now;
+  const cacheTtlMs = options ? Math.max(0, options.membershipCacheTtlMs ?? 5_000) : 0;
+  const allowedGuilds = options?.allowedGuildIds
+    ? new Set(options.allowedGuildIds)
+    : options?.accessMode === 'guild_members' ? new Set<string>() : null;
+  const adminUsers = options?.adminUserIds
+    ? new Set(options.adminUserIds)
+    : options?.accessMode === 'guild_members' ? new Set<string>() : null;
+  const memberCache = new Map<string, { member: GuildMember; expiresAt: number }>();
+  const inFlight = new Map<string, Promise<GuildMember | null>>();
   // Playlist loading shares one cancellation signal across tracks. Preserve its first playback session.
   const groupedSessions = new WeakMap<AbortSignal, Map<string, { queue: Queue | undefined; version: number }>>();
-  async function membership(userId: string, guildId: string): Promise<{ guild: Guild; member: GuildMember }> {
+
+  function invalidateMembership(userId?: string, guildId?: string): void {
+    if (guildId && userId) { memberCache.delete(`${guildId}:${userId}`); return; }
+    if (guildId) {
+      for (const key of memberCache.keys()) if (key.startsWith(`${guildId}:`)) memberCache.delete(key);
+      return;
+    }
+    if (userId) {
+      for (const key of memberCache.keys()) if (key.endsWith(`:${userId}`)) memberCache.delete(key);
+      return;
+    }
+    memberCache.clear();
+  }
+  registerClientInvalidator(client, (guildId, userId) => invalidateMembership(userId, guildId));
+
+  function buildPermissions(userId: string, member: GuildMember, queue?: Queue): GuildPermissions {
+    const canControl = canControlVoice(client, member, queue);
+    const isAdmin = adminUsers ? adminUsers.has(userId) : true;
+    return {
+      role: isAdmin ? 'admin' : canControl ? 'voice' : 'member',
+      isMember: true,
+      inVoiceChannel: canControl,
+      canControl,
+      isAdmin,
+      canRead: true,
+      canManageLibrary: true,
+      canViewDiagnostics: isAdmin,
+      canManageConfig: isAdmin,
+    };
+  }
+
+  async function membership(userId: string, guildId: string, forceFresh = false): Promise<{ guild: Guild; member: GuildMember }> {
+    if (allowedGuilds && !allowedGuilds.has(guildId)) throw denied();
     const guild = client.guilds.cache.get(guildId);
-    if (!guild) throw denied();
-    const member = await guild.members.fetch({ user: userId, force: true }).catch(() => null);
-    if (!member || member.user.bot || !client.guilds.cache.has(guildId)) throw denied();
+    const key = `${guildId}:${userId}`;
+    if (!guild) { memberCache.delete(key); throw denied(); }
+    const currentTime = clock();
+    if (!forceFresh && cacheTtlMs > 0) {
+      const cached = memberCache.get(key);
+      if (cached) {
+        if (cached.expiresAt > currentTime && !cached.member.user.bot && client.guilds.cache.has(guildId)) {
+          return { guild, member: cached.member };
+        }
+        memberCache.delete(key);
+      }
+    }
+    let pending = !forceFresh && cacheTtlMs > 0 ? inFlight.get(key) : undefined;
+    if (!pending) {
+      const request = guild.members.fetch({ user: userId, force: true }).then(result => result ?? null, () => null);
+      if (!forceFresh && cacheTtlMs > 0) {
+        inFlight.set(key, request);
+        void request.finally(() => { if (inFlight.get(key) === request) inFlight.delete(key); });
+      }
+      pending = request;
+    }
+    const member = await pending;
+    if (!member || member.user.bot || !client.guilds.cache.has(guildId)) {
+      memberCache.delete(key);
+      throw denied();
+    }
+    if (cacheTtlMs > 0) {
+      if (memberCache.size >= 2048) {
+        for (const [k, entry] of memberCache) if (entry.expiresAt <= currentTime) memberCache.delete(k);
+        if (memberCache.size >= 2048) memberCache.clear();
+      }
+      memberCache.set(key, { member, expiresAt: clock() + cacheTtlMs });
+    }
     return { guild, member };
   }
   return {
+    invalidateMembership,
+    async getPermissions(userId, guildId) {
+      const { member } = await membership(userId, guildId);
+      return buildPermissions(userId, member, distube.getQueue(guildId));
+    },
     async listGuilds(userId) {
       const result = [];
       for (const guild of client.guilds.cache.values()) {
+        if (allowedGuilds && !allowedGuilds.has(guild.id)) continue;
         try {
           await membership(userId, guild.id);
           result.push({ id: guild.id, name: guild.name, icon: guild.iconURL({ size: 64 }) });
@@ -97,12 +202,14 @@ export function createMusicBridge(client: Client, history?: HistoryStore): Music
     },
     async assertGuildAccess(userId, guildId) { await membership(userId, guildId); },
     async getState(userId, guildId): Promise<PlaybackSnapshot> {
-      await membership(userId, guildId);
+      const { member } = await membership(userId, guildId);
       const queue = distube.getQueue(guildId), state = queue ? getPlaybackState(queue) : undefined;
-      const health = getPlaybackHealth(distube), now = health?.now() ?? Date.now();
-      const incidents = (history ?? health?.history)?.list(guildId).filter(item => item.result === 'failed').slice(0, 10)
-        .map(item => ({ code: safeCode(item.code), message: 'La reproducción encontró un error; consulta el código de diagnóstico.', at: new Date(item.time).toISOString() })) ?? [];
-      if (state?.lastError && !incidents.some(item => item.code === state.lastError?.code && item.at === new Date(state.lastError.time).toISOString())) {
+      const userPermissions = buildPermissions(userId, member, queue);
+      const includeDiagnostics = userPermissions.canViewDiagnostics;
+      const health = includeDiagnostics ? getPlaybackHealth(distube) : undefined, now = health?.now() ?? Date.now();
+      const incidents = includeDiagnostics ? ((history ?? health?.history)?.list(guildId).filter(item => item.result === 'failed').slice(0, 10)
+        .map(item => ({ code: safeCode(item.code), message: 'La reproducción encontró un error; consulta el código de diagnóstico.', at: new Date(item.time).toISOString() })) ?? []) : [];
+      if (includeDiagnostics && state?.lastError && !incidents.some(item => item.code === state.lastError?.code && item.at === new Date(state.lastError.time).toISOString())) {
         incidents.unshift({ code: safeCode(state.lastError.code), message: 'La reproducción está recuperando un error reciente.', at: new Date(state.lastError.time).toISOString() });
       }
       return { guildId, status: !queue || queue.stopped ? 'idle' : state?.blocked ? 'blocked' : state && ['recovering', 'alternative'].includes(state.mode) ? 'recovering' : queue.paused ? 'paused' : 'playing',
@@ -110,20 +217,22 @@ export function createMusicBridge(client: Client, history?: HistoryStore): Music
         currentTime: queue && Number.isFinite(queue.currentTime) ? Math.max(0, queue.currentTime) : 0,
         volume: queue?.volume ?? 50, repeat: queue?.repeatMode ?? 0,
         voice: queue?.voiceChannel ? { id: queue.voiceChannel.id, name: boundedText(queue.voiceChannel.name, 100), members: queue.voiceChannel.members.size } : null,
-        health: { connected: client.isReady(), ping: Math.max(0, Math.round(client.ws.ping)),
+        health: includeDiagnostics ? { connected: client.isReady(), ping: Math.max(0, Math.round(client.ws.ping)),
           voiceConnected: Boolean(queue?.voiceChannel && !queue.voice.isDisconnected), mode: state?.mode ?? 'idle',
           attempts: state?.attempt ?? 0, recentFailures: state?.failures.filter(time => now - time < 300_000).length ?? 0,
           lastProgressAt: state?.lastProgress ? new Date(state.lastProgress).toISOString() : null,
           monitor: health?.monitor ?? false, breaker: health?.breaker ?? false,
-          ...(getAudioPreloader(distube) ? { preload: getAudioPreloader(distube)!.metrics } : {}) }, incidents: incidents.slice(0, 10) };
+          ...(getAudioPreloader(distube) ? { preload: getAudioPreloader(distube)!.metrics } : {}) } : {},
+        incidents: includeDiagnostics ? incidents.slice(0, 10) : [],
+        permissions: userPermissions };
     },
     async control(userId: string, guildId: string, action: MusicAction, signal?: AbortSignal): Promise<void> {
       signal?.throwIfAborted();
-      const { member } = await membership(userId, guildId), queue = distube.getQueue(guildId);
+      const { member } = await membership(userId, guildId, true), queue = distube.getQueue(guildId);
       const voice = voiceFor(client, member, queue);
       const authorize = async () => {
         signal?.throwIfAborted();
-        const { member: current } = await membership(userId, guildId);
+        const { member: current } = await membership(userId, guildId, true);
         signal?.throwIfAborted();
         if (voiceFor(client, current, queue).id !== voice.id) throw controlError('CONTROL_CHANNEL_REQUIRED', 'Tu canal de voz cambió mientras esperaba.');
       };
