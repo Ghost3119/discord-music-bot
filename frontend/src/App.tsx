@@ -41,6 +41,134 @@ function Login({ error, retry, loading }: { error: string; retry: () => void; lo
 function DiscordIcon() { return <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.7 5.3a18 18 0 0 0-4.4-1.4l-.6 1.2a16.2 16.2 0 0 0-5.4 0l-.6-1.2a18 18 0 0 0-4.4 1.4C1.5 9.4.7 13.4 1.1 17.3a18 18 0 0 0 5.4 2.8l1.1-1.8-1.7-.8.4-.3a12.8 12.8 0 0 0 11.4 0l.4.3-1.7.8 1.1 1.8a18 18 0 0 0 5.4-2.8c.5-4.5-.8-8.5-3.2-12ZM8.5 14.8c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Zm7 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Z" /></svg>; }
 function Brand() { return <div className="brand"><span className="brand-mark"><AudioLines size={23} strokeWidth={2.3} /></span>SONORA<span className="brand-dot">®</span></div>; }
 
+interface SelectOption {
+  value: string;
+  label: string;
+  sublabel?: string;
+  icon?: ReactNode;
+}
+
+function CustomSelect({
+  id,
+  label,
+  value,
+  options,
+  placeholder = 'Selecciona una opción',
+  disabled = false,
+  onChange,
+  variant = 'field',
+  leadingIcon,
+}: {
+  id?: string;
+  label?: string;
+  value: string;
+  options: SelectOption[];
+  placeholder?: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  variant?: 'guild' | 'field';
+  leadingIcon?: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((item) => item.value === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const selectedIdx = options.findIndex((item) => item.value === value);
+    setActiveIndex(selectedIdx >= 0 ? selectedIdx : 0);
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, options, value]);
+
+  useEffect(() => {
+    if (disabled && open) setOpen(false);
+  }, [disabled, open]);
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (disabled || !options.length) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      if (!open) { setOpen(true); return; }
+      setActiveIndex((prev) => (prev + 1) % options.length);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!open) { setOpen(true); return; }
+      setActiveIndex((prev) => (prev - 1 + options.length) % options.length);
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      if (open && activeIndex >= 0 && options[activeIndex]) {
+        event.preventDefault();
+        onChange(options[activeIndex].value);
+        setOpen(false);
+      }
+    }
+  };
+
+  return (
+    <div ref={rootRef} className={cn('custom-select', variant === 'guild' ? 'guild-picker' : 'field-select', open && 'is-open')}>
+      <button
+        id={id}
+        type="button"
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-controls={id ? `${id}-listbox` : undefined}
+        disabled={disabled}
+        className="custom-select-trigger"
+        onClick={() => !disabled && options.length > 0 && setOpen((prev) => !prev)}
+        onKeyDown={handleKeyDown}
+      >
+        {leadingIcon && <span className="guild-avatar">{leadingIcon}</span>}
+        <span className="custom-select-copy">
+          {label && <span className="custom-select-label">{label}</span>}
+          <span className="custom-select-value">{selected ? selected.label : placeholder}</span>
+        </span>
+        <ChevronDown size={15} className={cn('custom-select-chevron', open && 'is-open')} aria-hidden="true" />
+      </button>
+      {open && options.length > 0 && (
+        <div id={id ? `${id}-listbox` : undefined} role="listbox" aria-label={label || placeholder} className="custom-select-menu">
+          {options.map((option, index) => {
+            const isSelected = option.value === value;
+            const isHighlighted = index === activeIndex;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                className={cn('custom-select-option', isSelected && 'is-selected', isHighlighted && 'is-highlighted')}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                {option.icon && <span className="custom-select-option-icon">{option.icon}</span>}
+                <span className="custom-select-option-text">
+                  <strong>{option.label}</strong>
+                  {option.sublabel && <small>{option.sublabel}</small>}
+                </span>
+                {isSelected && <Check size={15} className="custom-select-check" aria-hidden="true" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -65,6 +193,10 @@ export default function App() {
   const [targetPlaylist, setTargetPlaylist] = useState('');
   const [trackUrl, setTrackUrl] = useState('');
   const [trackArtist, setTrackArtist] = useState('');
+  const [resolvedTrack, setResolvedTrack] = useState<Omit<Track, 'id'> | null>(null);
+  const [resolvingTrack, setResolvingTrack] = useState(false);
+  const [titleTouched, setTitleTouched] = useState(false);
+  const [artistTouched, setArtistTouched] = useState(false);
   const [libraryRevision, setLibraryRevision] = useState(0);
   const selectedGuildRef = useRef(guildId);
   const operationScope = useRef(createOperationScope());
@@ -117,7 +249,50 @@ export default function App() {
   }, [libraryRevision, guildId, session, reportError]);
 
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(''), 4000); return () => window.clearTimeout(timer); }, [notice]);
-  useEffect(() => { if (modal?.type === 'playlist') setName(modal.playlist?.name || ''); if (modal?.type === 'save') setTargetPlaylist(playlists[0]?.id || ''); if (modal?.type === 'add') { setName(''); setTrackUrl(''); setTrackArtist(''); } }, [modal, playlists]);
+  useEffect(() => {
+    if (modal?.type === 'playlist') setName(modal.playlist?.name || '');
+    if (modal?.type === 'save') setTargetPlaylist(playlists[0]?.id || '');
+    if (modal?.type === 'add') {
+      setName('');
+      setTrackUrl('');
+      setTrackArtist('');
+      setResolvedTrack(null);
+      setResolvingTrack(false);
+      setTitleTouched(false);
+      setArtistTouched(false);
+    }
+  }, [modal, playlists]);
+
+  useEffect(() => {
+    if (modal?.type !== 'add' || !guildId || !session) return;
+    const raw = trackUrl.trim();
+    if (!/^https:\/\/\S+\.\S+/i.test(raw)) {
+      setResolvedTrack(null);
+      setResolvingTrack(false);
+      return;
+    }
+    const abort = new AbortController();
+    setResolvingTrack(true);
+    const timer = window.setTimeout(() => {
+      api<{ track: Omit<Track, 'id'> }>(`/api/guilds/${guildId}/tracks/resolve?url=${encodeURIComponent(raw)}`, { signal: abort.signal })
+        .then(({ track }) => {
+          if (abort.signal.aborted) return;
+          setResolvedTrack(track);
+          setName((prev) => (!titleTouched || !prev.trim() ? track.title : prev));
+          setTrackArtist((prev) => (!artistTouched || !prev.trim() ? (track.artist === 'Artista desconocido' ? '' : track.artist) : prev));
+        })
+        .catch(() => {
+          if (!abort.signal.aborted) setResolvedTrack(null);
+        })
+        .finally(() => {
+          if (!abort.signal.aborted) setResolvingTrack(false);
+        });
+    }, 180);
+    return () => {
+      window.clearTimeout(timer);
+      abort.abort();
+    };
+  }, [modal?.type, trackUrl, guildId, session, titleTouched, artistTouched]);
 
   async function run(key: string, task: () => Promise<void>) {
     if (busy || loggingOut) return;
@@ -165,7 +340,12 @@ export default function App() {
     return run('reorder', async () => { await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/tracks/order`, 'PUT', { trackIds: ids }); setLibraryRevision((value) => value + 1); });
   }
   function loadPlaylist(playlist: Playlist) {
-    return run('load', async () => { await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/load`, 'POST'); setNotice(`«${playlist.name}» enviada a la cola.`); setView('player'); await refresh(); });
+    return run('load', async () => {
+      await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/load`, 'POST');
+      setNotice(`«${playlist.name}» (${playlist.tracks.length} ${playlist.tracks.length === 1 ? 'canción' : 'canciones'}) enviada a la cola.`);
+      setView('player');
+      await refresh();
+    });
   }
   async function submitModal(event: FormEvent) {
     event.preventDefault();
@@ -175,7 +355,16 @@ export default function App() {
       if (modal.type === 'playlist') await mutate(`${base}${modal.playlist ? `/${modal.playlist.id}` : ''}`, modal.playlist ? 'PATCH' : 'POST', { name: name.trim() });
       if (modal.type === 'delete') { await mutate(`${base}/${modal.playlist.id}`, 'DELETE'); if (selectedPlaylist === modal.playlist.id) setSelectedPlaylist(''); }
       if (modal.type === 'save') await mutate(`${base}/${targetPlaylist}/tracks`, 'POST', trackMetadata(modal.track));
-      if (modal.type === 'add') await mutate(`${base}/${modal.playlist.id}/tracks`, 'POST', { url: trackUrl.trim(), title: name.trim(), artist: trackArtist.trim() || 'Artista desconocido', duration: 0, thumbnail: null, source: 'youtube' });
+      if (modal.type === 'add') {
+        await mutate(`${base}/${modal.playlist.id}/tracks`, 'POST', {
+          url: trackUrl.trim(),
+          title: name.trim() || resolvedTrack?.title || '',
+          artist: trackArtist.trim() || resolvedTrack?.artist || 'Artista desconocido',
+          duration: resolvedTrack?.duration || 0,
+          thumbnail: resolvedTrack?.thumbnail || null,
+          source: resolvedTrack?.source || 'youtube',
+        });
+      }
       setLibraryRevision((value) => value + 1); setModal(null); setNotice('Biblioteca actualizada.');
     });
   }
@@ -195,7 +384,7 @@ export default function App() {
     <span className="track-index">{String(index + 1).padStart(2, '0')}</span><Artwork track={track} className="track-art" decorative /><div className="track-title"><strong>{track.title}</strong><span>{track.artist || 'Artista desconocido'}</span></div>
     <span className="track-source">{track.source}</span><span className="track-duration">{duration(track.duration)}</span>
     <div className="track-actions">
-      {context !== 'queue' && <IconButton label={`Reproducir ${track.title}`} disabled={!!busy || !state} onClick={() => action({ action: 'play', query: track.url })}><Play size={15} /></IconButton>}
+      {context !== 'queue' && <IconButton label={`Reproducir ${track.title}`} disabled={!!busy || !state} onClick={() => action({ action: 'play', query: track.url, track: trackMetadata(track) })}><Play size={15} /></IconButton>}
       <IconButton label={`${isFavorite(track) ? 'Quitar de' : 'Guardar en'} favoritos: ${track.title}`} active={isFavorite(track)} aria-pressed={isFavorite(track)} disabled={!!busy} onClick={() => toggleFavorite(track)}><Heart size={16} fill={isFavorite(track) ? 'currentColor' : 'none'} /></IconButton>
       {context === 'queue' && <IconButton label={`Guardar ${track.title} en playlist`} disabled={!!busy} onClick={() => setModal({ type: 'save', track })}><Plus size={17} /></IconButton>}
       {context !== 'favorites' && <><IconButton label={`Subir ${track.title}`} disabled={!!busy || index === 0} onClick={() => owner ? reorderPlaylist(owner, index, index - 1) : action({ action: 'move', from: index + 1, to: index })}><ArrowUp size={15} /></IconButton><IconButton label={`Bajar ${track.title}`} disabled={!!busy || index === tracks.length - 1} onClick={() => owner ? reorderPlaylist(owner, index, index + 1) : action({ action: 'move', from: index + 1, to: index + 2 })}><ArrowDown size={15} /></IconButton><IconButton label={`Retirar ${track.title}`} disabled={!!busy} onClick={() => owner ? run('remove-track', async () => { await mutate(`/api/guilds/${guildId}/playlists/${owner.id}/tracks/${track.id}`, 'DELETE'); setLibraryRevision((value) => value + 1); }) : action({ action: 'remove', index: index + 1 })}><X size={16} /></IconButton></>}
@@ -216,7 +405,28 @@ export default function App() {
       <header className="topbar"><div className="topbar-left"><IconButton label="Abrir navegación" className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={22} /></IconButton><span className="breadcrumb">Tu espacio <span>/</span> <strong>{navigation.find((item) => item.id === view)?.name}</strong></span></div><div className="topbar-right"><span className={cn('connection-pill', connection === 'live' && guildId ? 'connected' : 'connecting')}><span />{!guildId ? 'Sin servidor' : connection === 'live' ? 'En tiempo real' : connection === 'reconnecting' ? 'Reconectando' : 'Conectando'}</span><div className="user-info"><UserAvatar session={session} /><span>{session.user.username}</span></div></div></header>
 
       <main className="main-content" id="main-content">
-        <div className="page-heading"><div><span className="eyebrow">TU SERVIDOR. TU SOUNDTRACK.</span><h1>{view === 'player' ? 'Dale ritmo al momento.' : view === 'library' ? playlist?.name || 'Hecha a tu ritmo.' : view === 'favorites' ? 'Siempre vuelves a estas.' : 'Todo bajo control.'}</h1></div><div className="guild-picker"><span className="guild-avatar">{guild?.icon ? <img alt="" src={guild.icon} referrerPolicy="no-referrer" /> : <Headphones size={18} />}</span><div><label htmlFor="guild-select">ESCUCHANDO EN</label><select id="guild-select" value={guildId} disabled={guildsLoading || !guilds.length || !!busy} onChange={(event) => { setGuildId(event.target.value); setError(''); }}><option value="" disabled>{guildsLoading ? 'Buscando servidores…' : 'Selecciona un servidor'}</option>{guilds.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><ChevronDown size={15} aria-hidden="true" /></div></div>
+        <div className="page-heading">
+          <div>
+            <span className="eyebrow">TU SERVIDOR. TU SOUNDTRACK.</span>
+            <h1>{view === 'player' ? 'Dale ritmo al momento.' : view === 'library' ? playlist?.name || 'Hecha a tu ritmo.' : view === 'favorites' ? 'Siempre vuelves a estas.' : 'Todo bajo control.'}</h1>
+          </div>
+          <CustomSelect
+            id="guild-select"
+            variant="guild"
+            label="ESCUCHANDO EN"
+            value={guildId}
+            disabled={guildsLoading || !guilds.length || !!busy}
+            placeholder={guildsLoading ? 'Buscando servidores…' : 'Sin servidores'}
+            leadingIcon={guild?.icon ? <img alt="" src={guild.icon} referrerPolicy="no-referrer" /> : <Headphones size={18} />}
+            options={guilds.map((item) => ({
+              value: item.id,
+              label: item.name,
+              sublabel: item.id === guildId && state?.voice ? state.voice.name : 'Servidor autorizado',
+              icon: item.icon ? <img alt="" src={item.icon} referrerPolicy="no-referrer" /> : <Headphones size={15} />,
+            }))}
+            onChange={(nextId) => { setGuildId(nextId); setError(''); }}
+          />
+        </div>
 
         {error && <div className="alert alert-error" role="alert"><Activity size={18} /><span>{error}</span><Button variant="ghost" size="sm" onClick={() => { setError(''); void refresh(); setLibraryRevision((value) => value + 1); }}>Reintentar</Button><IconButton label="Cerrar error" onClick={() => setError('')}><X size={16} /></IconButton></div>}
         {!guildId ? <EmptyState icon={<Headphones size={30} />} title={guildsLoading ? 'Buscando tu comunidad…' : 'Tu espacio está casi listo'} text={guildsLoading ? 'Consultando los servidores disponibles.' : 'No hay servidores disponibles para tu cuenta. Comprueba que el bot esté presente y tengas acceso.'} /> : <>
@@ -236,8 +446,8 @@ export default function App() {
               <aside className="connection-card"><div className="connection-card-title"><Radio size={17} /><h3>Tu sesión</h3><span className={cn('status-indicator', connection === 'live' && 'status-playing')} /></div><dl><div><dt>Canal de voz</dt><dd>{state?.voice?.name || 'Desconectado'}</dd></div><div><dt>Reproductor</dt><dd>{state ? labels[state.status] : 'Sincronizando'}</dd></div><div><dt>Actualizaciones</dt><dd>{connection === 'live' ? 'En tiempo real' : 'Reconectando…'}</dd></div></dl><button className="text-link" onClick={() => setView('diagnostics')}>Ver diagnóstico <ArrowRight size={14} /></button></aside></div>
           </>}
 
-          {view === 'library' && <section className="library-view"><div className="section-heading"><div>{playlist ? <Button variant="ghost" size="sm" onClick={() => setSelectedPlaylist('')}><ArrowLeft size={15} /> Todas las playlists</Button> : <p>Las canciones que merecen quedarse.</p>}</div><div className="heading-actions">{playlist ? <><IconButton label="Renombrar playlist" disabled={!!busy} onClick={() => setModal({ type: 'playlist', playlist })}><Pencil size={17} /></IconButton><IconButton label="Eliminar playlist" disabled={!!busy} onClick={() => setModal({ type: 'delete', playlist })}><Trash2 size={17} /></IconButton><Button variant="secondary" size="sm" disabled={!!busy} onClick={() => setModal({ type: 'add', playlist })}><Plus size={16} /> Agregar canción</Button><Button size="sm" disabled={!!busy || !playlist.tracks.length || !state} onClick={() => loadPlaylist(playlist)}><Play size={15} fill="currentColor" /> Escuchar</Button></> : <Button size="sm" onClick={() => setModal({ type: 'playlist' })} disabled={!!busy}><Plus size={16} /> Nueva playlist</Button>}</div></div>
-            {libraryLoading ? <Loading text="Abriendo tu biblioteca…" /> : playlist ? <><div className="playlist-detail"><div className="playlist-detail-art"><ListMusic size={52} strokeWidth={1.2} /></div><div><span className="eyebrow">TU COLECCIÓN</span><h2>{playlist.name}</h2><p>{playlist.tracks.length} canciones · {duration(playlist.tracks.reduce((sum, track) => sum + track.duration, 0))}</p></div></div>{playlist.tracks.length ? <div className="track-list">{trackRows(playlist.tracks, 'playlist', playlist)}</div> : <EmptyState icon={<Music2 size={30} />} title="Una playlist llena de posibilidades" text="Agrega un enlace o guarda canciones desde el reproductor y la cola." />}</> : playlists.length ? <div className="playlist-grid">{playlists.map((item, index) => <button key={item.id} className="playlist-card" onClick={() => setSelectedPlaylist(item.id)}><div className={`playlist-cover playlist-color-${index % 4}`}><ListMusic size={62} strokeWidth={1.1} /><span>{String(index + 1).padStart(2, '0')}</span><div className="playlist-cover-play"><Play size={19} fill="currentColor" /></div></div><h3>{item.name}</h3><p>{item.tracks.length} canciones <span>•</span> Tu colección</p></button>)}<button className="playlist-new" onClick={() => setModal({ type: 'playlist' })}><span><Plus size={27} /></span><strong>Crea tu próxima playlist</strong><p>Para cada versión de ti.</p></button></div> : <EmptyState icon={<Library size={30} />} title="Tu próximo soundtrack empieza aquí" text="Crea una playlist y guarda las canciones que quieras volver a escuchar." action={<Button onClick={() => setModal({ type: 'playlist' })}><Plus size={16} /> Crear mi primera playlist</Button>} />}
+          {view === 'library' && <section className="library-view"><div className="section-heading"><div>{playlist ? <Button variant="ghost" size="sm" onClick={() => setSelectedPlaylist('')}><ArrowLeft size={15} /> Todas las playlists</Button> : <p>Las canciones que merecen quedarse.</p>}</div><div className="heading-actions">{playlist ? <><IconButton label="Renombrar playlist" disabled={!!busy} onClick={() => setModal({ type: 'playlist', playlist })}><Pencil size={17} /></IconButton><IconButton label="Eliminar playlist" disabled={!!busy} onClick={() => setModal({ type: 'delete', playlist })}><Trash2 size={17} /></IconButton><Button variant="secondary" size="sm" disabled={!!busy} onClick={() => setModal({ type: 'add', playlist })}><Plus size={16} /> Agregar canción</Button><Button size="sm" disabled={!!busy || !playlist.tracks.length || !state} onClick={() => loadPlaylist(playlist)}>{busy === 'load' ? <LoaderCircle size={15} className="spin" /> : <Play size={15} fill="currentColor" />} {busy === 'load' ? 'Cargando cola…' : 'Escuchar'}</Button></> : <Button size="sm" onClick={() => setModal({ type: 'playlist' })} disabled={!!busy}><Plus size={16} /> Nueva playlist</Button>}</div></div>
+            {libraryLoading ? <Loading text="Abriendo tu biblioteca…" /> : playlist ? <><div className="playlist-detail"><div className="playlist-detail-art">{playlist.tracks[0]?.thumbnail ? <Artwork track={playlist.tracks[0]} className="playlist-detail-cover" decorative /> : <ListMusic size={52} strokeWidth={1.2} />}</div><div><span className="eyebrow">TU COLECCIÓN</span><h2>{playlist.name}</h2><p>{playlist.tracks.length} canciones · {duration(playlist.tracks.reduce((sum, track) => sum + track.duration, 0))}</p></div></div>{playlist.tracks.length ? <div className="track-list">{trackRows(playlist.tracks, 'playlist', playlist)}</div> : <EmptyState icon={<Music2 size={30} />} title="Una playlist llena de posibilidades" text="Agrega un enlace o guarda canciones desde el reproductor y la cola." />}</> : playlists.length ? <div className="playlist-grid">{playlists.map((item, index) => <div key={item.id} className="playlist-card" role="button" tabIndex={0} onClick={() => setSelectedPlaylist(item.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedPlaylist(item.id); } }}><div className={`playlist-cover playlist-color-${index % 4}`}>{item.tracks[0]?.thumbnail ? <Artwork track={item.tracks[0]} className="playlist-cover-img" decorative /> : <ListMusic size={62} strokeWidth={1.1} />}<span>{String(index + 1).padStart(2, '0')}</span><button type="button" className="playlist-cover-play" aria-label={`Escuchar ${item.name}`} disabled={!!busy || !item.tracks.length || !state} onClick={(event) => { event.stopPropagation(); void loadPlaylist(item); }}><Play size={19} fill="currentColor" /></button></div><h3>{item.name}</h3><p>{item.tracks.length} canciones <span>•</span> Tu colección</p></div>)}<button className="playlist-new" onClick={() => setModal({ type: 'playlist' })}><span><Plus size={27} /></span><strong>Crea tu próxima playlist</strong><p>Para cada versión de ti.</p></button></div> : <EmptyState icon={<Library size={30} />} title="Tu próximo soundtrack empieza aquí" text="Crea una playlist y guarda las canciones que quieras volver a escuchar." action={<Button onClick={() => setModal({ type: 'playlist' })}><Plus size={16} /> Crear mi primera playlist</Button>} />}
           </section>}
 
           {view === 'favorites' && <section className="favorites-view"><div className="favorites-banner"><div className="favorite-art"><Heart size={43} fill="currentColor" strokeWidth={1} /></div><div><span className="eyebrow">EN REPEAT, EN TU CORAZÓN</span><h2>Tus favoritas</h2><p>{favorites.length} canciones que se quedan contigo.</p></div></div>{libraryLoading ? <Loading text="Buscando tus favoritas…" /> : favorites.length ? <div className="track-list">{trackRows(favorites, 'favorites')}</div> : <EmptyState icon={<Heart size={30} />} title="Aquí viven tus próximas favoritas" text="Toca el corazón junto a una canción para guardarla en este espacio." />}</section>}
@@ -251,8 +461,99 @@ export default function App() {
     <footer className="persistent-player" aria-label="Controles de reproducción"><div className="player-track"><Artwork track={current} className="player-art" decorative /><div><strong>{current?.title || 'Tu próxima canción te espera'}</strong><span>{current?.artist || 'Dale play a tu servidor'}</span></div><IconButton label="Guardar en favoritos" active={!!current && isFavorite(current)} aria-pressed={!!current && isFavorite(current)} disabled={!current || !!busy} onClick={() => current && toggleFavorite(current)}><Heart size={17} fill={current && isFavorite(current) ? 'currentColor' : 'none'} /></IconButton></div><div className="player-center"><div className="player-buttons"><IconButton label="Mezclar cola" disabled={controlsDisabled || (state?.queue.length || 0) < 2} onClick={() => action({ action: 'shuffle' })}><Shuffle size={17} /></IconButton><IconButton label="Detener reproducción" disabled={controlsDisabled || !current} onClick={() => action({ action: 'stop' })}><Square size={16} /></IconButton><Button className="player-main-button" size="icon" aria-label={playing ? 'Pausar reproducción' : 'Continuar reproducción'} disabled={controlsDisabled || !current} onClick={() => action({ action: playing ? 'pause' : 'resume' })}>{playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}</Button><IconButton label="Siguiente canción" disabled={controlsDisabled || !current || state?.status === 'blocked'} onClick={() => action({ action: 'skip' })}><SkipForward size={19} fill="currentColor" /></IconButton><IconButton label={`Repetición: ${state?.repeat === 1 ? 'canción' : state?.repeat === 2 ? 'cola' : 'desactivada'}. Cambiar modo`} active={!!state?.repeat} disabled={controlsDisabled} onClick={() => action({ action: 'repeat', mode: ((state?.repeat || 0) + 1) % 3 })}><Repeat size={17} />{state?.repeat === 1 && <span className="repeat-one">1</span>}</IconButton></div><div className="player-progress"><span>{duration(state?.currentTime || 0)}</span><div className="progress-track" role="progressbar" aria-label="Progreso de la canción" aria-valuemin={0} aria-valuemax={current?.duration || 0} aria-valuenow={Math.floor(state?.currentTime || 0)}><div style={{ width: `${progress}%` }} /></div><span>{duration(current?.duration || 0)}</span></div></div><div className="player-volume"><IconButton label="Ver cola musical" onClick={() => setView('player')}><ListMusic size={18} /></IconButton><span className="volume-divider" /><Volume2 size={18} /><label className="sr-only" htmlFor="volume">Volumen</label><input id="volume" type="range" min="0" max="100" step="1" value={volumeDraft ?? state?.volume ?? 50} disabled={controlsDisabled} onChange={(event) => setVolumeDraft(Number(event.target.value))} onPointerUp={(event) => { const value = Number(event.currentTarget.value); void action({ action: 'volume', volume: value }).finally(() => setVolumeDraft(null)); }} onKeyUp={(event) => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) void action({ action: 'volume', volume: Number(event.currentTarget.value) }).finally(() => setVolumeDraft(null)); }} style={{ '--volume': `${volumeDraft ?? state?.volume ?? 50}%` } as React.CSSProperties} /><span className="volume-value">{volumeDraft ?? state?.volume ?? 50}%</span></div></footer>
 
     {notice && <div className="toast" role="status"><Check size={17} />{notice}</div>}
-    <Dialog open={!!modal} onOpenChange={(open) => { if (!open && !busy) setModal(null); }} title={modal?.type === 'delete' ? 'Eliminar playlist' : modal?.type === 'save' ? 'Guardar en una playlist' : modal?.type === 'add' ? 'Agregar a tu colección' : modal?.playlist ? 'Dale un nuevo nombre' : 'Una playlist, un mood.'} description={modal?.type === 'delete' ? `Se eliminará «${modal.playlist.name}» y su colección de canciones.` : modal?.type === 'save' ? `Guarda «${modal.track.title}» para volver a escucharla.` : modal?.type === 'add' ? 'Pega el enlace original de YouTube, Spotify, SoundCloud o Apple Music.' : 'Ponle un nombre que te haga querer darle play.'}>
-      <form className="modal-form" onSubmit={submitModal}>{modal?.type === 'playlist' && <label>Nombre de la playlist<input value={name} onChange={(event) => setName(event.target.value)} maxLength={100} placeholder="Por ejemplo, Después de medianoche" required autoFocus /></label>}{modal?.type === 'save' && (playlists.length ? <label>Playlist<select value={targetPlaylist} onChange={(event) => setTargetPlaylist(event.target.value)} required>{playlists.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : <div className="no-playlist"><p>Primero necesitas crear una playlist.</p><Button variant="secondary" type="button" onClick={() => setModal({ type: 'playlist' })}><Plus size={16} /> Crear playlist</Button></div>)}{modal?.type === 'add' && <><label>Enlace de la canción<input type="url" value={trackUrl} onChange={(event) => setTrackUrl(event.target.value)} required maxLength={2000} placeholder="https://www.youtube.com/watch?v=…" autoFocus /></label><label>Título<input value={name} onChange={(event) => setName(event.target.value)} required maxLength={300} placeholder="Nombre de la canción" /></label><label>Artista <span className="muted">(opcional)</span><input value={trackArtist} onChange={(event) => setTrackArtist(event.target.value)} maxLength={300} placeholder="Nombre del artista" /></label><p className="form-help">También puedes guardar canciones con sus metadatos directamente desde el reproductor.</p></>}{error && <p className="modal-error" role="alert">{error}</p>}<div className="modal-actions"><Button variant="secondary" type="button" disabled={!!busy} onClick={() => setModal(null)}>Cancelar</Button><Button variant={modal?.type === 'delete' ? 'destructive' : 'default'} type="submit" disabled={!!busy || (modal?.type === 'save' && !targetPlaylist) || ((modal?.type === 'playlist' || modal?.type === 'add') && !name.trim())}>{busy === 'save' && <LoaderCircle className="spin" size={16} />}{modal?.type === 'delete' ? 'Eliminar playlist' : 'Guardar'}</Button></div></form>
+    <Dialog open={!!modal} onOpenChange={(open) => { if (!open && !busy) setModal(null); }} title={modal?.type === 'delete' ? 'Eliminar playlist' : modal?.type === 'save' ? 'Guardar en una playlist' : modal?.type === 'add' ? 'Agregar a tu colección' : modal?.playlist ? 'Dale un nuevo nombre' : 'Una playlist, un mood.'} description={modal?.type === 'delete' ? `Se eliminará «${modal.playlist.name}» y su colección de canciones.` : modal?.type === 'save' ? `Guarda «${modal.track.title}» para volver a escucharla.` : modal?.type === 'add' ? 'Pega el enlace de YouTube, Spotify, SoundCloud o Apple Music y completaremos los datos automáticamente.' : 'Ponle un nombre que te haga querer darle play.'}>
+      <form className="modal-form" onSubmit={submitModal}>
+        {modal?.type === 'playlist' && <label>Nombre de la playlist<input value={name} onChange={(event) => setName(event.target.value)} maxLength={100} placeholder="Por ejemplo, Después de medianoche" required autoFocus /></label>}
+        {modal?.type === 'save' && (playlists.length ? (
+          <div className="modal-field">
+            <span className="modal-field-label">Playlist</span>
+            <CustomSelect
+              id="save-playlist-select"
+              variant="field"
+              value={targetPlaylist}
+              placeholder="Selecciona una playlist"
+              options={playlists.map((item, idx) => ({
+                value: item.id,
+                label: item.name,
+                sublabel: `${item.tracks.length} ${item.tracks.length === 1 ? 'canción' : 'canciones'}`,
+                icon: <span className={`playlist-mini playlist-color-${idx % 4}`}><ListMusic size={14} /></span>,
+              }))}
+              onChange={setTargetPlaylist}
+            />
+          </div>
+        ) : <div className="no-playlist"><p>Primero necesitas crear una playlist.</p><Button variant="secondary" type="button" onClick={() => setModal({ type: 'playlist' })}><Plus size={16} /> Crear playlist</Button></div>)}
+        {modal?.type === 'add' && <>
+          <label>
+            <span className="field-label-row">
+              <span>Enlace de la canción</span>
+              {resolvingTrack && <span className="resolve-status"><LoaderCircle size={12} className="spin" /> Obteniendo datos…</span>}
+              {!resolvingTrack && resolvedTrack && <span className="resolve-status is-ready"><Check size={12} /> Datos detectados</span>}
+            </span>
+            <input type="url" value={trackUrl} onChange={(event) => setTrackUrl(event.target.value)} required maxLength={2000} placeholder="https://www.youtube.com/watch?v=…" autoFocus />
+          </label>
+          {resolvedTrack && (
+            <div className="track-preview-card" aria-live="polite">
+              <Artwork
+                track={{
+                  id: 'preview',
+                  ...resolvedTrack,
+                  title: name.trim() || resolvedTrack.title,
+                  artist: trackArtist.trim() || resolvedTrack.artist,
+                }}
+                className="track-preview-art"
+                decorative
+              />
+              <div className="track-preview-copy">
+                <span className="track-preview-badge">{resolvedTrack.source}</span>
+                <strong>{name.trim() || resolvedTrack.title}</strong>
+                <span>{trackArtist.trim() || resolvedTrack.artist}{resolvedTrack.duration > 0 ? ` · ${duration(resolvedTrack.duration)}` : ''}</span>
+              </div>
+            </div>
+          )}
+          <label>
+            Título <span className="muted">(se rellena con el enlace)</span>
+            <input
+              value={name}
+              onChange={(event) => {
+                setTitleTouched(true);
+                setName(event.target.value);
+              }}
+              maxLength={300}
+              placeholder={resolvingTrack ? 'Obteniendo título del enlace…' : 'Se completará automáticamente o escríbelo'}
+            />
+          </label>
+          <label>
+            Artista <span className="muted">(opcional)</span>
+            <input
+              value={trackArtist}
+              onChange={(event) => {
+                setArtistTouched(true);
+                setTrackArtist(event.target.value);
+              }}
+              maxLength={300}
+              placeholder={resolvingTrack ? 'Obteniendo artista…' : 'Nombre del artista o canal'}
+            />
+          </label>
+          <p className="form-help">Al pegar el enlace completamos título, artista y portada automáticamente. Puedes ajustarlos si quieres.</p>
+        </>}
+        {error && <p className="modal-error" role="alert">{error}</p>}
+        <div className="modal-actions">
+          <Button variant="secondary" type="button" disabled={!!busy} onClick={() => setModal(null)}>Cancelar</Button>
+          <Button
+            variant={modal?.type === 'delete' ? 'destructive' : 'default'}
+            type="submit"
+            disabled={
+              !!busy ||
+              (modal?.type === 'save' && !targetPlaylist) ||
+              (modal?.type === 'playlist' && !name.trim()) ||
+              (modal?.type === 'add' && !trackUrl.trim())
+            }
+          >
+            {busy === 'save' && <LoaderCircle className="spin" size={16} />}
+            {modal?.type === 'delete' ? 'Eliminar playlist' : 'Guardar'}
+          </Button>
+        </div>
+      </form>
     </Dialog>
   </div>;
 }

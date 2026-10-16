@@ -24,7 +24,7 @@ frontend/test/            Pruebas del cliente
 
 Requiere Node.js **22.12 o superior**, npm y las dependencias existentes del bot. `better-sqlite3` utiliza un módulo nativo: ejecuta `npm ci` con la versión de Node que vayas a usar para arrancar. Si no hay un binario precompilado para tu plataforma, su instalador necesitará herramientas de compilación nativas.
 
-Configura una sola vez `.env` con los valores privados del bot y `WEB_CLIENT_SECRET` / `WEB_ALLOWED_USER_IDS`. En la aplicación del [Discord Developer Portal](https://discord.com/developers/applications) registra exactamente **`http://127.0.0.1:5173/auth/discord/callback`** como OAuth2 redirect. No pegues los secretos en React ni en variables `VITE_*`.
+Configura una sola vez `.env` con los valores privados del bot, `WEB_CLIENT_SECRET` y la política de acceso deseada (`WEB_ACCESS_MODE=allowlist` con `WEB_ALLOWED_USER_IDS`, o `WEB_ACCESS_MODE=guild_members` con `WEB_ALLOWED_GUILD_IDS`). En la aplicación del [Discord Developer Portal](https://discord.com/developers/applications) registra exactamente **`http://127.0.0.1:5173/auth/discord/callback`** como OAuth2 redirect. No pegues los secretos en React ni en variables `VITE_*`.
 
 Después, cada vez que quieras usar la app, basta un comando desde la raíz del repositorio:
 
@@ -38,16 +38,26 @@ No necesitas cambiar manualmente `WEB_ENABLED`, `WEB_ORIGIN` ni `WEB_REDIRECT_UR
 
 Para revisar sin iniciar el bot ni instalar dependencias, usa `npm run dev:check`. Un puerto ocupado se informa sin terminar el proceso que lo utiliza. Cierra la terminal de Vite o del bot anterior antes de volver a arrancar. Abrir solamente `dev:web` con el backend apagado produce los errores de proxy HTTP 500 vistos en `/api/session` y `/auth/discord`.
 
-Los dos valores propios del panel que debes completar son:
+En modo estático por lista de usuarios (`allowlist`, predeterminado para compatibilidad):
 
 ```env
 WEB_CLIENT_SECRET=secreto_oauth2_de_tu_aplicacion_discord
+WEB_ACCESS_MODE=allowlist
 WEB_ALLOWED_USER_IDS=tu_id_de_usuario_discord
 ```
 
-`WEB_CLIENT_SECRET` es el **Client Secret** de OAuth2, distinto del token del bot. `WEB_ALLOWED_USER_IDS` contiene IDs de personas autorizadas, no el ID del servidor ni el del bot. Conserva los valores reales únicamente en `.env`.
+En modo dinámico por membresía de servidor (`guild_members`, sin necesidad de agregar cada usuario manualmente):
 
-El flujo usa un cliente confidencial con `client_secret`, el scope `identify` y `state` aleatorio ligado a una cookie de un solo uso. No se guardan access/refresh tokens. Discord documenta este flujo en su [referencia de OAuth2](https://docs.discord.com/developers/topics/oauth2); no se presupone soporte PKCE en el flujo confidencial documentado.
+```env
+WEB_CLIENT_SECRET=secreto_oauth2_de_tu_aplicacion_discord
+WEB_ACCESS_MODE=guild_members
+WEB_ALLOWED_GUILD_IDS=id_de_tu_servidor_discord
+WEB_ADMIN_USER_IDS=tu_id_de_usuario_admin_opcional
+```
+
+`WEB_CLIENT_SECRET` es el **Client Secret** de OAuth2, distinto del token del bot. `WEB_ALLOWED_USER_IDS` contiene IDs de personas autorizadas y `WEB_ALLOWED_GUILD_IDS` contiene IDs de servidores de Discord donde está el bot. Conserva los valores reales únicamente en `.env`.
+
+El flujo usa un cliente confidencial con `client_secret`, el scope `identify` y `state` aleatorio ligado a una cookie de un solo uso. No se guardan access/refresh tokens ni se descargan listas completas de miembros del servidor. Discord documenta este flujo en su [referencia de OAuth2](https://docs.discord.com/developers/topics/oauth2); no se presupone soporte PKCE en el flujo confidencial documentado.
 
 **Versión compilada, como alternativa:** instala con `npm ci` y `npm run setup:web`, compila con `npm run build`, configura `WEB_ENABLED=true`, `WEB_ORIGIN=http://127.0.0.1:8080` y su callback en `.env`/Discord, e inicia **una sola instancia** con `npm run start`. Fastify sirve `frontend/dist` en el puerto 8080 y aplica migraciones al abrir SQLite. Este modo conserva el supervisor anterior y no ejecuta Vite. El build por sí solo no reinicia el bot.
 
@@ -66,11 +76,25 @@ El flujo usa un cliente confidencial con `client_secret`, el scope `identify` y 
 | `WEB_CLIENT_ID` | Opcional; utiliza `CLIENT_ID` si no se define. |
 | `WEB_CLIENT_SECRET` | Secreto OAuth2 de la aplicación de Discord. |
 | `WEB_REDIRECT_URI` | `${WEB_ORIGIN}/auth/discord/callback`. |
-| `WEB_ALLOWED_USER_IDS` | IDs de Discord separados por comas; lista obligatoria al habilitar. |
+| `WEB_ACCESS_MODE` | `allowlist` (predeterminado) o `guild_members` (autorización dinámica por membresía en servidores autorizados). |
+| `WEB_ALLOWED_USER_IDS` | IDs de usuario de Discord separados por comas; obligatorio cuando `WEB_ACCESS_MODE=allowlist`. |
+| `WEB_ALLOWED_GUILD_IDS` | IDs de servidores de Discord separados por comas; obligatorio cuando `WEB_ACCESS_MODE=guild_members` (y filtro opcional en `allowlist`). |
+| `WEB_ADMIN_USER_IDS` | IDs de usuarios administradores explícitos con acceso a diagnóstico y configuración. En `allowlist`, si se omite, conserva `WEB_ALLOWED_USER_IDS`. |
+| `WEB_MEMBERSHIP_CACHE_TTL_MS` | `5000`; caché breve en memoria (0–60000 ms) de membresía verificada, con invalidación inmediata ante expulsiones/salidas. |
 | `WEB_DATABASE_PATH` | `data/dashboard.sqlite`. |
 | `WEB_SESSION_TTL_HOURS` | `168`; expiración absoluta, máximo 30 días. |
 
 Fuera de localhost se exige un origen HTTPS y cookies Secure. Si se utiliza un proxy inverso, termina TLS y reenvía al listener local. No se habilita CORS ni se confía en roles o canales enviados por React. Cada consulta de servidor comprueba membresía; cada control comprueba voz y sesión también después de esperar el bloqueo. Los secretos nunca tienen prefijo `VITE_`.
+
+## Roles y permisos en el servidor
+
+La autorización se aplica íntegramente en el backend (`server.ts` y `webBridge.ts`):
+
+| Tipo de usuario | Condición verificada en el servidor | Permisos que puede ejercer |
+| --- | --- | --- |
+| **Miembro (`member`)** | Pertenece a un servidor autorizado donde está el bot (y pasa la política `allowlist` o `guild_members`). | Iniciar/cerrar sesión, listar únicamente los servidores autorizados a los que pertenece, leer el estado y la cola de reproducción (`GET /state` y SSE `/events` sin datos internos de diagnóstico) y gestionar su biblioteca personal (playlists y favoritos propios) en ese servidor. |
+| **Usuario en canal de voz (`voice`)** | Es miembro del servidor autorizado y está conectado al mismo canal de voz que el bot (o a un canal de voz con permisos `ViewChannel`, `Connect` y `Speak` si el bot está inactivo). | Todos los permisos de **Miembro**, más controles de reproducción y cola (`play`, `pause`, `resume`, `skip`, `stop`, `volume`, `repeat`, `shuffle`, `remove`, `move` y carga de playlists en la cola), revalidados antes y después del bloqueo nativo. |
+| **Administrador explícito (`admin`)** | Su Discord User ID figura en `WEB_ADMIN_USER_IDS` (y es miembro del servidor consultado). | Todos los permisos de **Miembro** (y de **voz** cuando está en el canal de voz del bot), más acceso a métricas de salud e incidentes de diagnóstico (`health`, `incidents`, `GET /api/guilds/:guildId/diagnostics`) y consulta de configuración (`GET /api/config`). |
 
 ## Persistencia
 
@@ -92,14 +116,17 @@ El reordenamiento exige todos los IDs exactamente una vez y cambia posiciones de
 
 | Método y ruta | Resultado |
 | --- | --- |
-| `GET /auth/discord` | Inicio OAuth y cookie de state. |
-| `GET /auth/discord/callback` | Intercambio del código, allowlist y sesión. |
+| `GET /auth/discord` | Inicio OAuth (`scope=identify`) y cookie de state. |
+| `GET /auth/discord/callback` | Intercambio del código, verificación de `allowlist` o membresía en `WEB_ALLOWED_GUILD_IDS` y creación de sesión. |
 | `POST /auth/logout` | Revoca la sesión y elimina cookie. |
-| `GET /api/session` | Perfil y token CSRF de la sesión. |
-| `GET /api/guilds` | Servidores del bot accesibles al usuario. |
-| `GET /api/guilds/:guildId/state` | Canción, pendientes, progreso, volumen, voz y diagnóstico reales. |
-| `GET /api/guilds/:guildId/events` | SSE `state`, snapshot inicial y actualizaciones. |
-| `POST /api/guilds/:guildId/actions` | Play, pause, resume, skip, stop, volume, shuffle, repeat, remove y move. |
+| `GET /api/session` | Perfil, token CSRF, modo de acceso y rol de la sesión. |
+| `GET /api/config` | Configuración no sensible del panel (solo administrador explícito). |
+| `GET /api/guilds` | Servidores autorizados del bot a los que pertenece el usuario. |
+| `GET /api/guilds/:guildId/permissions` | Permisos efectivos del usuario en ese servidor (`member`, `voice`, `admin`). |
+| `GET /api/guilds/:guildId/diagnostics` | Salud del motor e incidentes del servidor (solo administrador explícito). |
+| `GET /api/guilds/:guildId/state` | Canción, pendientes, progreso, volumen, voz, permisos y (solo para administradores) diagnóstico. |
+| `GET /api/guilds/:guildId/events` | SSE `state`, snapshot inicial y actualizaciones con revocación en vivo. |
+| `POST /api/guilds/:guildId/actions` | Play, pause, resume, skip, stop, volume, shuffle, repeat, remove y move (requiere estar en el canal de voz). |
 | `GET/POST /api/guilds/:guildId/playlists` | Listar/crear playlists propias. |
 | `PATCH/DELETE /api/guilds/:guildId/playlists/:playlistId` | Renombrar/eliminar. |
 | `POST /api/guilds/:guildId/playlists/:playlistId/tracks` | Añadir metadatos de una canción. |
@@ -115,7 +142,7 @@ Todas las mutaciones autenticadas requieren `x-csrf-token` y el origen configura
 
 La biblioteca admite hasta 100 playlists por usuario/servidor, 500 pistas por playlist y 1000 favoritos. Una carga admite entre 1 y 50 pistas, en orden. Si se cancela, falla una fuente o cambia la sesión, se detiene la carga; las pistas ya incorporadas permanecen en la cola. Detener entre pistas impide que la carga recree la sesión.
 
-SSE publica snapshots iniciales y aproximadamente cada dos segundos, con reconexión y sincronización REST. Hay hasta cuatro conexiones por usuario y 128 globales, con reservas durante la apertura y cierre por backpressure. Las sesiones o permisos revocados cierran el stream y el cliente retira su estado. La comprobación de membresía usa Discord REST; un error de Discord deniega acceso y la latencia puede retrasar una actualización. Actualmente se realizan dos comprobaciones de membresía por actualización SSE; reducir esa duplicación queda como optimización posible.
+SSE publica snapshots iniciales y aproximadamente cada dos segundos, con reconexión y sincronización REST. Hay hasta cuatro conexiones por usuario y 128 globales, con reservas durante la apertura y cierre por backpressure. Las sesiones o permisos revocados cierran el stream y el cliente retira su estado. La comprobación de membresía usa Discord REST con una caché breve y segura (`WEB_MEMBERSHIP_CACHE_TTL_MS`, 5 s por defecto) que evita duplicar consultas durante lecturas y SSE, se invalida al instante ante eventos `guildMemberRemove` / `guildDelete` o controles fallidos y siempre exige verificación directa en Discord para mutaciones de reproducción. Cualquier fallo de Discord REST deniega el acceso (fail-closed).
 
 Las pruebas automáticas no autentican una cuenta real ni conectan el bot a Discord. Antes de activar en tu servidor de pruebas, comprueba login/logout y expiración, usuario fuera de allowlist, dos servidores, cambio de canal durante un control, reproducción real y fallback de fuentes, SSE tras corte de red, reinicio con SQLite/checkpoint y una cola bloqueada. Configurar OAuth y ejecutar estos casos requiere tus credenciales privadas; no se modifican durante el desarrollo.
 
@@ -129,20 +156,14 @@ Resultado del 15 de octubre de 2026, Windows y Node.js 24.14.0:
 | --- | --- |
 | Baseline antes de modificar | 302 pruebas originales aprobadas. |
 | `npm run build` | Bot TypeScript y frontend Vite compilados, código 0. |
-| `npm test` | **355 pruebas bot/backend + 12 frontend = 367 aprobadas**, sin fallos, cancelaciones ni omisiones. |
+| `npm test` | **378 pruebas bot/backend + 12 frontend = 390 aprobadas**, sin fallos, cancelaciones ni omisiones. |
 | `npm run deploy:check` | 19 comandos válidos, código 0; sin registro ni conexión a Discord. |
 | `npm audit` | 0 vulnerabilidades. |
 | `npm audit --prefix frontend` | 0 vulnerabilidades. |
 | `git diff --check` | Sin errores de whitespace. |
 | Bundle React | Sin referencias a `DISCORD_TOKEN`, `WEB_CLIENT_SECRET` ni `SPOTIFY_CLIENT_SECRET`. |
 
-La huella de comandos permanece `3e86b2114dfce87c089fca414acbc597b3b22810bbb4f0273e3d576e927d168f`. Se añadieron 53 pruebas backend y 12 frontend. Las nuevas pruebas cubren OAuth state/replay/allowlist/CSRF/rate limit, sesiones y SQLite persistentes, aislamiento entre usuarios y servidores, restricciones de voz tras esperas, concurrencia Discord/web con el bloqueo nativo real, búsqueda/extracción/autoplay tardíos, cancelación durante conexión de voz, protección de una cola sucesora, Stop entre pistas de una carga, SSE y cierre HTTP, reordenamiento transaccional y respuestas antiguas del cliente. El runtime mínimo 22.12 se declara en ambos paquetes; esta ejecución se realizó en Node 24.14.0, no en cada versión soportada.
-
-### Validación adicional del arranque único
-
-Se añadieron 17 pruebas en `test/devApp.test.js`: validación de variables/puertos, exclusión de secretos del entorno de Vite, espera de backend y HTTP, fallos de cada componente, timeout, códigos 78/79 y cierre conjunto. Incluyen procesos Node HTTP reales y el supervisor real con un backend de prueba, comprobando que no se reinicie al cerrar y que el puerto se libere. No conectan a Discord.
-
-Después de este cambio, `npm run build`, `npm test` y `npm run deploy:check` pasaron: **372 pruebas backend + 12 frontend = 384 aprobadas**, cero fallos. La comprobación local `npm run dev:check` identificó correctamente `WEB_CLIENT_SECRET` y `WEB_ALLOWED_USER_IDS` ausentes, con salida 1 y sin iniciar el bot. No se activó producción ni se alteró el `.env` existente.
+La huella de comandos permanece `3e86b2114dfce87c089fca414acbc597b3b22810bbb4f0273e3d576e927d168f`. Se añadieron pruebas para `WEB_ACCESS_MODE=guild_members` y compatibilidad con `allowlist`, filtrado por `WEB_ALLOWED_GUILD_IDS`, caché breve de membresía con invalidación por eventos y fallos de Discord REST, cierre de SSE al abandonar un servidor, permisos diferenciados entre servidores y separación de roles (`member`, `voice`, `admin`).
 
 ## Interfaz comprobada
 
