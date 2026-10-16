@@ -5,7 +5,8 @@ import { EmptyState } from './components/common/StateFeedback';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { PageHeading } from './components/layout/PageHeading';
-import { PlayerBar, type PlaybackBindings } from './components/player/PlayerBar';
+import type { PlaybackBindings } from './components/player/PlayerBar';
+import { PlayerExperience } from './components/player/PlayerExperience';
 import type { TrackActions } from './components/queue/TrackList';
 import { Login } from './features/auth/Login';
 import { PlayerView } from './features/dashboard/PlayerView';
@@ -180,7 +181,7 @@ export default function App() {
           </footer>
         </main>
       </div>
-      <PlayerBar playback={playback} onShowQueue={() => app.setView('player')} />
+      <PlayerExperience playback={playback} connection={app.connection} error={app.error} guildName={app.guild?.name} editorOpen={!!app.modal} onShowQueue={() => app.setView('player')} />
       {app.notice && (
         <div className="toast" role="status">
           <Check size={17} />
