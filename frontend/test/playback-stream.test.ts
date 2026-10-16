@@ -122,3 +122,26 @@ describe('playback REST and SSE lifecycle', () => {
     expect(fetchState).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('authoritative snapshot ordering', () => {
+  it('rejects old or duplicated sequence without replacing track metadata or receipt', async () => {
+    const { source, stream, onState } = harness(async () => snapshot());
+    await settle();
+    const state = { ...snapshot(), playbackId: 'new', snapshotEpoch: 'server-A', sequence: 10 };
+    source.emit(state);
+    source.emit({ ...state, current: { ...state.current!, title: 'Obsolete' }, sequence: 9 });
+    source.emit({ ...state, sequence: 10 });
+    expect(onState).toHaveBeenCalledTimes(2);
+    expect(onState).toHaveBeenLastCalledWith(state);
+    stream.close();
+  });
+  it('accepts a new server epoch with a restarted sequence and resynchronizes metadata', async () => {
+    const { source, stream, onState } = harness(async () => snapshot());
+    await settle();
+    source.emit({ ...snapshot(), playbackId: 'first', snapshotEpoch: 'server-A', sequence: 100 });
+    const next = { ...snapshot(), playbackId: 'second', snapshotEpoch: 'server-B', sequence: 1 };
+    source.emit(next);
+    expect(onState).toHaveBeenLastCalledWith(next);
+    stream.close();
+  });
+});
