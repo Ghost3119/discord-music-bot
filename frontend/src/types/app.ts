@@ -1,0 +1,12 @@
+import type { Playlist, Track } from '../lib/api';
+
+export type View = 'player' | 'library' | 'favorites' | 'diagnostics';
+
+export type Modal =
+  | { type: 'playlist'; playlist?: Playlist }
+  | { type: 'delete'; playlist: Playlist }
+  | { type: 'save'; track: Track }
+  | { type: 'add'; playlist: Playlist }
+  | null;
+
+export type LibraryModal = Modal;
