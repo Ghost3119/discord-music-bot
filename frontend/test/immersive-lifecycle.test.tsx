@@ -3,7 +3,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ImmersivePlayer } from '../src/features/immersive/ImmersivePlayer';
-import { AmbientBackground } from '../src/features/immersive/AmbientBackground';
+import { AmbientBackground, AMBIENT_CROSSFADE_MS } from '../src/features/immersive/AmbientBackground';
 import { useArtworkPalette, FALLBACK_PALETTE } from '../src/features/immersive/use-artwork-palette';
 import type { PlaybackBindings } from '../src/components/player/PlayerBar';
 import { snapshot } from './regression-fixtures';
@@ -138,21 +138,128 @@ describe('artwork extraction effects', () => {
     expect(screen.current).toEqual(FALLBACK_PALETTE);
     pixels = new Uint8ClampedArray([20, 70, 240, 255]);
     await act(async () => images[1].onload?.());
-    expect(screen.current.primary).toBe('rgb(10, 34, 116)');
+    expect(screen.current.primary).toBe('rgb(36, 69, 178)');
   });
   it('reuses a cached palette across unmount without another image request', async () => {
     const url = `https://art.test/reopen-${testId}.jpg`, screen = await palette(url);
     await act(async () => images[0].onload?.());
     await act(async () => screen.root.unmount()); roots = roots.filter((root) => root !== screen.root);
     const reopened = await palette(url);
-    expect(images).toHaveLength(1); expect(reopened.current.primary).toBe('rgb(116, 35, 10)');
+    expect(images).toHaveLength(1); expect(reopened.current.primary).toBe('rgb(178, 70, 36)');
   });
   it('removes the outgoing ambient layer after the chromatic transition', async () => {
     const screen = await createTestRoot();
     await act(async () => screen.root.render(<AmbientBackground thumbnail={`https://art.test/ambient-${testId}.jpg`} />));
     await act(async () => images[0].onload?.());
     expect(screen.container.querySelector('.is-leaving')).not.toBeNull();
-    await act(async () => vi.advanceTimersByTimeAsync(851));
+    await act(async () => vi.advanceTimersByTimeAsync(AMBIENT_CROSSFADE_MS + 1));
     expect(screen.container.querySelector('.is-leaving')).toBeNull();
+  });
+  it('propagates extracted ambient CSS custom properties to the parent element', async () => {
+    const screen = await createTestRoot();
+    await act(async () => screen.root.render(<AmbientBackground thumbnail={`https://art.test/ambient-${testId}.jpg`} />));
+    pixels = new Uint8ClampedArray([180, 50, 40, 255]);
+    await act(async () => images[0].onload?.());
+    const primary = screen.container.style.getPropertyValue('--ambient-primary');
+    const secondary = screen.container.style.getPropertyValue('--ambient-secondary');
+    const accent = screen.container.style.getPropertyValue('--ambient-accent');
+    expect(primary).toBeTruthy();
+    expect(primary).toContain('rgb(');
+    expect(secondary).toContain('rgb(');
+    expect(accent).toContain('rgb(');
+  });
+  it('adapts layout state data-has-lyrics when lyrics are present vs absent', async () => {
+    const bindings = playback();
+    let resolveLyrics!: (value: unknown) => void;
+    vi.mocked(api).mockImplementation((path) => {
+      if (path.includes('/lyrics/current')) {
+        return new Promise((resolve) => { resolveLyrics = resolve; }) as ReturnType<typeof api>;
+      }
+      return new Promise(() => {}) as ReturnType<typeof api>;
+    });
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      return <ImmersivePlayer open={open} onOpenChange={setOpen} playback={bindings} connection="live" error="" guildName="Servidor de prueba" />;
+    }
+    const screen = await createTestRoot();
+    await act(async () => screen.root.render(<Harness />));
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const stage = dialog.querySelector<HTMLElement>('.immersive-stage')!;
+    expect(stage.getAttribute('data-has-lyrics')).toBe('false');
+
+    await act(async () => resolveLyrics({
+      guildId: bindings.state!.guildId,
+      trackId: bindings.state!.current!.id,
+      playbackId: bindings.state!.playbackId,
+      status: 'instrumental',
+      source: { name: 'LRCLIB', url: 'https://lrclib.net', recordId: 1 },
+    }));
+    expect(stage.getAttribute('data-has-lyrics')).toBe('false');
+    expect(dialog.getAttribute('data-has-lyrics')).toBe('false');
+    expect(dialog.textContent).toContain('Esta pista es instrumental.');
+  });
+  it('sets data-has-lyrics="true" and preserves split layout when synced lyrics resolve', async () => {
+    const bindings = playback();
+    let resolveLyrics!: (value: unknown) => void;
+    vi.mocked(api).mockImplementation((path) => {
+      if (path.includes('/lyrics/current')) {
+        return new Promise((resolve) => { resolveLyrics = resolve; }) as ReturnType<typeof api>;
+      }
+      return new Promise(() => {}) as ReturnType<typeof api>;
+    });
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      return <ImmersivePlayer open={open} onOpenChange={setOpen} playback={bindings} connection="live" error="" guildName="Servidor de prueba" />;
+    }
+    const screen = await createTestRoot();
+    await act(async () => screen.root.render(<Harness />));
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const stage = dialog.querySelector<HTMLElement>('.immersive-stage')!;
+
+    await act(async () => resolveLyrics({
+      guildId: bindings.state!.guildId,
+      trackId: bindings.state!.current!.id,
+      playbackId: bindings.state!.playbackId,
+      status: 'synced',
+      lines: [{ timeMs: 0, text: 'Línea uno' }],
+      source: { name: 'LRCLIB', url: 'https://lrclib.net', recordId: 1 },
+    }));
+    expect(stage.getAttribute('data-has-lyrics')).toBe('true');
+    expect(dialog.getAttribute('data-has-lyrics')).toBe('true');
+    expect(dialog.querySelector('.immersive-lyric-lines')).not.toBeNull();
+  });
+  it('preserves retry action and displays error reason in no-lyrics temporary error state', async () => {
+    const bindings = playback();
+    let resolveLyrics!: (value: unknown) => void;
+    vi.mocked(api).mockImplementation((path) => {
+      if (path.includes('/lyrics/current')) {
+        return new Promise((resolve) => { resolveLyrics = resolve; }) as ReturnType<typeof api>;
+      }
+      return new Promise(() => {}) as ReturnType<typeof api>;
+    });
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      return <ImmersivePlayer open={open} onOpenChange={setOpen} playback={bindings} connection="live" error="" guildName="Servidor de prueba" />;
+    }
+    const screen = await createTestRoot();
+    await act(async () => screen.root.render(<Harness />));
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+
+    await act(async () => resolveLyrics({
+      guildId: bindings.state!.guildId,
+      trackId: bindings.state!.current!.id,
+      playbackId: bindings.state!.playbackId,
+      status: 'temporary_error',
+      retryAfterMs: 2000,
+      reason: 'timeout',
+    }));
+    expect(dialog.textContent).toContain('Las letras no están disponibles ahora');
+    expect(dialog.textContent).toContain('tardó demasiado');
+    const retryBtn = dialog.querySelector<HTMLButtonElement>('.immersive-retry')!;
+    expect(retryBtn).not.toBeNull();
+    expect(retryBtn.disabled).toBe(true);
+
+    await act(async () => vi.advanceTimersByTimeAsync(2005));
+    expect(retryBtn.disabled).toBe(false);
   });
 });

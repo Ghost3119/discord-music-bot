@@ -5,6 +5,7 @@ import type { PlaybackBindings } from '../../components/player/PlayerBar';
 import { playbackLabels } from '../../components/player/NowPlaying';
 import { duration } from '../../lib/utils';
 import { LyricsPanel } from '../lyrics/LyricsPanel';
+import { useLyrics } from '../lyrics/use-lyrics';
 import { useLyricsClock } from '../lyrics/use-lyrics-clock';
 import { AmbientBackground } from './AmbientBackground';
 import { ImmersiveArtwork } from './ImmersiveArtwork';
@@ -23,10 +24,13 @@ export interface ImmersivePlayerProps {
 }
 export function ImmersivePlayer({ open, onOpenChange, playback, connection, error, guildName, returnFocusRef }: ImmersivePlayerProps) {
   const previousFocus = useRef<HTMLElement | null>(null);
+  const lyrics = useLyrics(playback.state, open);
+  const hasLyrics = lyrics.status === 'ready' && (lyrics.data?.status === 'synced' || lyrics.data?.status === 'plain');
+
   return <Dialog.Root open={open} onOpenChange={onOpenChange}>
     <Dialog.Portal>
       <Dialog.Overlay className="immersive-overlay" />
-      <Dialog.Content className="immersive-player" aria-modal="true" aria-describedby={undefined} onOpenAutoFocus={() => {
+      <Dialog.Content className="immersive-player" data-has-lyrics={hasLyrics ? 'true' : 'false'} aria-modal="true" aria-describedby={undefined} onOpenAutoFocus={() => {
         previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       }} onCloseAutoFocus={(event) => {
         const target = returnFocusRef?.current || previousFocus.current;
@@ -39,22 +43,25 @@ export function ImmersivePlayer({ open, onOpenChange, playback, connection, erro
           <p>{guildName || playback.state?.voice?.name || 'Tu espacio musical'}</p>
           <Dialog.Close asChild><button className="immersive-close" aria-label="Cerrar reproductor inmersivo"><ChevronDown size={22} aria-hidden="true" /><span>Volver</span></button></Dialog.Close>
         </header>
-        <ImmersiveStage playback={playback} connection={connection} error={error} />
+        <ImmersiveStage playback={playback} connection={connection} error={error} lyrics={lyrics} hasLyrics={hasLyrics} />
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>;
 }
 
 /** This local subtree alone receives the 10 Hz visual clock. */
-function ImmersiveStage({ playback, connection, error }: { playback: PlaybackBindings; connection: Connection; error: string }) {
+function ImmersiveStage({ playback, connection, error, lyrics: lyricsProp, hasLyrics: hasLyricsProp }: { playback: PlaybackBindings; connection: Connection; error: string; lyrics?: ReturnType<typeof useLyrics>; hasLyrics?: boolean }) {
   const { state } = playback;
   const current = state?.current;
+  const internalLyrics = useLyrics(state, !lyricsProp);
+  const lyrics = lyricsProp ?? internalLyrics;
+  const hasLyrics = hasLyricsProp ?? (lyrics.status === 'ready' && (lyrics.data?.status === 'synced' || lyrics.data?.status === 'plain'));
   const { positionSeconds, discontinuity } = useLyricsClock(state, connection);
   const [mobileView, setMobileView] = useState<'artwork' | 'lyrics'>('artwork');
   const coverId = useId(), lyricsId = useId();
   const progress = current?.duration ? Math.min(100, Math.max(0, positionSeconds / current.duration * 100)) : 0;
   const message = connection !== 'live' ? connection === 'reconnecting' ? 'Reconectando con el servidor…' : 'Conectando con el servidor…' : state?.permissions?.canControl === false ? 'Puedes escuchar. Únete al canal de voz para controlar la música.' : state?.status === 'recovering' ? 'Recuperando el audio. La posición se actualizará al continuar.' : state?.status === 'blocked' ? 'La reproducción está bloqueada. Revisa los diagnósticos del dashboard.' : '';
-  return <div className="immersive-stage" data-mobile-view={mobileView}>
+  return <div className="immersive-stage" data-mobile-view={mobileView} data-has-lyrics={hasLyrics ? 'true' : 'false'}>
     <nav className="immersive-mobile-switch" aria-label="Vista del reproductor">
       <button aria-pressed={mobileView === 'artwork'} aria-controls={coverId} onClick={() => setMobileView('artwork')}>Portada</button>
       <button aria-pressed={mobileView === 'lyrics'} aria-controls={lyricsId} onClick={() => setMobileView('lyrics')}>Letras</button>
@@ -72,7 +79,7 @@ function ImmersiveStage({ playback, connection, error }: { playback: PlaybackBin
           {error ? <p role="alert">{error}</p> : message ? <p>{message}</p> : <p>{state ? playbackLabels[state.status] : 'Sincronizando reproductor'}{state?.voice ? ` en ${state.voice.name}` : ''}</p>}
         </div>
       </section>
-      <div className="immersive-lyrics-region" id={lyricsId}><LyricsPanel snapshot={state} positionSeconds={positionSeconds} discontinuity={discontinuity} /></div>
+      <div className="immersive-lyrics-region" id={lyricsId}><LyricsPanel snapshot={state} positionSeconds={positionSeconds} discontinuity={discontinuity} lyricsQuery={lyrics} /></div>
     </div>
   </div>;
 }
