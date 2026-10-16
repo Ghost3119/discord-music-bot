@@ -2,6 +2,8 @@
 
 Bot privado de musica para Discord hecho con `discord.js`, `DisTube`, `yt-dlp` y TypeScript.
 
+Incluye **SONORA**, un panel web privado con acceso mediante Discord, reproductor y cola en tiempo real, biblioteca de playlists, favoritos y diagnósticos.
+
 ## Levantar toda la aplicación
 
 Desde la raíz del proyecto, usa una sola terminal:
@@ -12,7 +14,7 @@ npm run dev
 
 Ese comando instala las dependencias que falten, compila el backend, inicia el bot con su supervisor y levanta la vista cuando Fastify está listo. Abre **http://127.0.0.1:5173**. **Ctrl+C cierra todo.** No necesitas ejecutar `dev:web` en otra terminal.
 
-Configura una sola vez `.env` con `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, `WEB_CLIENT_SECRET` y `WEB_ALLOWED_USER_IDS` (IDs de usuario separados por comas). En Discord OAuth2 registra exactamente `http://127.0.0.1:5173/auth/discord/callback`. El lanzador ajusta el origen y el callback de desarrollo en memoria; no modifica tu `.env` ni expone secretos a Vite.
+Configura una sola vez `.env` con `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, `WEB_CLIENT_SECRET` y la [política de acceso del panel](#panel-web-privado): `allowlist` con `WEB_ALLOWED_USER_IDS`, o `guild_members` con `WEB_ALLOWED_GUILD_IDS`. Los IDs se separan por comas. En Discord OAuth2 registra exactamente `http://127.0.0.1:5173/auth/discord/callback`. El lanzador ajusta el origen y el callback de desarrollo en memoria; no modifica tu `.env` ni expone secretos a Vite.
 
 Si falta configuración o un puerto está ocupado, el comando muestra el motivo antes de iniciar el bot. Si dejaste Vite abierto por separado, cierra esa terminal primero. Para comprobar sin arrancar ni instalar nada: `npm run dev:check`.
 
@@ -245,11 +247,93 @@ Ideas buenas para seguir mejorando el bot:
 
 ## Panel web privado
 
-El dashboard **SONORA** añade inicio de sesión con Discord, reproducción y cola en tiempo real, controles musicales, playlists y favoritos en SQLite. Usa la misma instancia de DisTube y las protecciones del bot. Está **desactivado por defecto** (`WEB_ENABLED=false`) y escucha en `127.0.0.1:8080` al configurarlo.
+El dashboard **SONORA** usa Discord OAuth2 y sincronización REST/SSE para mostrar reproducción, progreso, cola y diagnósticos. Permite buscar música, reordenar canciones, cargar playlists completas y gestionar playlists y favoritos personales por servidor en SQLite. Comparte la instancia de DisTube y las protecciones del bot.
+
+Para el arranque independiente con `npm run start`, el panel está **desactivado por defecto** (`WEB_ENABLED=false`) y escucha en `127.0.0.1:8080` al habilitarlo. `npm run dev` lo habilita en memoria para su backend hijo y sirve la interfaz en el puerto 5173.
 
 `npm run dev` levanta ambas partes en una sola terminal. Consulta [configuración OAuth, variables, endpoints, migraciones y validación](docs/DASHBOARD.md). `.env.example` contiene valores de ejemplo sin secretos. `npm run dev:web` queda disponible únicamente para iniciar Vite de forma independiente; necesita un backend ya activo.
 
-La implementación no activa ni reinicia el bot en producción. Las comprobaciones reales de OAuth y voz en Discord se hacen al activar una única instancia de pruebas.
+### Acceso y permisos
+
+Hay dos políticas de acceso:
+
+- `WEB_ACCESS_MODE=allowlist` — predeterminada; requiere `WEB_ALLOWED_USER_IDS` con los usuarios autorizados.
+- `WEB_ACCESS_MODE=guild_members` — acceso dinámico por membresía; requiere `WEB_ALLOWED_GUILD_IDS` con los servidores autorizados donde está el bot, sin agregar manualmente cada usuario.
+
+Ejemplo de membresía dinámica, además de las variables del bot y `WEB_CLIENT_SECRET`:
+
+```env
+WEB_ACCESS_MODE=guild_members
+WEB_ALLOWED_GUILD_IDS=id_de_tu_servidor_discord
+# Opcional: administradores explícitos del panel.
+WEB_ADMIN_USER_IDS=tu_id_de_usuario_discord
+```
+
+El backend verifica membresía y permisos en cada servidor; salir de un servidor o perder acceso revoca también su conexión SSE.
+
+| Rol | Permisos |
+| --- | --- |
+| `member` | Consultar estado y cola; gestionar sus playlists y favoritos. |
+| `voice` | Añade controles de reproducción y cola cuando cumple los requisitos del canal de voz. |
+| `admin` | Añade acceso a salud, incidentes y configuración; también necesita cumplir los requisitos de voz para controlar música. |
+
+Los administradores se configuran mediante `WEB_ADMIN_USER_IDS`. En modo `allowlist`, si se omite, se conserva la lista de usuarios autorizados como administradores. La [guía del dashboard](docs/DASHBOARD.md) detalla las condiciones de cada rol, OAuth, CSRF y revocación.
+
+### Frontend modular
+
+React, TypeScript, Vite, Tailwind y componentes shadcn/ui se organizan por responsabilidades:
+
+```text
+frontend/src/
+├── App.tsx       Composición y selección de vistas
+├── components/   Layout, reproductor, cola y componentes compartidos
+├── features/     Autenticación, dashboard, biblioteca, favoritos y diagnósticos
+├── hooks/        Coordinación de aplicación y reproducción
+├── lib/          Cliente HTTP, sincronización REST/SSE y utilidades
+├── types/        Contratos de navegación y editor
+├── main.tsx      Entrada de React
+└── styles.css    Estilos compartidos
+```
+
+`useSonoraApp` coordina sesión, servidor y operaciones; `useSession`, `useLibrary` y `usePlayback` mantienen sus responsabilidades propias. El cliente HTTP centraliza CSRF y errores; la sincronización evita que respuestas REST antiguas sobrescriban eventos SSE recientes. La [refactorización modular](docs/FRONTEND_REFACTOR.md) documenta los límites, componentes y decisiones, conservando el diseño existente.
+
+### Editor de biblioteca
+
+- Los refrescos asíncronos conservan los borradores de creación, renombrado y canciones, además de una playlist de destino mientras siga disponible.
+- Al pegar un enlace se consultan metadatos para completar título, artista y portada. Los metadatos automáticos pertenecen a la URL y apertura actuales del editor; las respuestas canceladas o tardías se descartan.
+- Las ediciones manuales se conservan y no reinician la consulta de metadatos.
+- Los contratos TypeScript exigen propietario para filas de playlist y lo prohíben para cola y favoritos.
+
+Guardar durante la resolución sigue permitido sin reutilizar datos de otra canción. Con título manual pueden faltar duración y portada si la consulta aún no termina. Si el título está vacío, el backend resuelve la URL actual y puede completar también el artista. Las [correcciones del editor y sus pruebas](docs/LIBRARY_EDITOR_INVARIANTS.md) explican estas garantías y límites.
+
+## Validación y pruebas
+
+Desde la raíz:
+
+```powershell
+npm run build
+npm test
+npm run deploy:check
+git diff --check
+```
+
+La última validación documentada, del **16 de octubre de 2026**, aprobó **461 pruebas: 380 backend y 81 frontend**, incluidas **26 pruebas React montadas** del editor. Cubren respuestas tardías, cancelación, desmontaje, cambios de sesión/servidor y StrictMode. El build comprueba también los contratos TypeScript positivos y negativos. Consulta el [informe de validación](docs/LIBRARY_EDITOR_INVARIANTS.md).
+
+Para ejecutar únicamente las pruebas montadas del editor:
+
+```powershell
+npm --prefix frontend test -- --run test/library-editor.test.tsx
+```
+
+Las pruebas montadas utilizan jsdom como dependencia de desarrollo. Las comprobaciones automáticas simulan los servicios externos; OAuth y voz reales se verifican en una instancia de pruebas de Discord. `deploy:check` valida los 19 comandos sin registrarlos ni iniciar el bot.
+
+Para revisar la interfaz con música simulada y SQLite en memoria, después de compilar:
+
+```powershell
+node test/helpers/dashboard-preview.cjs
+```
+
+Abre `http://127.0.0.1:4175`. El fixture utiliza los puertos locales 4174/4175, no conecta el bot a Discord y se detiene con Ctrl+C.
 
 ## Scripts
 
@@ -260,12 +344,15 @@ La implementación no activa ni reinicia el bot en producción. Las comprobacion
 | `npm run dev:bot` | Ejecuta únicamente el bot con `ts-node`, como antes. |
 | `npm run build` | Compila el bot a `dist` y React a `frontend/dist`. |
 | `npm run build:bot` | Compila únicamente el bot. |
+| `npm run build:web` | Comprueba tipos y contratos del frontend y genera su build de producción. |
 | `npm run setup:web` | Instala las dependencias bloqueadas del frontend. |
 | `npm run dev:web` | Inicia Vite local en el puerto 5173. |
 | `npm run start` | Ejecuta la versión compilada con supervisor y reinicio automático. |
 | `npm run start:once` | Ejecuta un solo proceso, para usar con un supervisor externo. |
 | `npm run update:ytdlp` | Actualiza yt-dlp durante mantenimiento, con un límite de 60 segundos. |
 | `npm test` | Compila el bot y ejecuta pruebas backend y frontend. |
+| `npm run test:bot` | Compila y ejecuta únicamente las pruebas del bot y backend. |
+| `npm run test:web` | Ejecuta únicamente las pruebas del frontend con Vitest. |
 | `npm run deploy` | Registra comandos slash en el servidor configurado. |
 | `npm run deploy:check` | Valida y muestra los comandos sin registrarlos ni iniciar el bot. |
 
