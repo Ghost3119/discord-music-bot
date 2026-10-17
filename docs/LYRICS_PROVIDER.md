@@ -16,7 +16,9 @@ El [repositorio del proveedor](https://github.com/tranxuanthang/lrclib) licencia
 
 Se normalizan Unicode, mayúsculas, acentos, puntuación y espacios; se reconocen etiquetas de video oficial y sufijos de canal Topic/VEVO. Se puede quitar un prefijo «Artista -» únicamente si coincide con el artista conocido. No se borran indicadores musicales como live, remix, cover, acoustic, sped up, slowed o nightcore.
 
-La selección requiere título y artista normalizados exactos, indicadores de versión compatibles, duración conocida con diferencia máxima de 2 s y, cuando se conoce, álbum coincidente. No acepta coincidencias parciales. Registros compatibles con contenido diferente producen `ambiguous`. Duplicados idénticos se resuelven determinísticamente por cercanía de duración e ID. Sin duración fiable no se consulta el proveedor.
+La selección sincronizada requiere título y artista normalizados exactos, indicadores de versión compatibles (también en álbum), duración conocida con diferencia máxima de 2 s y, cuando se conoce, álbum coincidente. No acepta coincidencias parciales. Registros compatibles con contenido diferente producen `ambiguous`. Duplicados idénticos se resuelven determinísticamente por cercanía de duración e ID. Texto y líneas idénticas con timestamps distintos se muestran como `plain`, con advertencia. Para duración de YouTube marcada aproximada, solo puede recuperar texto normal unánime dentro de `max(15 s, 10%)`; ese margen es una heurística propia y nunca autoriza timestamps. Una duración desconocida no se inventa.
+
+Las rutas autenticadas `/lyrics/search` y `/lyrics/selection` permiten editar título/artista y seleccionar un ID devuelto por la búsqueda. Usan la misma cola y cooldown que la consulta automática. La advertencia compara contra la reproducción real. Los IDs admitidos se conservan en RAM 2 minutos, con un máximo de 128 búsquedas, por sesión/guild/canción/playback. La selección de interfaz es temporal y puede recuperarse al reabrir exactamente la misma reproducción. [Diagnóstico y validación V2](LYRICS_RELIABILITY_V2.md).
 
 El contrato distingue `synced` con líneas `{timeMs,text}`, `plain`, `instrumental`, `not_found`, `ambiguous` y `temporary_error` con espera para reintentar. Un LRC inválido utiliza texto normal si existe; si tampoco hay texto fiable, devuelve error temporal. Los registros instrumentales contradictorios se rechazan.
 
@@ -24,7 +26,7 @@ El contrato distingue `synced` con líneas `{timeMs,text}`, `plain`, `instrument
 
 | Recurso | Valor predeterminado |
 | --- | --- |
-| Destino | `https://lrclib.net/api/search` exclusivamente |
+| Destinos | `https://lrclib.net/api/search` y `/api/get/{id entero}` exclusivamente |
 | Redirecciones | Rechazadas |
 | Solicitudes HTTP simultáneas | 1 por servicio |
 | Espaciado | 300 ms tras finalizar cada petición |
@@ -33,8 +35,8 @@ El contrato distingue `synced` con líneas `{timeMs,text}`, `plain`, `instrument
 | Timeout HTTP y lectura del cuerpo | 8 s |
 | Deadline total de búsqueda, incluida cola | 20 s |
 | Deadline de la ruta autenticada | 12 s |
-| Cuerpo remoto | 256 KiB, comprobado por bytes recibidos |
-| Resultados remotos | Máximo 20, esquema validado |
+| Cuerpo remoto | Búsqueda: 1 MiB; registro individual: 256 KiB; comprobados por bytes recibidos |
+| Resultados remotos | Máximo 20; validación individual; duración `null` admitida como desconocida |
 | Texto normal / LRC por registro | 50.000 / 100.000 caracteres |
 | Caché RAM | Máximo 64 entradas |
 | TTL encontrado / negativo | 10 min / 60 s |
@@ -53,6 +55,6 @@ Consulta real única realizada el **2026-10-16 a las 18:28:45 UTC** con los meta
 
 
 ## Diagnóstico de errores y comprobación adicional
-Las respuestas temporary_error incluyen opcionalmente reason (rate_limited,timeout,unavailable,invalid_response,busy), sin detalles internos ni contenido del proveedor. El plazo de la ruta es efectivo incluso si un adaptador tarda en aceptar cancelación. Los límites de consultas, caché y derechos anteriores se conservan.
+Las respuestas `temporary_error` incluyen opcionalmente `reason` (`rate_limited`, `timeout`, `connection`, `unavailable`, `invalid_response`, `busy`), sin detalles internos ni contenido del proveedor. DNS y conexiones interrumpidas se distinguen de HTTP 503. Una respuesta válida sin contenido es `not_found`. El plazo de la ruta es efectivo incluso si un adaptador tarda en aceptar cancelación. Los diagnósticos de matching solo incluyen etapa, decisión y conteos.
 
 Una comprobación real adicional de QUEMAROPA/SINAKA (136s) confirmó50 líneas sincronizadas del registro28481733. La normalización del sufijo Topic seleccionó la versión136s y descartó la141s. Solo se inspeccionaron estado, metadatos públicos, conteos e ID; no se guardaron letras. Los tests de regresión utilizan letras sintéticas originales con esos metadatos públicos.
