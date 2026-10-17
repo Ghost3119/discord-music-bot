@@ -26,8 +26,11 @@ async function harness(t, overrides = {}) {
   const bridge = {
     async assertGuildAccess(_userId, guildId) { if (!state.permissions || guildId !== GUILD) throw denied(); },
     async listGuilds() { return state.permissions ? [{ id: GUILD, name: 'Music server', icon: null }] : []; },
-    async getState() { state.snapshots++; return snapshot(); },
-    async control(userId, guildId, action, signal) { state.calls.push({ userId, guildId, action, signal }); if (state.control) await state.control(signal); },
+    async getState() { state.snapshots++; return {...snapshot(),autoplay:state.radio ?? false}; },
+    async control(userId, guildId, action, signal) { state.calls.push({ userId, guildId, action, signal }); if (state.control) await state.control(signal);
+      if(action.action==='autoplay'){state.radio=action.enabled;return{autoplay:state.radio};}
+      if(action.action==='recommend')return{recommendationsAdded:2};
+    },
   };
   const oauthFetch = async (url, options) => {
     state.fetches++;
@@ -223,6 +226,29 @@ async function liveEvent(app, cookie) {
   const [first] = await once(response, 'data');
   return { request, response, first };
 }
+
+test('Radio and Recommend require session, CSRF, guild authorization and validated parameters',async t=>{
+  const h=await harness(t),auth=await h.login();
+  assert.equal((await h.app.inject({method:'POST',url:BASE+'/actions',headers:{origin:ORIGIN},payload:{action:'recommend'}})).statusCode,401);
+  assert.equal((await h.mutate(auth,'POST',BASE+'/actions',{action:'recommend'},{'x-csrf-token':'bad'})).statusCode,403);
+  for(const action of [{action:'autoplay'},{action:'autoplay',enabled:'yes'},{action:'recommend',amount:0},{action:'recommend',amount:21},{action:'recommend',amount:1.5}]){
+    assert.equal((await h.mutate(auth,'POST',BASE+'/actions',action)).statusCode,400);
+  }
+  assert.deepEqual((await h.mutate(auth,'POST',BASE+'/actions',{action:'recommend'})).json(),{ok:true,recommendationsAdded:2});
+  assert.deepEqual(h.state.calls[0].action,{action:'recommend',amount:5});
+  assert.equal((await h.mutate(auth,'POST',BASE.replace(GUILD,OTHER_GUILD)+'/actions',{action:'recommend'})).statusCode,403);
+  h.state.permissions=false;assert.equal((await h.mutate(auth,'POST',BASE+'/actions',{action:'autoplay',enabled:true})).statusCode,403);
+});
+test('Radio state travels through existing REST and SSE, and failures stay sanitized',async t=>{
+  const h=await harness(t),auth=await h.login();await h.app.listen({host:'127.0.0.1',port:0});
+  const stream=await liveEvent(h.app,auth.cookie);t.after(()=>stream.request.destroy());
+  assert.equal(JSON.parse(stream.first.split('data: ')[1]).autoplay,false);
+  assert.deepEqual((await h.mutate(auth,'POST',BASE+'/actions',{action:'autoplay',enabled:true})).json(),{ok:true,autoplay:true});
+  assert.equal((await h.app.inject({url:BASE+'/state',headers:{cookie:auth.cookie}})).json().autoplay,true);
+  const [frame]=await once(stream.response,'data');assert.equal(JSON.parse(frame.split('data: ')[1]).autoplay,true);
+  h.state.control=async()=>{throw new Error('secret provider data');};
+  const failure=await h.mutate(auth,'POST',BASE+'/actions',{action:'recommend'});assert.equal(failure.statusCode,500);assert.doesNotMatch(failure.body,/secret provider data/);
+});
 
 test('SSE synchronizes initial state, updates, revalidates permissions and cleans up on logout and shutdown', async t => {
   const h = await harness(t);

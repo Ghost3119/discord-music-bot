@@ -1,0 +1,11 @@
+.music-tools { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 16px; }
+.music-tools button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:36px; padding:8px 12px; background:#ffffff08; border:1px solid #ffffff1c; border-radius:8px; color:#d4d8ce; font-size:12px; line-height:1.3; }
+.music-tools button:hover:not(:disabled) { background:#ffffff12; }
+.music-tools button[aria-pressed="true"] { border-color:#c7f57a55; color:#c7f57a; background:#c7f57a0a; }
+.music-tool-state { color:#9ca594; font-size:11px; }
+.music-tools p { flex-basis:100%; color:#90939c; font-size:11px; line-height:1.5; }
+.immersive-controls .music-tools { margin:8px 0 0; justify-content:center; }
+.immersive-controls .music-tools button { min-height:32px; padding:6px 9px; font-size:11px; }
+.immersive-controls .music-tool-state { font-size:10px; }
+@media (max-width:600px) { .music-tools { gap:6px; } .music-tools button { padding:8px; font-size:11px; gap:6px; } .music-tool-state { font-size:10px; } }
+@media (prefers-reduced-motion:reduce) { .music-tools button,.music-tools .spin { animation:none; transition:none; } }

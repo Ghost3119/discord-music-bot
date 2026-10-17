@@ -4,6 +4,7 @@ import { IconButton } from '../common/IconButton';
 import { Button } from '../ui/button';
 import { cn } from '../../lib/utils';
 import type { PlaybackBindings } from './PlayerBar';
+import { MusicTools } from './MusicTools';
 
 export const playbackLabels = {
   idle: 'En espera',
@@ -92,6 +93,7 @@ export function NowPlaying({ playback }: NowPlayingProps) {
           </div>
         </div>
       </div>
+      <MusicTools playback={playback} />
       <div className="now-card-footer">
         <div>
           <Headphones size={14} />

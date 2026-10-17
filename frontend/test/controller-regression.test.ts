@@ -37,7 +37,7 @@ describe('extracted application command contracts', () => {
   it('uses the existing action endpoint, JSON command and session CSRF token', async () => {
     const { app, refresh } = commandHarness();
     await app.action({ action: 'move', from: 2, to: 1 });
-    expect(api).toHaveBeenCalledWith('/api/guilds/guild-a/actions', { method: 'POST', body: '{"action":"move","from":2,"to":1}' }, 'csrf-fixture');
+    expect(api).toHaveBeenCalledWith('/api/guilds/guild-a/actions', { method: 'POST', body: '{"action":"move","from":2,"to":1}', signal: expect.any(AbortSignal) }, 'csrf-fixture');
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 

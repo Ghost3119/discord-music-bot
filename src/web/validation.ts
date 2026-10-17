@@ -1,5 +1,6 @@
 import type { MusicAction } from './contracts';
 import { WebError, TrackMetadata } from './database';
+import { youtubeThumbnail } from '../music/artwork';
 
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new WebError(400, 'Expected a JSON object');
@@ -148,7 +149,7 @@ export function trackMetadata(value: unknown): TrackMetadata {
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || !IMAGE_HOSTS.includes(parsed.hostname)) throw new WebError(400, 'Invalid thumbnail host');
     thumbnail = parsed.toString();
   }
-  return { url, source, title: text(item['title'], 300, 'title'), artist: text(item['artist'] ?? '', 300, 'artist', true), duration: Math.round(number(item['duration'], 0, 604800, 'duration')), thumbnail };
+  return { url, source, title: text(item['title'], 300, 'title'), artist: text(item['artist'] ?? '', 300, 'artist', true), duration: Math.round(number(item['duration'], 0, 604800, 'duration')), thumbnail: thumbnail ?? youtubeThumbnail(source, undefined, url) ?? null };
 }
 export function publicPlayUrl(value: string): string {
   try { return publicTrackUrl(value).url; } catch { /* Albums and playlists are playback inputs, not saved tracks. */ }
@@ -170,6 +171,10 @@ export function musicAction(value: unknown): MusicAction {
       return { action: 'play', query: /^[a-z][a-z\d+.-]*:|^\/\//i.test(query) ? publicPlayUrl(query) : query };
     }
     case 'pause': case 'resume': case 'skip': case 'stop': case 'shuffle': return { action: item['action'] };
+    case 'autoplay':
+      if (typeof item['enabled'] !== 'boolean') throw new WebError(400, 'Invalid radio state');
+      return { action: 'autoplay', enabled: item['enabled'] };
+    case 'recommend': return { action: 'recommend', amount: item['amount'] === undefined ? 5 : integer(item['amount'], 1, 20, 'recommendation amount') };
     case 'volume': return { action: 'volume', volume: integer(item['volume'], 0, 100, 'volume') };
     case 'repeat': return { action: 'repeat', mode: integer(item['mode'], 0, 2, 'repeat mode') };
     case 'remove': return { action: 'remove', index: integer(item['index'], 1, 10000, 'queue index') };

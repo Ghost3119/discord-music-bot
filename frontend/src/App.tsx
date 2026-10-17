@@ -181,7 +181,7 @@ export default function App() {
           </footer>
         </main>
       </div>
-      <PlayerExperience playback={playback} connection={app.connection} error={app.error} guildName={app.guild?.name} editorOpen={!!app.modal} onShowQueue={() => app.setView('player')} />
+      <PlayerExperience playback={playback} connection={app.connection} error={app.error} notice={app.notice} guildName={app.guild?.name} editorOpen={!!app.modal} onShowQueue={() => app.setView('player')} />
       {app.notice && (
         <div className="toast" role="status">
           <Check size={17} />

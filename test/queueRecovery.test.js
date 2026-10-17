@@ -132,6 +132,7 @@ test('a new process restores the queue, position, pause, repeat and volume', asy
   const checkpoint = fs.readFileSync(file, 'utf8');
   assert.doesNotMatch(checkpoint, /temporary-image-secret/);
   assert.equal(JSON.parse(checkpoint)[0].songs[0].thumbnail, queue.songs[0].thumbnail);
+  assert.equal(JSON.parse(checkpoint)[0].songs[1].thumbnail, 'https://i.ytimg.com/vi/BBBBBBBBBBB/hqdefault.jpg');
 
   const distube = distubeMock();
   const voice = { id: voiceId, type: ChannelType.GuildVoice, guildId, joinable: true, speakable: true,
@@ -156,7 +157,8 @@ test('a new process restores the queue, position, pause, repeat and volume', asy
   assert.equal(restored.autoplay, true);
   assert.equal(restored.repeatMode, 2);
   assert.equal(restored.songs[0].thumbnail, queue.songs[0].thumbnail);
-  assert.equal(restored.songs[1].thumbnail, undefined);
+  assert.equal(restored.songs[1].thumbnail, 'https://i.ytimg.com/vi/BBBBBBBBBBB/hqdefault.jpg');
+  assert.doesNotMatch(restored.songs[1].thumbnail, /temporary-image-secret/);
   store.stop();
 });
 

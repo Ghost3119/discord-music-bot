@@ -1,6 +1,7 @@
 import { memo, useId } from 'react';
 import { LoaderCircle, Pause, Play, Repeat, Shuffle, SkipForward, Square, Volume2 } from 'lucide-react';
 import type { PlaybackBindings } from '../../components/player/PlayerBar';
+import { MusicTools } from '../../components/player/MusicTools';
 
 export const ImmersiveControls = memo(function ImmersiveControls({ playback, connection }: { playback: PlaybackBindings; connection: 'connecting' | 'live' | 'reconnecting' }) {
   const { state, busy, controlsDisabled, volumeDraft, setVolumeDraft, action } = playback;
@@ -24,6 +25,7 @@ export const ImmersiveControls = memo(function ImmersiveControls({ playback, con
       <button className="immersive-icon-button" aria-label="Siguiente canción" disabled={disabled || !current || state?.status === 'blocked'} onClick={() => void action({ action: 'skip' })}>{busy === 'skip' ? <LoaderCircle size={23} className="spin" /> : <SkipForward size={23} fill="currentColor" />}</button>
       <button className={`immersive-icon-button${state?.repeat ? ' is-active' : ''}`} aria-label={`Repetición: ${state?.repeat === 1 ? 'canción' : state?.repeat === 2 ? 'cola' : 'desactivada'}. Cambiar modo`} aria-pressed={!!state?.repeat} disabled={disabled || !current} onClick={() => void action({ action: 'repeat', mode: ((state?.repeat || 0) + 1) % 3 })}><Repeat size={20} />{state?.repeat === 1 && <span className="immersive-repeat-one">1</span>}</button>
     </div>
+    <MusicTools playback={playback} connected={connection === 'live'} />
     <div className="immersive-volume">
       <Volume2 size={18} aria-hidden="true" />
       <label htmlFor={volumeId} className="sr-only">Volumen del servidor</label>

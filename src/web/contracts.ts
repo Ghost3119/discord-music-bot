@@ -38,13 +38,16 @@ export interface PlaybackSnapshot {
   snapshotEpoch?: string;
   volume: number;
   repeat: number;
+  autoplay?: boolean;
   voice: { id: string; name: string; members: number } | null;
   health: Record<string, unknown>;
   incidents: Array<{ code: string; message: string; at: string }>;
   permissions?: GuildPermissions;
 }
 export interface MusicAction {
-  action: 'play' | 'pause' | 'resume' | 'skip' | 'stop' | 'volume' | 'shuffle' | 'repeat' | 'remove' | 'move';
+  action: 'play' | 'pause' | 'resume' | 'skip' | 'stop' | 'volume' | 'shuffle' | 'repeat' | 'remove' | 'move' | 'autoplay' | 'recommend';
+  enabled?: boolean;
+  amount?: number;
   query?: string;
   track?: Omit<Track, 'id'>;
   volume?: number;
@@ -57,7 +60,8 @@ export interface MusicBridge {
   listGuilds(userId: string): Promise<GuildSummary[]>;
   assertGuildAccess(userId: string, guildId: string): Promise<void>;
   getState(userId: string, guildId: string): Promise<PlaybackSnapshot>;
-  control(userId: string, guildId: string, action: MusicAction, signal?: AbortSignal): Promise<void>;
+  control(userId: string, guildId: string, action: MusicAction, signal?: AbortSignal): Promise<void | MusicControlResult>;
   getPermissions?(userId: string, guildId: string): Promise<GuildPermissions>;
   invalidateMembership?(userId?: string, guildId?: string): void;
 }
+export interface MusicControlResult { autoplay?: boolean; recommendationsAdded?: number }

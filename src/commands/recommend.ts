@@ -1,28 +1,10 @@
 import { EmbedBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
-import { Song } from 'distube';
 import { Command } from './command.types';
 import { ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
 import { YtDlpSearchPlugin } from '../music/ytDlpSearchPlugin';
-import { getPlaybackState } from '../music/playbackState';
-
-const MAX_RECOMMENDATIONS = 20;
-
-export function selectRecommendations(candidates: Song[], excluded: Song[], amount: number): Song[] {
-  const seenIds = new Set(excluded.map((song) => song.id));
-  const seenUrls = new Set(excluded.map((song) => song.url).filter((url): url is string => Boolean(url)));
-  const selected: Song[] = [];
-
-  for (const song of candidates) {
-    if (seenIds.has(song.id) || (song.url && seenUrls.has(song.url))) continue;
-    selected.push(song);
-    seenIds.add(song.id);
-    if (song.url) seenUrls.add(song.url);
-    if (selected.length >= amount) break;
-  }
-
-  return selected;
-}
+import { MAX_RECOMMENDATIONS, recommendForQueue } from '../music/recommendations';
+export { selectRecommendations } from '../music/recommendations';
 
 export const recommend: Command = {
   data: new SlashCommandBuilder()
@@ -62,46 +44,24 @@ export const recommend: Command = {
 
     const amount = interaction.options.getInteger('cantidad') ?? 5;
     await interaction.deferReply();
-    const revision = getPlaybackState(queue)?.revision;
-
     try {
-      const seeds = [current, queue.songs[queue.songs.length - 1]]
-        .filter((song): song is Song => Boolean(song))
-        .filter((song, index, songs) => songs.findIndex((item) => item.id === song.id) === index);
-      const candidates: Song[] = [];
-
-      for (const seed of seeds) {
-        try {
-          candidates.push(...await plugin.getRecommendations(seed));
-        } catch (error) {
-          console.warn(`No se pudo consultar YouTube Mix para ${seed.name ?? seed.id}:`, error);
-        }
-        if (selectRecommendations(candidates, [...queue.songs, ...queue.previousSongs], amount).length >= amount) break;
-      }
-
-      if (interaction.client.distube.getQueue(guild.id) !== queue || queue.stopped || getPlaybackState(queue)?.closing ||
-        getPlaybackState(queue)?.revision !== revision || member.voice.channel?.id !== queue.voiceChannel?.id) {
-        await interaction.editReply({
-          embeds: [new EmbedBuilder().setColor(BotColors.Warning).setDescription('La cola terminó o cambió, o cambiaste de canal de voz mientras buscaba recomendaciones.')],
-        });
-        return;
-      }
-
-      const selected = selectRecommendations(candidates, [...queue.songs, ...queue.previousSongs], amount);
-      if (!selected.length) {
+      const count = await recommendForQueue(interaction.client.distube, queue, plugin, member, amount);
+      if (!count) {
         await interaction.editReply({
           embeds: [new EmbedBuilder().setColor(BotColors.Warning).setDescription('No encontré recomendaciones nuevas para esta cola.')],
         });
         return;
       }
 
-      for (const song of selected) song.member = member;
-      queue.addToQueue(selected);
       await interaction.editReply({
         embeds: [new EmbedBuilder().setColor(BotColors.Info)
-          .setDescription(`🎵 Añadidas **${selected.length}** recomendaciones a la cola.`)],
+          .setDescription(`🎵 Añadidas **${count}** recomendaciones a la cola.`)],
       });
     } catch (error) {
+      if (['SESSION_CHANGED', 'CONTROL_CHANNEL_REQUIRED'].includes((error as { errorCode?: string }).errorCode ?? '')) {
+        await interaction.editReply({ embeds: [new EmbedBuilder().setColor(BotColors.Warning).setDescription('La cola terminó o cambió, o cambiaste de canal de voz mientras buscaba recomendaciones.')] });
+        return;
+      }
       console.error('Error en /recommend:', error);
       await interaction.editReply({
         embeds: [new EmbedBuilder().setColor(BotColors.Error).setDescription('❌ No pude obtener recomendaciones ahora mismo.')],

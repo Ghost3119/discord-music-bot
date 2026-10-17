@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import * as schema from './schema';
 import type { Track } from './contracts';
+import { youtubeThumbnail } from '../music/artwork';
 
 export interface WebUser { id: string; username: string; avatar: string | null }
 export interface WebSession { user: WebUser; tokenHash: string; csrfHash: string; expiresAt: number }
@@ -18,7 +19,7 @@ export function hashToken(token: string): string { return createHash('sha256').u
 export function csrfTokenFor(token: string): string { return hashToken(`dashboard-csrf:${token}`); }
 
 function track(row: TrackMetadata & { id: string }): Track {
-  return { id: row.id, url: row.url, title: row.title, artist: row.artist, duration: row.duration, thumbnail: row.thumbnail, source: row.source };
+  return { id: row.id, url: row.url, title: row.title, artist: row.artist, duration: row.duration, thumbnail: row.thumbnail || youtubeThumbnail(row.source, undefined, row.url) || null, source: row.source };
 }
 
 /** Synchronous, short SQLite transactions never contain network or playback work. */
