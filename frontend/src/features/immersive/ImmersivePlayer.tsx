@@ -19,10 +19,11 @@ export interface ImmersivePlayerProps {
   playback: PlaybackBindings;
   connection: Connection;
   error: string;
+  notice?: string | undefined;
   guildName?: string;
   returnFocusRef?: RefObject<HTMLElement | null>;
 }
-export function ImmersivePlayer({ open, onOpenChange, playback, connection, error, guildName, returnFocusRef }: ImmersivePlayerProps) {
+export function ImmersivePlayer({ open, onOpenChange, playback, connection, error, notice = '', guildName, returnFocusRef }: ImmersivePlayerProps) {
   const previousFocus = useRef<HTMLElement | null>(null);
   const lyrics = useLyrics(playback.state, open);
   const hasLyrics = lyrics.status === 'ready' && (lyrics.data?.status === 'synced' || lyrics.data?.status === 'plain');
@@ -43,14 +44,14 @@ export function ImmersivePlayer({ open, onOpenChange, playback, connection, erro
           <p>{guildName || playback.state?.voice?.name || 'Tu espacio musical'}</p>
           <Dialog.Close asChild><button className="immersive-close" aria-label="Cerrar reproductor inmersivo"><ChevronDown size={22} aria-hidden="true" /><span>Volver</span></button></Dialog.Close>
         </header>
-        <ImmersiveStage playback={playback} connection={connection} error={error} lyrics={lyrics} hasLyrics={hasLyrics} />
+        <ImmersiveStage playback={playback} connection={connection} error={error} notice={notice} lyrics={lyrics} hasLyrics={hasLyrics} />
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>;
 }
 
 /** This local subtree alone receives the 10 Hz visual clock. */
-function ImmersiveStage({ playback, connection, error, lyrics: lyricsProp, hasLyrics: hasLyricsProp }: { playback: PlaybackBindings; connection: Connection; error: string; lyrics?: ReturnType<typeof useLyrics>; hasLyrics?: boolean }) {
+function ImmersiveStage({ playback, connection, error, notice, lyrics: lyricsProp, hasLyrics: hasLyricsProp }: { playback: PlaybackBindings; connection: Connection; error: string; notice: string; lyrics?: ReturnType<typeof useLyrics>; hasLyrics?: boolean }) {
   const { state } = playback;
   const current = state?.current;
   const internalLyrics = useLyrics(state, !lyricsProp);
@@ -76,7 +77,7 @@ function ImmersiveStage({ playback, connection, error, lyrics: lyricsProp, hasLy
         </div>
         <ImmersiveControls playback={playback} connection={connection} />
         <div className="immersive-playback-feedback">
-          {error ? <p role="alert">{error}</p> : message ? <p>{message}</p> : <p>{state ? playbackLabels[state.status] : 'Sincronizando reproductor'}{state?.voice ? ` en ${state.voice.name}` : ''}</p>}
+          {error ? <p role="alert">{error}</p> : notice ? <p role="status">{notice}</p> : message ? <p>{message}</p> : <p>{state ? playbackLabels[state.status] : 'Sincronizando reproductor'}{state?.voice ? ` en ${state.voice.name}` : ''}</p>}
         </div>
       </section>
       <div className="immersive-lyrics-region" id={lyricsId}><LyricsPanel snapshot={state} positionSeconds={positionSeconds} discontinuity={discontinuity} lyricsQuery={lyrics} /></div>

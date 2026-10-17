@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useSession } from '../features/auth/use-session';
 import { useLibrary } from '../features/library/use-library';
 import { api, type MusicAction } from '../lib/api';
+import type { MusicControlResult } from '../../../src/web/contracts';
 import { AbandonedOperation, createOperationScope } from '../lib/operation-scope';
 import type { View } from '../types/app';
 import { usePlayback } from './use-playback';
@@ -18,9 +19,13 @@ export function useSonoraApp() {
   const selectedGuildRef = useRef('');
   const operationScope = useRef(createOperationScope());
   const runningOperation = useRef(0);
+  const runningKey = useRef('');
+  const musicRequest = useRef<AbortController | null>(null);
 
   const invalidateOperations = useCallback(() => {
     operationScope.current.invalidate();
+    musicRequest.current?.abort();
+    runningKey.current = '';
     runningOperation.current++;
     setBusy('');
   }, []);
@@ -28,10 +33,15 @@ export function useSonoraApp() {
   const { session, guildId, setGuildId, reportError } = auth;
   selectedGuildRef.current = guildId;
   const { state, connection, refresh } = usePlayback(session ? guildId : '', reportError);
+  useEffect(() => {
+    setNotice('');
+    return () => { musicRequest.current?.abort(); };
+  }, [guildId, session?.user.id]);
 
   async function run(key: string, task: () => Promise<void>) {
-    if (busy || loggingOut) return;
+    if (runningKey.current || busy || loggingOut) return;
     const operation = ++runningOperation.current;
+    runningKey.current = key;
     setBusy(key);
     setError('');
     try {
@@ -39,7 +49,7 @@ export function useSonoraApp() {
     } catch (problem) {
       if (!(problem instanceof AbandonedOperation)) reportError(problem);
     } finally {
-      if (operation === runningOperation.current) setBusy('');
+      if (operation === runningOperation.current) { runningKey.current = ''; setBusy(''); }
     }
   }
 
@@ -95,8 +105,19 @@ export function useSonoraApp() {
   function action(command: MusicAction) {
     const originGuild = guildId;
     return run(command.action, async () => {
-      await mutate(`/api/guilds/${originGuild}/actions`, 'POST', command);
-      if (originGuild === selectedGuildRef.current) await refresh();
+      if (!session) return;
+      const controller = new AbortController(); musicRequest.current = controller;
+      try {
+        const result = await api<MusicControlResult>(`/api/guilds/${originGuild}/actions`, { method: 'POST', body: JSON.stringify(command), signal: controller.signal }, session.csrfToken);
+        if (controller.signal.aborted || originGuild !== selectedGuildRef.current) throw new AbandonedOperation();
+        await refresh();
+        if (controller.signal.aborted || originGuild !== selectedGuildRef.current) throw new AbandonedOperation();
+        if (command.action === 'autoplay' && typeof result.autoplay === 'boolean') setNotice(result.autoplay ? 'Radio activada.' : 'Radio desactivada.');
+        if (command.action === 'recommend' && typeof result.recommendationsAdded === 'number') setNotice(result.recommendationsAdded ? `Añadidas ${result.recommendationsAdded} recomendaciones a la cola.` : 'No encontramos recomendaciones nuevas para esta cola.');
+      } catch (error) {
+        if (controller.signal.aborted) throw new AbandonedOperation();
+        throw error;
+      } finally { if (musicRequest.current === controller) musicRequest.current = null; }
     });
   }
 
