@@ -63,6 +63,23 @@ test('artwork projection preserves public images and only derives fallback from 
   f.queue.songs[0].source='soundcloud';
   assert.equal((await f.bridge.getState(userId,guildId)).current.thumbnail,null);
 });
+
+test('Spotify embed artwork survives provider resolution and the public queue snapshot',async t=>{
+  const f=await fixture(t);
+  const {SpotifyPlugin}=require('@distube/spotify');
+  const {SpotifyArtworkPlugin}=require('../dist/music/spotifyArtworkPlugin');
+  const id='7N0ukeSc2gGCNLwhwSAvap';
+  const thumbnail='https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e020388063466b838bbed6c85f2';
+  t.mock.method(Object.getPrototypeOf(new SpotifyPlugin().api),'getData',async()=>({
+    type:'track',id,name:'Rafa Caro',artists:[{name:'T3R Elemento'}],duration:248053,
+    visualIdentity:{image:[{url:thumbnail,maxWidth:300,maxHeight:300}]},
+  }));
+  const plugin=new SpotifyArtworkPlugin();
+  f.queue.songs[1]=await plugin.resolve(`https://open.spotify.com/track/${id}`,{});
+  const state=await f.bridge.getState(userId,guildId);
+  assert.equal(state.queue[0].source,'spotify');
+  assert.equal(state.queue[0].thumbnail,thumbnail);
+});
 for(const change of ['voice','membership','abort','queue'])test('recommendation wait rejects '+change+' before any enqueue',async t=>{
   const f=await fixture(t),gate=deferred(),started=deferred(),controller=new AbortController();
   f.plugin.getRecommendations=async()=>{started.resolve();return gate.promise;};

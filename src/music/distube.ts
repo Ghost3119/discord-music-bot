@@ -1,5 +1,5 @@
 import { DisTube, DisTubeOptions } from 'distube';
-import { SpotifyPlugin } from '@distube/spotify';
+import { SpotifyArtworkPlugin } from './spotifyArtworkPlugin';
 import { Client } from 'discord.js';
 import ffmpeg from 'ffmpeg-static';
 import { YtDlpSearchPlugin } from './ytDlpSearchPlugin';
@@ -8,7 +8,7 @@ export function createDisTube(client: Client): DisTube {
   const clientId = process.env['SPOTIFY_CLIENT_ID'];
   const clientSecret = process.env['SPOTIFY_CLIENT_SECRET'];
   const options: DisTubeOptions = {
-    plugins: [new SpotifyPlugin(clientId && clientSecret ? { api: { clientId, clientSecret } } : {}), new YtDlpSearchPlugin()],
+    plugins: [new SpotifyArtworkPlugin(clientId && clientSecret ? { api: { clientId, clientSecret } } : {}), new YtDlpSearchPlugin()],
     emitNewSongOnly: true,
   };
 

@@ -69,6 +69,14 @@ La causa era el orden de evaluación: `artwork(song.thumbnail || youtubeThumbnai
 
 Las regresiones fallaron antes del parche (Mix, validación, privacidad y checkpoint). Después: **98 pruebas focalizadas** y `npm test` completo, **459 backend + 191 frontend = 650 aprobadas**, sin fallos ni omitidas; `npm run build:bot` y `git diff --check` aprobados. Las cinco referencias públicas de la captura respondieron HEAD 200 `image/jpeg` y cargaron en SONORA a 480×360 en una vista aislada con SQLite en memoria, sin respaldo SONORA. [Captura de esa vista aislada](screenshots/artwork-radio-recommend/recommend-covers-recovered.png). Esa captura verifica las imágenes recuperadas; el proceso del bot activo conserva el código cargado hasta un reinicio autorizado. No se reinició ni se hizo push, merge o despliegue.
 
+## Corrección de Spotify tras la segunda captura
+
+El REST local mostraba `thumbnail: null` para «Rafa Caro» (`7N0ukeSc2gGCNLwhwSAvap`), «El Del Palenque» y «El Fugitivo». La consulta de metadatos de «Rafa Caro» devolvió su portada en `visualIdentity.image`, mientras `@distube/spotify` 2.0.2 esperaba `data.thumbnail` al construir el Song. En esa ruta sin token de API se perdía la imagen antes de llegar al filtro web.
+
+`SpotifyArtworkPlugin` adapta el resultado del método público `api.getData` antes de que el plugin original cree Songs/Playlists. Conserva una miniatura pública existente y recupera los campos de imagen disponibles de cada elemento (`visualIdentity.image`, `coverArt.sources`, `images`). Solo acepta HTTPS sin credenciales, puerto, parámetros ni fragmento en los hosts Spotify ya admitidos. La fábrica utiliza este adaptador con las mismas opciones; resolución, búsquedas de audio y recomendaciones continúan en el plugin original. No añade consultas ni modifica dependencias, el motor de audio o el preloader.
+
+Se reprodujeron seis fallos de portada antes del parche. Validación final: **84 pruebas focalizadas**, `npm run build:bot`, `npm test` (**471 backend + 191 frontend = 662 aprobadas**, sin fallos ni omitidas) y `git diff --check`. La resolución real de las tres URLs recuperó imágenes propias del CDN Spotify; todas cargaron a 300×300 en [la vista aislada](screenshots/artwork-radio-recommend/spotify-covers-recovered.png), con SQLite en memoria y sin audio Discord. Esa captura no corresponde al proceso activo. Las canciones antiguas ya encoladas o guardadas sin imagen conservan sus metadatos hasta resolver nuevamente su URL; no se realizó enriquecimiento masivo ni se reinició el bot activo.
+
 ## Archivos principales
 
 - Backend: `src/music/artwork.ts`, `recommendations.ts`, `ytDlpSearchPlugin.ts`, `queueRecovery.ts`, `webBridge.ts`; comandos `autoplay.ts`/`recommend.ts`; `src/web/{contracts,validation,database,server}.ts`.
