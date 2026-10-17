@@ -5,6 +5,8 @@ import type { PlaybackSnapshot } from '../../lib/api';
 import { findActiveLine } from './playback-clock';
 import { LyricsLine } from './LyricsLine';
 import { useLyrics } from './use-lyrics';
+import { clearManualLyrics, lyricsIdentity, useManualLyrics } from './manual-lyrics';
+import { lyricsFailureCopy, ManualLyricsDialog } from './ManualLyricsDialog';
 
 export interface LyricsPanelProps {
   snapshot: PlaybackSnapshot | null;
@@ -16,12 +18,16 @@ export interface LyricsPanelProps {
 export function LyricsPanel({ snapshot, positionSeconds, discontinuity, enabled = true, lyricsQuery }: LyricsPanelProps) {
   const internalLyrics = useLyrics(snapshot, enabled && !lyricsQuery);
   const lyrics = lyricsQuery ?? internalLyrics;
+  const manual = useManualLyrics(snapshot, enabled);
+  const [searchKey, setSearchKey] = useState<string | null>(null);
+  const searchTrigger = useRef<HTMLElement | null>(null);
   const regionId = useId();
   const scroller = useRef<HTMLDivElement>(null);
   const playbackKey = JSON.stringify([snapshot?.guildId, snapshot?.current?.id, snapshot?.playbackId]);
+  useEffect(() => setSearchKey(null), [playbackKey]);
   const [manualKey, setManualKey] = useState<string | null>(null);
   const following = manualKey !== playbackKey;
-  const data = lyrics.data;
+  const data = manual ?? lyrics.data;
   const lines = data?.status === 'synced' ? data.lines : null;
   const active = lines ? findActiveLine(lines, positionSeconds * 1000) : -1;
   const previousJump = useRef(discontinuity);
@@ -32,6 +38,7 @@ export function LyricsPanel({ snapshot, positionSeconds, discontinuity, enabled 
     observer.observe(scroller.current);
     return () => observer.disconnect();
   }, []);
+  useEffect(() => { if (scroller.current) scroller.current.scrollTop = 0; setManualKey(null); }, [playbackKey, data]);
   useEffect(() => {
     const region = scroller.current;
     if (!following || !lines || active < 0 || !region) return;
@@ -50,11 +57,12 @@ export function LyricsPanel({ snapshot, positionSeconds, discontinuity, enabled 
     if (typeof region.scrollTo === 'function') region.scrollTo({ top: nextTop, behavior: reduced || jumped ? 'instant' : 'smooth' });
     else region.scrollTop = nextTop;
   }, [active, following, discontinuity, lines, playbackKey, layoutRevision]);
-  useEffect(() => { if (scroller.current) scroller.current.scrollTop = 0; }, [playbackKey]);
   const renderedLines = useMemo(() => lines?.map((line, index) => <LyricsLine key={`${line.timeMs}:${index}`} line={line} index={index} active={index === active} past={index < active} />), [lines, active]);
   const stopFollowing = () => { if (lines) setManualKey(playbackKey); };
   const source = data && 'source' in data ? data.source : null;
-  return <section className="immersive-lyrics" aria-label="Letras" data-lyrics-status={lyrics.status === 'ready' ? data?.status : lyrics.status}>
+  const openSearch = () => { searchTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setSearchKey(lyricsIdentity(snapshot)); };
+  const offerSearch = !!snapshot?.current && (manual || data?.status === 'not_found' || data?.status === 'ambiguous' || data?.status === 'plain');
+  return <section className="immersive-lyrics" aria-label="Letras" data-lyrics-status={manual || lyrics.status === 'ready' ? data?.status : lyrics.status}>
     <div className="immersive-lyrics-heading">
       <h2>Letras</h2>
       {lines && !following && <button className="immersive-follow" onClick={() => setManualKey(null)} aria-controls={regionId}>Seguir reproducción</button>}
@@ -63,33 +71,30 @@ export function LyricsPanel({ snapshot, positionSeconds, discontinuity, enabled 
     <div ref={scroller} id={regionId} className="immersive-lyrics-scroll" tabIndex={lines || data?.status === 'plain' ? 0 : undefined} aria-label="Texto de la canción" onWheel={stopFollowing} onTouchStart={stopFollowing} onPointerDown={(event) => { if (event.target === event.currentTarget) stopFollowing(); }} onKeyDown={(event) => {
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) stopFollowing();
     }}>
-      {lines ? <div className="immersive-lyric-lines">{renderedLines}</div> : data?.status === 'plain' ? <div className="immersive-plain-lyrics">{data.plainLyrics}</div> : <LyricsFeedback status={lyrics.status} data={data} error={lyrics.error} canRetry={lyrics.canRetry} retry={lyrics.retry} />}
+      {lines ? <div className="immersive-lyric-lines">{renderedLines}</div> : data?.status === 'plain' ? <div className="immersive-plain-lyrics">{data.plainLyrics}</div> : <LyricsFeedback status={manual ? 'ready' : lyrics.status} data={data} error={lyrics.error} canRetry={lyrics.canRetry} retry={lyrics.retry} search={offerSearch ? openSearch : undefined} />}
     </div>
     {source && <p className="immersive-lyrics-source">Letras de <a href={source.url} target="_blank" rel="noreferrer">{source.name}</a></p>}
+    {manual && <div className="immersive-manual-actions"><button onClick={() => clearManualLyrics(snapshot)}>Volver a búsqueda automática</button>{(lines || data?.status === 'plain') && <button onClick={openSearch}>Cambiar selección de letras</button>}</div>}
+    {!manual && data?.status === 'plain' && offerSearch && <div className="immersive-manual-actions"><button onClick={openSearch}>Buscar letras manualmente</button></div>}
+    {data && 'warning' in data && data.warning && <p className="immersive-lyrics-source">{data.warning}</p>}
+    {enabled && snapshot?.current && searchKey === lyricsIdentity(snapshot) && <ManualLyricsDialog key={searchKey} snapshot={snapshot} onClose={() => setSearchKey(null)} trigger={searchTrigger.current} />}
   </section>;
 }
 
-function LyricsFeedback({ status, data, error, canRetry, retry }: { status: string; data: LyricsCurrentResponse | null; error: string; canRetry: boolean; retry: () => void }) {
+function LyricsFeedback({ status, data, error, canRetry, retry, search }: { status: string; data: LyricsCurrentResponse | null; error: string; canRetry: boolean; retry: () => void; search?: () => void }) {
   const kind = status === 'ready' ? data?.status : status;
   const copy: Record<string, [string, string]> = {
     loading: ['Buscando letras', 'La música continúa mientras las consultamos.'],
     idle: ['Tu música, de cerca', 'Agrega una canción desde el dashboard para empezar.'],
-    instrumental: ['Solo la música', 'Esta pista es instrumental.'],
-    not_found: ['No hay letras disponibles', 'Puedes seguir escuchando esta canción.'],
-    ambiguous: ['Sin una coincidencia confiable', 'No encontramos letras que correspondan a esta versión.'],
+    instrumental: ['Solo la música', 'Esta canción es instrumental.'],
+    not_found: ['No encontramos letras para esta canción.', 'Puedes buscar por título y artista para elegir una versión.'],
+    ambiguous: ['Encontramos varias versiones posibles.', 'Busca y elige la versión que estás escuchando.'],
     temporary_error: ['Las letras no están disponibles ahora', 'El proveedor no respondió. Puedes volver a intentarlo.'],
     stale: ['La canción cambió', 'Vuelve a consultar las letras de la reproducción actual.'],
     error: ['No se pudieron cargar las letras', error],
   };
-  const reasons = {
-    rate_limited: 'LRCLIB limitó las consultas. Espera a que se habilite el botón para volver a consultar.',
-    timeout: 'La consulta tardó demasiado. Puedes volver a intentarlo cuando se habilite el botón.',
-    unavailable: 'No se pudo conectar con LRCLIB. La música puede continuar mientras vuelves a consultar.',
-    invalid_response: 'LRCLIB devolvió una respuesta que no pudimos utilizar. Puedes volver a consultar más tarde.',
-    busy: 'Hay otras consultas de letras en curso. Espera un momento para volver a consultar.',
-  };
   const [title, fallbackDetail] = copy[kind || 'error'] || copy.error;
-  const detail = data?.status === 'temporary_error' && data.reason ? reasons[data.reason] : fallbackDetail;
+  const detail = data?.status === 'temporary_error' && data.reason ? lyricsFailureCopy[data.reason] : fallbackDetail;
   const retryable = ['temporary_error', 'stale', 'error'].includes(kind || '');
   return <div className="immersive-lyrics-feedback" role={kind === 'loading' ? 'status' : undefined}>
     <AudioLines size={24} strokeWidth={1.3} aria-hidden="true" />
@@ -98,5 +103,6 @@ function LyricsFeedback({ status, data, error, canRetry, retry }: { status: stri
       <p>{detail}</p>
     </div>
     {retryable && <button className="immersive-retry" disabled={!canRetry} onClick={retry}><RefreshCw size={15} aria-hidden="true" />Volver a consultar</button>}
+    {search && <button className="immersive-retry" onClick={search}>Buscar letras manualmente</button>}
   </div>;
 }

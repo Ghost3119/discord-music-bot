@@ -567,3 +567,48 @@
   .persistent-player:has(> .immersive-trigger) .player-buttons { grid-column: 3; grid-row: 1; align-self: center; gap: 2px; }
   .persistent-player:has(> .immersive-trigger) .player-main-button, .persistent-player:has(> .immersive-trigger) .player-buttons > .button-icon { width: 44px; height: 44px; }
 }
+/* Manual discovery follows the immersive palette; the lyrics remain the main stage. */
+.immersive-manual-actions { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 10px 8px; font-size: 12px; color: #c5c8cd; }
+.immersive-manual-actions button { text-align: left; text-decoration: underline; text-underline-offset: 4px; }
+.lyrics-search-overlay { position: fixed; inset: 0; z-index: 130; background: #080a10b8; backdrop-filter: blur(10px); }
+.lyrics-search-dialog { position: fixed; z-index: 131; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(640px, calc(100vw - 32px)); max-height: min(780px, calc(100dvh - 48px)); overflow-y: auto; overscroll-behavior: contain; padding: 28px; border: 1px solid #ffffff24; border-radius: 20px; background: #14171e; color: #f3f3f1; box-shadow: 0 24px 100px #0008; font-family: inherit; }
+.lyrics-search-heading { display: flex; align-items: flex-start; gap: 20px; justify-content: space-between; }
+.lyrics-search-heading h2 { margin: 0; font-size: 24px; line-height: 1.2; font-weight: 600; letter-spacing: -.025em; }
+.lyrics-search-heading button { padding: 3px; color: #b4b8bd; flex-shrink: 0; }
+.lyrics-search-dialog > p { margin: 12px 0 0; color: #b4b8bd; font-size: 14px; line-height: 1.6; }
+.lyrics-search-form { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 24px; }
+.lyrics-search-form label { display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: #d0d3d9; min-width: 0; }
+.lyrics-search-form input { width: 100%; min-width: 0; padding: 11px 12px; background: #ffffff08; border: 1px solid #ffffff25; border-radius: 8px; color: #f3f3f1; font-size: 15px; }
+.lyrics-search-form > button { grid-column: 1 / -1; justify-self: start; }
+.lyrics-search-dialog button { min-height: 36px; border-radius: 8px; cursor: pointer; }
+.lyrics-search-dialog button:disabled { opacity: .45; cursor: default; }
+.lyrics-search-dialog button:focus-visible, .lyrics-search-dialog input:focus-visible, .immersive-manual-actions button:focus-visible { outline: 2px solid #c9d4e9; outline-offset: 4px; }
+.lyrics-search-dialog .lyrics-search-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 16px; background: #e8eaf0; color: #14171e; font-size: 13px; font-weight: 600; }
+.lyrics-search-results { margin-top: 20px; font-size: 14px; color: #b4b8bd; }
+.lyrics-search-results ul { padding: 0; margin: 0; list-style: none; }
+.lyrics-search-results li { display: flex; gap: 18px; align-items: center; justify-content: space-between; padding: 17px 0; border-top: 1px solid #ffffff15; }
+.lyrics-search-results li > div { min-width: 0; }
+.lyrics-search-results h3 { font-size: 16px; color: #f3f3f1; font-weight: 600; margin: 0 0 4px; overflow-wrap: anywhere; }
+.lyrics-search-results p { margin: 4px 0 0; line-height: 1.5; overflow-wrap: anywhere; }
+.lyrics-search-results .lyrics-search-metadata { font-size: 12px; color: #969ca8; }
+.lyrics-search-results .lyrics-search-format { font-size: 12px; color: #c9d4e9; }
+.lyrics-search-results li > button, .lyrics-search-confirmation button:not(.lyrics-search-primary) { padding: 8px 12px; border: 1px solid #ffffff30; color: #f3f3f1; font-size: 13px; flex-shrink: 0; }
+.lyrics-search-dialog .lyrics-search-error, .lyrics-search-results .lyrics-search-warning { color: #efc28c; }
+.lyrics-search-results .lyrics-search-warning { font-size: 12px; }
+.lyrics-search-confirmation { margin-top: 18px; padding: 16px; border-left: 2px solid #efc28c; background: #efc28c0a; }
+.lyrics-search-confirmation h3 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+.lyrics-search-confirmation p { font-size: 13px; line-height: 1.6; color: #efc28c; }
+.lyrics-search-confirmation > div { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+.lyrics-search-dialog .lyrics-search-attribution { font-size: 11px; margin-top: 20px; }
+.lyrics-search-attribution a { text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 560px) {
+  .lyrics-search-dialog { padding: 22px 18px; max-height: calc(100dvh - 24px); width: calc(100vw - 24px); border-radius: 16px; }
+  .lyrics-search-heading h2 { font-size: 22px; }
+  .lyrics-search-form { grid-template-columns: 1fr; gap: 12px; }
+  .lyrics-search-form > button { width: 100%; }
+  .lyrics-search-results li { align-items: flex-start; gap: 12px; }
+  .immersive-manual-actions { font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lyrics-search-overlay, .lyrics-search-dialog { animation: none; transition: none; }
+}
