@@ -196,7 +196,7 @@ describe('artwork extraction effects', () => {
     }));
     expect(stage.getAttribute('data-has-lyrics')).toBe('false');
     expect(dialog.getAttribute('data-has-lyrics')).toBe('false');
-    expect(dialog.textContent).toContain('Esta pista es instrumental.');
+    expect(dialog.textContent).toContain('Esta canción es instrumental.');
   });
   it('sets data-has-lyrics="true" and preserves split layout when synced lyrics resolve', async () => {
     const bindings = playback();

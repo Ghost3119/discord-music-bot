@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { LyricsCurrentResponse } from '../../../../src/web/lyrics/contracts';
 import type { PlaybackSnapshot } from '../../lib/api';
 import { api, ApiError } from '../../lib/api';
+import { clearManualLyrics, useManualLyrics } from './manual-lyrics';
 
 type Identity = { key: string; guildId: string; trackId: string; playbackId: string | null };
 type QueryState = { key: string; data: LyricsCurrentResponse | null; error: string; status: 'loading' | 'ready' | 'error' | 'stale'; retryAt: number };
@@ -10,6 +11,7 @@ const cache = new Map<string, { data: LyricsCurrentResponse; expires: number }>(
 const flights = new Map<string, Flight>();
 const MAX_CACHE = 24;
 const MAX_FLIGHTS = 8;
+export function clearLyricsCache() { cache.clear(); }
 
 function identity(snapshot: PlaybackSnapshot | null): Identity | null {
   if (!snapshot?.current) return null;
@@ -60,6 +62,7 @@ function acquire(target: Identity) {
 
 /** The current playback is the only query input; lyrics never own an SSE connection. */
 export function useLyrics(snapshot: PlaybackSnapshot | null, enabled = true) {
+  const manual = useManualLyrics(snapshot, enabled);
   const target = identity(snapshot);
   const key = target?.key ?? '';
   const [query, setQuery] = useState<QueryState | null>(null);
@@ -67,7 +70,7 @@ export function useLyrics(snapshot: PlaybackSnapshot | null, enabled = true) {
   const [now, setNow] = useState(() => Date.now());
   const retryGate = useRef({ key: '', at: 0 });
   useEffect(() => {
-    if (!enabled || !target) return;
+    if (!enabled || !target || manual) return;
     let live = true;
     const cached = cache.get(key);
     if (cached && cached.expires > Date.now()) {
@@ -96,7 +99,7 @@ export function useLyrics(snapshot: PlaybackSnapshot | null, enabled = true) {
     }).catch((error: unknown) => {
       if (!live || request && (error as Error)?.name === 'AbortError') return;
       const denied = error instanceof ApiError && (error.status === 401 || error.status === 403);
-      if (denied) cache.clear();
+      if (denied) { cache.clear(); clearManualLyrics(snapshot); }
       const retryAt = Date.now() + 2000;
       retryGate.current = { key, at: retryAt };
       setQuery({ key, data: null, status: 'error', error: denied ? 'La sesión o el acceso al servidor cambió. Vuelve al dashboard para conectar.' : 'No se pudieron consultar las letras. Puedes volver a intentarlo.', retryAt: denied ? Infinity : retryAt });
@@ -104,7 +107,7 @@ export function useLyrics(snapshot: PlaybackSnapshot | null, enabled = true) {
     return () => { live = false; request.release(); };
     // Identity, rather than every two-second snapshot, owns the request lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, enabled, revision]);
+  }, [key, enabled, revision, manual]);
 
   const current = enabled && query?.key === key ? query : null;
   const retryAt = current?.retryAt ?? 0;
@@ -121,5 +124,5 @@ export function useLyrics(snapshot: PlaybackSnapshot | null, enabled = true) {
     setQuery({ key, data: null, error: '', status: 'loading', retryAt: 0 });
     setRevision((value) => value + 1);
   };
-  return { status: !enabled || !target ? 'idle' as const : current?.status ?? 'loading' as const, data: current?.data ?? null, error: current?.error ?? '', canRetry, retry };
+  return { status: !enabled || !target ? 'idle' as const : manual ? 'ready' as const : current?.status ?? 'loading' as const, data: enabled ? manual ?? current?.data ?? null : null, error: manual ? '' : current?.error ?? '', canRetry: !manual && canRetry, retry };
 }

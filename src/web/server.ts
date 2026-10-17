@@ -10,7 +10,8 @@ import { WebConfig, validateWebConfig } from './config';
 import { WebDatabase, WebError, WebSession, csrfTokenFor, hashToken, openWebDatabase } from './database';
 import { musicAction, object, playlistName, resolveTrackUrlMetadata, trackMetadata } from './validation';
 import { createLyricsService, type LyricsService } from './lyrics/service';
-import type { LyricsCurrentResponse } from './lyrics/contracts';
+import { candidateCompatibilityWarning } from './lyrics/matching';
+import type { LyricsCurrentResponse, LyricsSearchResponse, LyricsResult, LyricsSearchResult } from './lyrics/contracts';
 
 declare module 'fastify' { interface FastifyRequest { webSession: WebSession | null } }
 export interface WebServerOptions {
@@ -69,6 +70,8 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const operations = new Set<PendingOperation>();
   const loads = new Map<string, AbortController>();
   const pendingStreams = new Map<string, number>();
+  // Ephemeral IDs only: selection cannot turn this authenticated route into a catalogue proxy.
+  const lyricChoices = new Map<string, { ids: Set<number>; expiresAt: number }>();
   let expiryCleanup: ReturnType<typeof setInterval> | undefined;
   let closing = false;
   const app = Fastify({ logger: false, bodyLimit: 16_384, requestTimeout: 120_000, connectionTimeout: 15_000, trustProxy: false });
@@ -317,6 +320,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     try {
       const result = await waitForOperation(lyrics.findLyrics({
         title: before.current.title, artist: before.current.artist, duration: before.current.duration,
+        ...(before.current.source === 'youtube' ? { durationReliable: false } : {}),
         ...(before.current.album ? { album: before.current.album } : {}),
       }, signal), signal);
       signal.throwIfAborted();
@@ -337,6 +341,69 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       throw error;
     } finally { operation.done(); }
   });
+  for (const kind of ['search', 'selection'] as const) {
+    app.get(`/api/guilds/:guildId/lyrics/${kind}`, { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply): Promise<LyricsCurrentResponse | LyricsSearchResponse> => {
+      const userId = request.webSession!.user.id;
+      const guildId = params(request)['guildId']!;
+      const input = request.query as Record<string, unknown>;
+      const fields = kind === 'search' ? ['title', 'artist', 'trackId', 'playbackId'] : ['recordId', 'trackId', 'playbackId'];
+      if (Object.keys(input).some(key => !fields.includes(key))) throw new WebError(400, 'Invalid lyrics parameters');
+      const text = (field: string, max: number): string => {
+        const value = input[field];
+        if (typeof value !== 'string' || !value.trim() || value.length > max || /[\u0000-\u001f\u007f]/.test(value)) throw new WebError(400, 'Invalid lyrics parameters');
+        return value.trim();
+      };
+      const trackId = text('trackId', 300), playbackId = text('playbackId', 200);
+      const title = kind === 'search' ? text('title', 200) : '';
+      const artist = kind === 'search' ? text('artist', 200) : '';
+      const recordId = kind === 'selection' ? Number(text('recordId', 16)) : 0;
+      if (kind === 'selection' && (!/^\d+$/.test(input['recordId'] as string) || !Number.isSafeInteger(recordId) || recordId <= 0)) throw new WebError(400, 'Invalid lyrics record ID');
+      const before = await bridge.getState(userId, guildId);
+      const identity = { guildId, trackId: before.current?.id ?? null, playbackId: before.playbackId ?? null };
+      if (!before.current || before.status === 'idle') return { ...identity, status: 'idle' };
+      if (!identity.playbackId || trackId !== identity.trackId || playbackId !== identity.playbackId) return { ...identity, status: 'stale' };
+      const choiceKey = JSON.stringify([request.webSession!.tokenHash, guildId, trackId, playbackId, before.current.url]);
+      for (const [key, choice] of lyricChoices) if (choice.expiresAt <= now()) lyricChoices.delete(key);
+      if (kind === 'selection' && !lyricChoices.get(choiceKey)?.ids.has(recordId)) throw new WebError(409, 'Search again before selecting lyrics');
+      const operation = beginOperation(request, reply.raw, 12_000);
+      const signal = operation.controller.signal;
+      try {
+        const task = kind === 'search'
+          ? lyrics.searchLyrics?.({ title, artist, duration: before.current.duration }, signal)
+          : lyrics.selectLyrics?.(recordId, signal);
+        if (!task) return { ...identity, status: 'temporary_error', retryAfterMs: 5000, reason: 'unavailable' };
+        const result = await waitForOperation<LyricsResult | LyricsSearchResult>(task, signal);
+        signal.throwIfAborted();
+        authenticate(request);
+        await assertGuildAccess(userId, guildId);
+        const after = await bridge.getState(userId, guildId);
+        signal.throwIfAborted();
+        if (after.playbackId !== before.playbackId || after.current?.id !== before.current.id || after.current?.url !== before.current.url || after.status === 'idle') {
+          lyricChoices.delete(choiceKey);
+          return { guildId, trackId: after.current?.id ?? null, playbackId: after.playbackId ?? null, status: 'stale' };
+        }
+        if (result.status === 'results') {
+          result.candidates = result.candidates.map(candidate => {
+            const warning = candidateCompatibilityWarning({ title: before.current!.title, artist: before.current!.artist, duration: before.current!.duration,
+              ...(before.current!.album ? { album: before.current!.album } : {}) }, candidate);
+            const { warning: _editedQueryWarning, ...metadata } = candidate;
+            return { ...metadata, ...(warning ? { warning } : {}) };
+          });
+          lyricChoices.delete(choiceKey);
+          while (lyricChoices.size >= 128) lyricChoices.delete(lyricChoices.keys().next().value!);
+          lyricChoices.set(choiceKey, { ids: new Set(result.candidates.map(candidate => candidate.id)), expiresAt: now() + 120_000 });
+        }
+        return { ...identity, ...result };
+      } catch (error) {
+        if (signal.aborted) {
+          authenticate(request);
+          await assertGuildAccess(userId, guildId);
+          return { ...identity, status: 'temporary_error', retryAfterMs: 5000, reason: operation.timedOut ? 'timeout' : 'unavailable' };
+        }
+        throw error;
+      } finally { operation.done(); }
+    });
+  }
   app.post('/api/guilds/:guildId/actions', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
     const action = musicAction(request.body);
     const operation = beginOperation(request, reply.raw, options.musicOperationTimeoutMs ?? 120_000);
