@@ -156,7 +156,8 @@ test('a new process restores the queue, position, pause, repeat and volume', asy
   assert.equal(restored.autoplay, true);
   assert.equal(restored.repeatMode, 2);
   assert.equal(restored.songs[0].thumbnail, queue.songs[0].thumbnail);
-  assert.equal(restored.songs[1].thumbnail, undefined);
+  assert.equal(restored.songs[1].thumbnail, 'https://i.ytimg.com/vi/BBBBBBBBBBB/hqdefault.jpg');
+  assert.doesNotMatch(restored.songs[1].thumbnail, /temporary-image-secret/);
   store.stop();
 });
 

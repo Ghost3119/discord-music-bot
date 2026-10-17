@@ -6,6 +6,7 @@ import { guardedEvent } from '../runtime/safety';
 import { getPlaybackState } from './playbackState';
 import { getPlaybackHealth } from './playbackHealth';
 import { registerCheckpoint } from './queueChanges';
+import { youtubeThumbnail } from './artwork';
 
 interface SavedSong {
   id: string;
@@ -158,7 +159,7 @@ export class QueueRecovery {
     const songs = queue.songs.slice(0, 500).flatMap((song): SavedSong[] => {
       if (!song.url) return [];
       const metadata = song.metadata as { searchSource?: unknown } | null;
-      const thumbnail = publicThumbnail(song.thumbnail);
+      const thumbnail = publicThumbnail(song.thumbnail || youtubeThumbnail(song.source, song.id, song.url));
       return [{ id: song.id, source: song.source, url: song.url, name: (song.name ?? song.id).slice(0, 500),
         ...(thumbnail ? { thumbnail } : {}),
         uploader: (song.uploader.name ?? '').slice(0, 500),
@@ -220,8 +221,9 @@ export class QueueRecovery {
           if (!plugin) continue;
           // Metadata-only platforms must retain their info-extractor semantics.
           if (!saved.playFromSource && plugin.type !== 'info-extractor') continue;
+          const thumbnail = saved.thumbnail || youtubeThumbnail(saved.source, saved.id, saved.url);
           const info: SongInfo = { plugin, source: saved.source, id: saved.id, name: saved.name,
-            ...(saved.thumbnail ? { thumbnail: saved.thumbnail } : {}),
+            ...(thumbnail ? { thumbnail } : {}),
             url: saved.url, uploader: { name: saved.uploader }, duration: saved.duration, ageRestricted: saved.ageRestricted, playFromSource: saved.playFromSource };
           songs.push(new Song(info, { metadata: { searchSource: saved.searchSource } }));
         }

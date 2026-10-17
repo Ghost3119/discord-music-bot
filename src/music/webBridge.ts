@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Client, Guild, GuildMember, VoiceBasedChannel } from 'discord.js';
 import { Queue, Song } from 'distube';
-import type { GuildPermissions, MusicAction, MusicBridge, PlaybackSnapshot, Track, WebAccessMode } from '../web/contracts';
+import type { GuildPermissions, MusicAction, MusicBridge, MusicControlResult, PlaybackSnapshot, Track, WebAccessMode } from '../web/contracts';
+import { recommendForQueue, updateRadio } from './recommendations';
 import { HistoryStore, publicMusicUrl } from './history';
 import { getPlaybackHealth } from './playbackHealth';
 import { getPlaybackState } from './playbackState';
@@ -13,6 +14,7 @@ import { controlError, installQueueControlGuard, musicSessionVersion, withMusicA
 import { requestPlayback } from './playbackRequest';
 import { YtDlpSearchPlugin } from './ytDlpSearchPlugin';
 import { playbackIdentity } from '../web/playback-identity';
+import { youtubeThumbnail } from './artwork';
 
 export interface MusicBridgeOptions {
   accessMode?: WebAccessMode;
@@ -53,7 +55,7 @@ function artwork(input: unknown): string | null {
 function track(song: Song): Track {
   return { id: /^[\w-]{1,128}$/.test(song.id) ? song.id : '', url: publicMusicUrl(song.url) ?? '',
     title: boundedText(song.name) || 'Canción sin título', artist: boundedText(song.uploader?.name),
-    duration: Number.isFinite(song.duration) ? Math.max(0, song.duration) : 0, thumbnail: artwork(song.thumbnail),
+    duration: Number.isFinite(song.duration) ? Math.max(0, song.duration) : 0, thumbnail: artwork(song.thumbnail || youtubeThumbnail(song.source, song.id, song.url)),
     source: /^[\w-]{1,60}$/.test(song.source) ? song.source : 'unknown' };
 }
 function permissions(client: Client, voice: VoiceBasedChannel): void {
@@ -222,7 +224,7 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
         current: queue?.songs[0] ? track(queue.songs[0]) : null, queue: queue?.songs.slice(1, 501).map(track) ?? [],
         playbackId: playbackIdentity(distube, queue), sampledAt: clock(), sequence: ++snapshotSequence, snapshotEpoch,
         currentTime: queue && Number.isFinite(queue.currentTime) ? Math.max(0, queue.currentTime) : 0,
-        volume: queue?.volume ?? 50, repeat: queue?.repeatMode ?? 0,
+        volume: queue?.volume ?? 50, repeat: queue?.repeatMode ?? 0, autoplay: queue && !queue.stopped ? queue.autoplay : false,
         voice: queue?.voiceChannel ? { id: queue.voiceChannel.id, name: boundedText(queue.voiceChannel.name, 100), members: queue.voiceChannel.members.size } : null,
         health: includeDiagnostics ? { connected: client.isReady(), ping: Math.max(0, Math.round(client.ws.ping)),
           voiceConnected: Boolean(queue?.voiceChannel && !queue.voice.isDisconnected), mode: state?.mode ?? 'idle',
@@ -233,7 +235,7 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
         incidents: includeDiagnostics ? incidents.slice(0, 10) : [],
         permissions: userPermissions };
     },
-    async control(userId: string, guildId: string, action: MusicAction, signal?: AbortSignal): Promise<void> {
+    async control(userId: string, guildId: string, action: MusicAction, signal?: AbortSignal): Promise<void | MusicControlResult> {
       signal?.throwIfAborted();
       const { member } = await membership(userId, guildId, true), queue = distube.getQueue(guildId);
       const voice = voiceFor(client, member, queue);
@@ -263,7 +265,7 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
         if (current) { checkpointQueue(distube, current); await getPlayerPanels(distube)?.refresh(current); }
         return;
       }
-      if (!queue) throw controlError('NO_QUEUE', 'No hay música reproduciéndose.');
+      if (!queue || !queue.songs[0]) throw controlError('NO_QUEUE', 'No hay música reproduciéndose.');
       const wasBlocked = Boolean(getPlaybackState(queue)?.blocked);
       installQueueControlGuard(queue);
       const check = async () => {
@@ -272,8 +274,21 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
         if (distube.getQueue(guildId) !== queue || queue.stopped || getPlaybackState(queue)?.closing && action.action !== 'stop') throw controlError('SESSION_CHANGED', 'La sesión terminó mientras esperaba.');
         if (getPlaybackState(queue)?.blocked && (action.action === 'skip' || action.action === 'resume' && !wasBlocked)) throw controlError('QUEUE_BLOCKED', 'La cola está pausada por fallos. Usa Reintentar o Detener.');
       };
+      let outcome: MusicControlResult | undefined;
       await withMusicAccess(distube, check, async () => {
         switch (action.action) {
+          case 'autoplay':
+            if (typeof action.enabled !== 'boolean') throw controlError('INVALID_ACTION', 'Estado Radio no válido.');
+            await queue._taskQueue.queuing();
+            try { outcome = { autoplay: updateRadio(queue, action.enabled) }; }
+            finally { queue._taskQueue.resolve(); }
+            break;
+          case 'recommend': {
+            const plugin = distube.plugins.find((item): item is YtDlpSearchPlugin => item instanceof YtDlpSearchPlugin);
+            if (!plugin) throw controlError('RECOMMEND_UNAVAILABLE', 'No se pudo consultar YouTube Mix ahora.');
+            outcome = { recommendationsAdded: await recommendForQueue(distube, queue, plugin, member, action.amount ?? 5, signal, check, true) };
+            break;
+          }
           case 'pause': await queue.pause(); break;
           case 'resume': await queue.resume(); break;
           case 'skip': await queue.skip(); break;
@@ -289,6 +304,7 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
         }
       });
       if (!queue.stopped && distube.getQueue(guildId) === queue) { checkpointQueue(distube, queue); await getPlayerPanels(distube)?.refresh(queue); }
+      return outcome;
     },
   };
 }

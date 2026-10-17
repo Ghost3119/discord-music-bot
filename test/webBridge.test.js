@@ -14,6 +14,59 @@ const { YtDlpSearchPlugin } = require('../dist/music/ytDlpSearchPlugin');
 const guildId = '1082065100111872170', userId = '1082065100111872171';
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('Radio publishes the actual flag and desired-state requests do not toggle twice',async t=>{
+  const f=await fixture(t);
+  assert.equal((await f.bridge.getState(userId,guildId)).autoplay,false);
+  assert.deepEqual(await f.bridge.control(userId,guildId,{action:'autoplay',enabled:true}),{autoplay:true});
+  await f.bridge.control(userId,guildId,{action:'autoplay',enabled:true});assert.equal(f.queue.autoplay,true);
+  await f.bridge.control(userId,guildId,{action:'autoplay',enabled:false});assert.equal(f.queue.autoplay,false);
+  f.queue.songs=[];assert.equal((await f.bridge.getState(userId,guildId)).current,null);
+  await assert.rejects(f.bridge.control(userId,guildId,{action:'autoplay',enabled:true}),{errorCode:'NO_QUEUE'});
+});
+test('web YouTube Mix uses album seeds, excludes duplicates and preserves per-song artwork',async t=>{
+  const f=await fixture(t);f.queue.songs[0].url='https://music.youtube.com/watch?v=AAAAAAAAAAA';
+  f.plugin.fetchInfo=async()=>({entries:[{id:'AAAAAAAAAAA'},{id:'BBBBBBBBBBB'},{id:'DDDDDDDDDDD',title:'New D'},{id:'DDDDDDDDDDD'},{id:'EEEEEEEEEEE',title:'New E'}]});
+  const result=await f.bridge.control(userId,guildId,{action:'recommend',amount:2});
+  assert.deepEqual(result,{recommendationsAdded:2});
+  const state=await f.bridge.getState(userId,guildId);
+  assert.deepEqual(state.queue.slice(-2).map(song=>song.thumbnail),['https://i.ytimg.com/vi/DDDDDDDDDDD/hqdefault.jpg','https://i.ytimg.com/vi/EEEEEEEEEEE/hqdefault.jpg']);
+  assert.equal(state.queue.length,4);
+});
+for(const change of ['voice','membership','abort','queue'])test('recommendation wait rejects '+change+' before any enqueue',async t=>{
+  const f=await fixture(t),gate=deferred(),started=deferred(),controller=new AbortController();
+  f.plugin.getRecommendations=async()=>{started.resolve();return gate.promise;};
+  const request=f.bridge.control(userId,guildId,{action:'recommend'},controller.signal);await started.promise;
+  if(change==='voice')f.member.voice.channel={...f.channel,id:'other'};
+  if(change==='membership')f.deny();if(change==='abort')controller.abort();if(change==='queue')f.queue.songs.splice(1,1);
+  gate.resolve([f.song('DDDDDDDDDDD')]);await assert.rejects(request);
+  assert.equal(f.queue.songs.some(song=>song.id==='DDDDDDDDDDD'),false);
+});
+test('concurrent Recommend requests share no mutations and do not hold the audio lock during extraction',async t=>{
+  const f=await fixture(t),gate=deferred(),started=deferred();
+  f.plugin.getRecommendations=async()=>{started.resolve();return gate.promise;};
+  const request=f.bridge.control(userId,guildId,{action:'recommend',amount:1});await started.promise;
+  await assert.rejects(f.bridge.control(userId,guildId,{action:'recommend'}),{errorCode:'MUSIC_BUSY'});
+  await f.queue._taskQueue.queuing();f.queue._taskQueue.resolve();
+  gate.resolve([f.song('DDDDDDDDDDD')]);assert.equal((await request).recommendationsAdded,1);
+});
+for(const action of ['autoplay','recommend'])test(action+' revalidates voice after the native queue lock',async t=>{
+  const f=await fixture(t);f.plugin.getRecommendations=async()=>[f.song('DDDDDDDDDDD')];
+  await f.queue._taskQueue.queuing();
+  const request=f.bridge.control(userId,guildId,{action,enabled:true,amount:1});await tick();
+  f.member.voice.channel={...f.channel,id:'other'};f.queue._taskQueue.resolve();
+  await assert.rejects(request,{errorCode:'CONTROL_CHANNEL_REQUIRED'});assert.equal(f.queue.autoplay,false);
+  assert.equal(f.queue.songs.length,3);
+});
+test('Recommend distinguishes no results from extractor failure and validates amount',async t=>{
+  const f=await fixture(t);f.plugin.getRecommendations=async()=>[];
+  assert.equal((await f.bridge.control(userId,guildId,{action:'recommend'})).recommendationsAdded,0);
+  for(const amount of [0,21,1.1,'5'])await assert.rejects(f.bridge.control(userId,guildId,{action:'recommend',amount}),{errorCode:'INVALID_ACTION'});
+  f.plugin.getRecommendations=async()=>{throw new Error('private extractor URL');};
+  await assert.rejects(f.bridge.control(userId,guildId,{action:'recommend'}),{errorCode:'RECOMMEND_UNAVAILABLE'});
+  f.queue.toggleAutoplay=()=>{throw new Error('internal');};
+  await assert.rejects(f.bridge.control(userId,guildId,{action:'autoplay',enabled:true}));
+});
 async function fixture(t) {
   for (const method of ['log', 'info', 'warn', 'error']) t.mock.method(console, method, () => {});
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });

@@ -204,6 +204,8 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       INVALID_ACTION: [400, 'Invalid playback action'],
       INVALID_QUEUE_POSITION: [400, 'The queue position is no longer available'],
       NO_UP_NEXT: [400, 'There are no pending tracks'],
+      MUSIC_BUSY: [409, 'Ya hay una búsqueda de recomendaciones en curso para esta cola.'],
+      RECOMMEND_UNAVAILABLE: [503, 'No se pudo consultar YouTube Mix ahora.'],
       MUSIC_OPERATION_TIMEOUT: [504, 'La operación superó el tiempo de espera. Algunas canciones pueden estar ya en la cola; revísala antes de reintentar.'],
     };
     const known = candidate.errorCode && Object.hasOwn(bridgeErrors, candidate.errorCode) ? bridgeErrors[candidate.errorCode] : undefined;
@@ -408,9 +410,9 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const action = musicAction(request.body);
     const operation = beginOperation(request, reply.raw, options.musicOperationTimeoutMs ?? 120_000);
     try {
-      await waitForOperation(bridge.control(request.webSession!.user.id, params(request)['guildId']!, action, operation.controller.signal), operation.controller.signal);
+      const result = await waitForOperation(bridge.control(request.webSession!.user.id, params(request)['guildId']!, action, operation.controller.signal), operation.controller.signal);
       if (operation.controller.signal.aborted) throw new WebError(409, 'Playback operation cancelled');
-      return { ok: true };
+      return { ok: true, ...result };
     } catch (error) {
       if (operation.timedOut) throw Object.assign(new WebError(504, 'Music operation timed out'), { errorCode: 'MUSIC_OPERATION_TIMEOUT' });
       if (operation.controller.signal.aborted) throw new WebError(409, 'Playback operation cancelled');

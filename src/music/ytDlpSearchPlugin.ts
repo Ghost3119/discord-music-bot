@@ -2,6 +2,7 @@ import { ExtractorPlugin, Playlist, ResolveOptions, Song, SongInfo, PlaylistInfo
 import { setTimeout as delay } from 'node:timers/promises';
 import { runYtDlp, YtDlpFlags, ExtractionPriority } from './ytDlpRunner';
 import { classifyMusicError } from './errors';
+import { youtubeThumbnail } from './artwork';
 
 // The wrapper's types predate yt-dlp's JavaScript runtime option.
 type YtDlpJsonFlags = YtDlpFlags;
@@ -156,8 +157,9 @@ function toPositiveNumber(value: unknown): number | undefined {
 }
 
 function getBestThumbnail(info: YtDlpInfo): string | undefined {
-  if (info.thumbnail) return info.thumbnail;
-  return info.thumbnails?.find((thumbnail) => typeof thumbnail.url === 'string')?.url;
+  if (typeof info.thumbnail === 'string' && info.thumbnail.trim()) return info.thumbnail;
+  return (Array.isArray(info.thumbnails) ? info.thumbnails.find((thumbnail) => typeof thumbnail?.url === 'string' && thumbnail.url.trim())?.url : undefined)
+    ?? youtubeThumbnail(info.extractor ?? info.ie_key ?? '', info.id, getPlayableUrl(info));
 }
 
 function hasEntries(info: YtDlpInfo): info is YtDlpInfo & { entries: YtDlpInfo[] } {
@@ -240,7 +242,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
   private readonly mixCache = new TtlCache<YtDlpInfo[]>(MIX_CACHE_MAX_ITEMS, MIX_CACHE_TTL_MS);
   private readonly pendingSearches = new Map<string, PendingRequest<YtDlpInfo | null>>();
   private readonly pendingStreamUrls = new Map<string, PendingRequest<string>>();
-  private readonly pendingMixes = new Map<string, Promise<YtDlpInfo[]>>();
+  private readonly pendingMixes = new Map<string, PendingRequest<YtDlpInfo[]>>();
   private readonly refreshAfter = new WeakMap<Song, number>();
   private readonly sourceCooldowns = new Map<SearchSource, { until: number; error: unknown }>();
 
@@ -481,13 +483,16 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     }
   }
 
-  async getRecommendations(seed: Song): Promise<Song[]> {
-    const videoId = await this.getYouTubeVideoId(seed);
+  async getRecommendations(seed: Song, signal?: AbortSignal): Promise<Song[]> {
+    signal?.throwIfAborted();
+    const videoId = await this.getYouTubeVideoId(seed, signal);
     if (!videoId) return [];
 
-    const entries = await this.getMixEntries(videoId);
+    const entries = await this.getMixEntries(videoId, signal);
+    signal?.throwIfAborted();
     const seen = new Set<string>([videoId]);
     return entries.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return [];
       const id = toStringValue(entry.id);
       if (!id || !/^[\w-]{11}$/.test(id) || seen.has(id)) return [];
       seen.add(id);
@@ -531,9 +536,9 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     return streamUrl;
   }
 
-  private async getYouTubeVideoId(song: Song): Promise<string | null> {
+  private async getYouTubeVideoId(song: Song, signal?: AbortSignal): Promise<string | null> {
     if (!song.stream.playFromSource && song.stream.song) {
-      return this.getYouTubeVideoId(song.stream.song);
+      return this.getYouTubeVideoId(song.stream.song, signal);
     }
 
     if (song.source.toLowerCase().includes('youtube') && /^[\w-]{11}$/.test(song.id)) {
@@ -543,31 +548,34 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     const query = [song.name, song.uploader.name].filter(Boolean).join(' ');
     if (!query) return null;
 
-    const result = await this.getSearchResult(query, { searchSource: 'youtube' });
+    const result = await this.getSearchResult(query, { searchSource: 'youtube' }, 'interactive', signal);
     const id = result && toStringValue(result.id);
     return id && /^[\w-]{11}$/.test(id) ? id : null;
   }
 
-  private async getMixEntries(videoId: string): Promise<YtDlpInfo[]> {
+  private async getMixEntries(videoId: string, signal?: AbortSignal): Promise<YtDlpInfo[]> {
+    signal?.throwIfAborted();
     const cached = this.mixCache.get(videoId);
     if (cached) return cached;
 
-    const pending = this.pendingMixes.get(videoId);
-    if (pending) return pending;
-
-    const promise = this.fetchInfo(
-      `https://www.youtube.com/watch?v=${videoId}&list=RD${videoId}`,
-      { flatPlaylist: true, playlistEnd: MIX_CANDIDATE_LIMIT },
-    ).then((info) => {
-      const entries = hasEntries(info) ? info.entries : [];
-      if (entries.length > 0) this.mixCache.set(videoId, entries);
-      return entries;
-    }).finally(() => {
-      this.pendingMixes.delete(videoId);
-    });
-
-    this.pendingMixes.set(videoId, promise);
-    return promise;
+    let pending = this.pendingMixes.get(videoId);
+    if (!pending) {
+      const controller = new AbortController();
+      const request: PendingRequest<YtDlpInfo[]> = { controller, consumers: 0, settled: false, promise: this.fetchInfo(
+        `https://www.youtube.com/watch?v=${videoId}&list=RD${videoId}`,
+        { flatPlaylist: true, playlistEnd: MIX_CANDIDATE_LIMIT }, controller.signal,
+      ).then((info) => {
+        const entries = hasEntries(info) ? info.entries : [];
+        controller.signal.throwIfAborted();
+        if (entries.length > 0) this.mixCache.set(videoId, entries);
+        return entries;
+      }).finally(() => {
+        request.settled = true;
+        if (this.pendingMixes.get(videoId) === request) this.pendingMixes.delete(videoId);
+      }) };
+      this.pendingMixes.set(videoId, request); pending = request;
+    }
+    return this.consumeRequest(this.pendingMixes, videoId, pending, signal);
   }
 
   private async getSearchResult(query: string, metadata: unknown, priority: ExtractionPriority = 'interactive', signal?: AbortSignal): Promise<YtDlpInfo | null> {
@@ -655,7 +663,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
 
   private createPlaylist<T>(info: YtDlpInfo & { entries: YtDlpInfo[] }, options: ResolveOptions<T>): Playlist<T> {
     const songs: Song[] = info.entries
-      .filter((entry) => getPlayableUrl(entry))
+      .filter((entry) => entry && getPlayableUrl(entry))
       .map((entry) => this.createSong({ ...entry, extractor: entry.extractor ?? entry.ie_key?.toLowerCase() ?? info.extractor ?? 'yt-dlp' }, options));
 
     const playlistInfo: PlaylistInfo = {

@@ -8,6 +8,19 @@ function makeSong(id, source = 'youtube', url = `https://www.youtube.com/watch?v
   return new Song({ plugin: null, source, playFromSource: true, id, name: id, url });
 }
 
+test('Mix cancellation preserves another subscriber and aborts extraction after the final consumer leaves',async()=>{
+  const plugin=new YtDlpSearchPlugin(),seed=makeSong('AAAAAAAAAAA');
+  let finish,upstream,calls=0;const waiting=new Promise(resolve=>{finish=resolve;});
+  plugin.fetchInfo=async(_url,_flags,signal)=>{calls++;upstream=signal;await waiting;return {entries:[{id:'BBBBBBBBBBB',title:'New'}]};};
+  const first=new AbortController(),second=new AbortController();
+  const a=plugin.getRecommendations(seed,first.signal),b=plugin.getRecommendations(seed,second.signal);
+  await new Promise(resolve=>setImmediate(resolve));first.abort();await assert.rejects(a);assert.equal(upstream.aborted,false);
+  finish();assert.equal((await b)[0].id,'BBBBBBBBBBB');assert.equal(calls,1);
+  const another=new YtDlpSearchPlugin();another.fetchInfo=(_url,_flags,signal)=>new Promise((_resolve,reject)=>{signal.addEventListener('abort',()=>reject(signal.reason),{once:true});});
+  const controller=new AbortController();const cancelled=another.getRecommendations(seed,controller.signal);
+  await new Promise(resolve=>setImmediate(resolve));controller.abort();await assert.rejects(cancelled);assert.equal(another.pendingMixes.size,0);
+});
+
 test('a YouTube Mix omits its seed and caches the playlist result', async () => {
   const plugin = new YtDlpSearchPlugin();
   const seed = makeSong('AAAAAAAAAAA');

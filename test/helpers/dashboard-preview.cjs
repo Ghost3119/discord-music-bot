@@ -14,9 +14,9 @@ const art = (warm = false) => 'data:image/svg+xml,' + encodeURIComponent(
 const song = (id,title,artist,duration,thumbnail = null) => ({id,title,artist,duration,url:'https://www.youtube.com/watch?v='+id,thumbnail,source:'youtube'});
 const original = ['La tarde dibuja caminos','Y el ruido se queda detrás','Guardamos un poco de cielo','Para volver a empezar','Las luces encuentran su sitio','La noche nos deja escuchar','Un pulso recorre la sala','Y todo comienza a girar'];
 const source = {name:'LRCLIB',url:'https://lrclib.net',recordId:1};
-const snapshot = { guildId,status:'playing',current:null,queue:[],currentTime:18,volume:65,repeat:0,voice:{id:'100000000000000003',name:'Lounge',members:4},health:{connected:true,ping:42,voiceConnected:true,mode:'playing',attempts:0,recentFailures:0,monitor:true,breaker:true},incidents:[],playbackId:randomUUID(),sequence:0,snapshotEpoch:randomUUID(),sampledAt:Date.now() };
+const snapshot = { guildId,status:'playing',current:null,queue:[],currentTime:18,volume:65,repeat:0,autoplay:false,voice:{id:'100000000000000003',name:'Lounge',members:4},health:{connected:true,ping:42,voiceConnected:true,mode:'playing',attempts:0,recentFailures:0,monitor:true,breaker:true},incidents:[],playbackId:randomUUID(),sequence:0,snapshotEpoch:randomUUID(),sampledAt:Date.now() };
 let scenario = 'synced', anchoredAt = Date.now(), providerQueries = 0, eventConnections = 0, totalEventConnections = 0, controls = 0;
-const names = ['synced','plain','instrumental','not-found','ambiguous','no-artwork','broken-artwork','paused','warm','provider-error','idle','member','long'];
+const names = ['synced','plain','instrumental','not-found','ambiguous','no-artwork','broken-artwork','paused','warm','provider-error','idle','member','long','album-artwork','radio-on','recommend-empty','recommend-error','radio-error'];
 function advance() {
   const now = Date.now();
   if(snapshot.status==='playing' && snapshot.current) snapshot.currentTime = Math.min(snapshot.current.duration,snapshot.currentTime+(now-anchoredAt)/1000);
@@ -28,7 +28,8 @@ function select(name) {
   snapshot.playbackId = randomUUID();
   snapshot.currentTime = 18;
   snapshot.status = name==='idle' ? 'idle' : name==='paused' ? 'paused' : 'playing';
-  snapshot.current = name==='idle' ? null : song('AAAAAAAAAAA',name==='warm'?'Después de la lluvia':'Caminos de luz', 'SONORA Sessions · prueba original',240,name==='no-artwork'?null:name==='broken-artwork'?'https://i.ytimg.com/vi/invalid-no-image/missing.jpg':art(name==='warm'));
+  snapshot.autoplay = name==='radio-on';
+  snapshot.current = name==='idle' ? null : song('AAAAAAAAAAA',name==='warm'?'Después de la lluvia':'Caminos de luz', 'SONORA Sessions · prueba original',240,name==='no-artwork'?null:name==='broken-artwork'?'https://i.ytimg.com/vi/AAAAAAAAAAA/hqdefault.jpg':art(name==='warm'));
   snapshot.queue = [song('BBBBBBBBBBB','Después de la lluvia','SONORA Sessions',200,art(true)),song('CCCCCCCCCCC','Sin prisa','SONORA Sessions',240,art())];
   snapshot.permissions={role:name==='member'?'member':'admin',isMember:true,inVoiceChannel:name!=='member',canControl:name!=='member',isAdmin:name!=='member',canRead:true,canManageLibrary:true,canViewDiagnostics:name!=='member',canManageConfig:name!=='member'};
   anchoredAt = Date.now();
@@ -42,6 +43,12 @@ const bridge = {
     if(!snapshot.permissions.canControl)throw Object.assign(new Error('Join voice'),{errorCode:'CONTROL_CHANNEL_REQUIRED'});
     advance();controls++;
     switch(action.action){
+      case'autoplay':if(scenario==='radio-error')throw new Error('Simulated radio failure');snapshot.autoplay=action.enabled;return{autoplay:snapshot.autoplay};
+      case'recommend':
+        if(scenario==='recommend-error')throw Object.assign(new Error('Simulated extractor failure'),{errorCode:'RECOMMEND_UNAVAILABLE'});
+        if(scenario==='recommend-empty')return{recommendationsAdded:0};
+        snapshot.queue.push(song('DDDDDDDDDDD','La siguiente estación','SONORA Sessions',220,art(true)),song('EEEEEEEEEEE','Otra luz','SONORA Sessions',190,art(false)));
+        return{recommendationsAdded:2};
       case'pause':snapshot.status='paused';break;
       case'resume':snapshot.status='playing';break;
       case'skip':snapshot.current=snapshot.queue.shift()??null;snapshot.currentTime=0;snapshot.playbackId=randomUUID();scenario='warm';if(!snapshot.current)snapshot.status='idle';break;
@@ -88,9 +95,9 @@ const lyricsService = {
   });
   const session=database.createSession({id:userId,username:'Alex · vista de prueba',avatar:null},Date.now(),3600000);
   const playlist=database.createPlaylist(userId,guildId,'Noches sin prisa',Date.now());
-  for(const item of[snapshot.current,...snapshot.queue]){const{id:_id,thumbnail:_art,...metadata}=item;database.addPlaylistTrack(userId,guildId,playlist.id,{...metadata,thumbnail:null});}
+  for(const item of[snapshot.current,...snapshot.queue]){const{id:_id,...metadata}=item;database.addPlaylistTrack(userId,guildId,playlist.id,metadata);}
   const{id:_favoriteId,thumbnail:_thumbnail,...favorite}=snapshot.queue[1];
-  database.addFavorite(userId,guildId,{...favorite,thumbnail:null},Date.now());
+  database.addFavorite(userId,guildId,{...favorite,thumbnail:_thumbnail},Date.now());
   const login=require('node:http').createServer((request,response)=>{
     const route=new URL(request.url,'http://127.0.0.1').pathname;
     if(route==='/metrics'){response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify({scenario,eventConnections,totalEventConnections,providerQueries,controls}));return;}

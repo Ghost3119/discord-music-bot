@@ -2,6 +2,7 @@ import { EmbedBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { Command } from './command.types';
 import { ensureGuild } from '../utils/guard';
 import { BotColors } from '../utils/colors';
+import { updateRadio } from '../music/recommendations';
 
 export const autoplay: Command = {
   data: new SlashCommandBuilder()
@@ -30,7 +31,7 @@ export const autoplay: Command = {
       return;
     }
 
-    const enabled = queue.toggleAutoplay();
+    const enabled = updateRadio(queue);
     await interaction.reply({
       embeds: [new EmbedBuilder()
         .setColor(BotColors.Info)
