@@ -55,7 +55,8 @@ function artwork(input: unknown): string | null {
 function track(song: Song): Track {
   return { id: /^[\w-]{1,128}$/.test(song.id) ? song.id : '', url: publicMusicUrl(song.url) ?? '',
     title: boundedText(song.name) || 'Canción sin título', artist: boundedText(song.uploader?.name),
-    duration: Number.isFinite(song.duration) ? Math.max(0, song.duration) : 0, thumbnail: artwork(song.thumbnail || youtubeThumbnail(song.source, song.id, song.url)),
+    duration: Number.isFinite(song.duration) ? Math.max(0, song.duration) : 0,
+    thumbnail: artwork(song.thumbnail) ?? artwork(youtubeThumbnail(song.source, song.id, song.url)),
     source: /^[\w-]{1,60}$/.test(song.source) ? song.source : 'unknown' };
 }
 function permissions(client: Client, voice: VoiceBasedChannel): void {

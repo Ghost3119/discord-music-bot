@@ -33,6 +33,36 @@ test('web YouTube Mix uses album seeds, excludes duplicates and preserves per-so
   assert.deepEqual(state.queue.slice(-2).map(song=>song.thumbnail),['https://i.ytimg.com/vi/DDDDDDDDDDD/hqdefault.jpg','https://i.ytimg.com/vi/EEEEEEEEEEE/hqdefault.jpg']);
   assert.equal(state.queue.length,4);
 });
+
+test('Mix thumbnails with yt-dlp sizing and signature parameters fall back to each video public image',async t=>{
+  const f=await fixture(t);
+  // Shape observed in the real flat Mix; both entries were projected as null.
+  const ids=['SeyrvkjarmY','oz3LxqoyQFQ'];
+  const image=id=>`https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  f.plugin.fetchInfo=async()=>({entries:[
+    {id:ids[0],title:'EZYA vs FUENTES',thumbnails:[{url:`${image(ids[0])}?sqp=size-variant&rs=image-signature`}]},
+    {id:ids[1],title:'supercogelona',thumbnail:`${image(ids[1])}?sqp=size-variant&rs=image-signature`},
+  ]});
+  assert.deepEqual(await f.bridge.control(userId,guildId,{action:'recommend',amount:2}),{recommendationsAdded:2});
+  const state=await f.bridge.getState(userId,guildId);
+  assert.deepEqual(state.queue.slice(-2).map(song=>song.thumbnail),ids.map(image));
+  assert.doesNotMatch(JSON.stringify(state),/size-variant|image-signature|sqp=|rs=/);
+});
+
+test('artwork projection preserves public images and only derives fallback from valid YouTube identity',async t=>{
+  const f=await fixture(t);
+  const publicImage='https://i.ytimg.com/vi_webp/AAAAAAAAAAA/maxresdefault.webp';
+  f.queue.songs[0].thumbnail=publicImage;
+  assert.equal((await f.bridge.getState(userId,guildId)).current.thumbnail,publicImage);
+  f.queue.songs[0].thumbnail='https://untrusted.example/cover.jpg';
+  assert.equal((await f.bridge.getState(userId,guildId)).current.thumbnail,'https://i.ytimg.com/vi/AAAAAAAAAAA/hqdefault.jpg');
+  f.queue.songs[0].url='https://www.youtube.com/watch?v=BBBBBBBBBBB';
+  assert.equal((await f.bridge.getState(userId,guildId)).current.thumbnail,null);
+  f.queue.songs[0].url='https://untrusted.example/watch?v=AAAAAAAAAAA';
+  assert.equal((await f.bridge.getState(userId,guildId)).current.thumbnail,null);
+  f.queue.songs[0].source='soundcloud';
+  assert.equal((await f.bridge.getState(userId,guildId)).current.thumbnail,null);
+});
 for(const change of ['voice','membership','abort','queue'])test('recommendation wait rejects '+change+' before any enqueue',async t=>{
   const f=await fixture(t),gate=deferred(),started=deferred(),controller=new AbortController();
   f.plugin.getRecommendations=async()=>{started.resolve();return gate.promise;};
@@ -125,7 +155,7 @@ test('snapshot projects public fields, pending queue only, and removes tokens, s
   assert.equal(snapshot.status, 'recovering');
   assert.equal(snapshot.current.id, 'AAAAAAAAAAA');
   assert.deepEqual(snapshot.queue.map(s => s.id), ['BBBBBBBBBBB', 'CCCCCCCCCCC']);
-  assert.equal(snapshot.current.thumbnail, null);
+  assert.equal(snapshot.current.thumbnail, 'https://i.ytimg.com/vi/AAAAAAAAAAA/hqdefault.jpg');
   assert.equal(snapshot.queue[0].url, '');
   assert.equal(snapshot.incidents[0].code, 'NETWORK_ERROR');
   assert.doesNotMatch(serialized, /credential|stream|internal|_taskQueue/);

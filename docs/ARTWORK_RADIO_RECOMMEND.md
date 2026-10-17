@@ -61,6 +61,14 @@ Prueba humana: `/play` con el álbum real; comparar carátulas por canción en c
 
 Commits de implementación: `c123261` (metadatos, servicios compartidos, contratos/API y pruebas backend) y `b926bee` (interfaz, cancelación cliente y pruebas React). Documentación/capturas en un tercer commit. Sin push, merge ni despliegue; commits exclusivamente locales en la rama solicitada.
 
+## Corrección tras la captura real de Recommend
+
+El seguimiento del 17-10-2026 confirmó por REST, en la sesión local abierta del usuario, que las cinco recomendaciones de la captura tenían `thumbnail: null`. Una extracción de metadatos del Mix de `BbHnh72wRWQ` devolvió miniaturas `i.ytimg.com/vi/<id>/hqdefault.jpg` con parámetros `sqp` y `rs`, incluyendo `SeyrvkjarmY` y `oz3LxqoyQFQ`, presentes también en esa cola. No se descargó audio ni se modificó la cola activa.
+
+La causa era el orden de evaluación: `artwork(song.thumbnail || youtubeThumbnail(...))` elegía primero la referencia con parámetros y luego el filtro la rechazaba, sin intentar el respaldo. Ahora se valida la miniatura original y, si se rechaza, se deriva y valida la referencia pública de la misma canción. La captura de checkpoints aplica el mismo orden. Se conservan los filtros de secretos, hosts y coincidencia entre ID/URL; las referencias públicas existentes mantienen prioridad.
+
+Las regresiones fallaron antes del parche (Mix, validación, privacidad y checkpoint). Después: **98 pruebas focalizadas** y `npm test` completo, **459 backend + 191 frontend = 650 aprobadas**, sin fallos ni omitidas; `npm run build:bot` y `git diff --check` aprobados. Las cinco referencias públicas de la captura respondieron HEAD 200 `image/jpeg` y cargaron en SONORA a 480×360 en una vista aislada con SQLite en memoria, sin respaldo SONORA. [Captura de esa vista aislada](screenshots/artwork-radio-recommend/recommend-covers-recovered.png). Esa captura verifica las imágenes recuperadas; el proceso del bot activo conserva el código cargado hasta un reinicio autorizado. No se reinició ni se hizo push, merge o despliegue.
+
 ## Archivos principales
 
 - Backend: `src/music/artwork.ts`, `recommendations.ts`, `ytDlpSearchPlugin.ts`, `queueRecovery.ts`, `webBridge.ts`; comandos `autoplay.ts`/`recommend.ts`; `src/web/{contracts,validation,database,server}.ts`.

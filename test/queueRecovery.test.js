@@ -132,6 +132,7 @@ test('a new process restores the queue, position, pause, repeat and volume', asy
   const checkpoint = fs.readFileSync(file, 'utf8');
   assert.doesNotMatch(checkpoint, /temporary-image-secret/);
   assert.equal(JSON.parse(checkpoint)[0].songs[0].thumbnail, queue.songs[0].thumbnail);
+  assert.equal(JSON.parse(checkpoint)[0].songs[1].thumbnail, 'https://i.ytimg.com/vi/BBBBBBBBBBB/hqdefault.jpg');
 
   const distube = distubeMock();
   const voice = { id: voiceId, type: ChannelType.GuildVoice, guildId, joinable: true, speakable: true,
