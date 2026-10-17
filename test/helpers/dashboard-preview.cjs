@@ -16,7 +16,7 @@ const original = ['La tarde dibuja caminos','Y el ruido se queda detrás','Guard
 const source = {name:'LRCLIB',url:'https://lrclib.net',recordId:1};
 const snapshot = { guildId,status:'playing',current:null,queue:[],currentTime:18,volume:65,repeat:0,voice:{id:'100000000000000003',name:'Lounge',members:4},health:{connected:true,ping:42,voiceConnected:true,mode:'playing',attempts:0,recentFailures:0,monitor:true,breaker:true},incidents:[],playbackId:randomUUID(),sequence:0,snapshotEpoch:randomUUID(),sampledAt:Date.now() };
 let scenario = 'synced', anchoredAt = Date.now(), providerQueries = 0, eventConnections = 0, totalEventConnections = 0, controls = 0;
-const names = ['synced','plain','instrumental','not-found','no-artwork','broken-artwork','paused','warm','provider-error','idle','member','long'];
+const names = ['synced','plain','instrumental','not-found','ambiguous','no-artwork','broken-artwork','paused','warm','provider-error','idle','member','long'];
 function advance() {
   const now = Date.now();
   if(snapshot.status==='playing' && snapshot.current) snapshot.currentTime = Math.min(snapshot.current.duration,snapshot.currentTime+(now-anchoredAt)/1000);
@@ -61,9 +61,22 @@ const lyricsService = {
     if(scenario==='plain')return{status:'plain',plainLyrics:original.join('\n\n'),source};
     if(scenario==='instrumental')return{status:'instrumental',source};
     if(scenario==='not-found')return{status:'not_found'};
+    if(scenario==='ambiguous')return{status:'ambiguous'};
     if(scenario==='provider-error')return{status:'temporary_error',retryAfterMs:1500};
     const text=scenario==='long'?Array.from({length:1200},(_,i)=>original[i%original.length]+' '+(i+1)):original;
     return{status:'synced',lines:text.map((text,i)=>({timeMs:i*6000,text})),source};
+  },
+  async searchLyrics(query){
+    providerQueries++;
+    return {status:'results',candidates:[
+      {id:1,title:query.title,artist:query.artist,album:'SONORA Sessions',duration:240,synced:true,plain:true,instrumental:false},
+      {id:2,title:query.title,artist:query.artist,album:'Sesión acústica',duration:240,synced:false,plain:true,instrumental:false},
+      {id:3,title:query.title+' (Live)',artist:query.artist,album:'En concierto',duration:300,synced:true,plain:true,instrumental:false,warning:'Esta versión puede estar desincronizada con la canción actual.'},
+    ]};
+  },
+  async selectLyrics(id){
+    providerQueries++;
+    return id===2?{status:'plain',plainLyrics:original.join('\n\n'),source:{...source,recordId:id}}:{status:'synced',lines:original.map((text,i)=>({timeMs:i*6000,text})),source:{...source,recordId:id}};
   },close(){},
 };
 (async()=>{
