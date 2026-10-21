@@ -7,8 +7,9 @@ import { existsSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
 import type { GuildPermissions, GuildSummary, MusicBridge, PlaybackSnapshot } from './contracts';
 import { WebConfig, validateWebConfig } from './config';
-import { WebDatabase, WebError, WebSession, csrfTokenFor, hashToken, openWebDatabase } from './database';
-import { musicAction, object, playlistName, resolveTrackUrlMetadata, trackMetadata } from './validation';
+import { WebDatabase, WebError, WebSession, type SavedPlaylist, csrfTokenFor, hashToken, openWebDatabase } from './database';
+import { musicAction, object, playlistImportCommitPayload, playlistName, resolveTrackUrlMetadata, trackMetadata } from './validation';
+import { createPlaylistImportService, type PlaylistImportService } from './playlistImport';
 import { createLyricsService, type LyricsService } from './lyrics/service';
 import { candidateCompatibilityWarning } from './lyrics/matching';
 import type { LyricsCurrentResponse, LyricsSearchResponse, LyricsResult, LyricsSearchResult } from './lyrics/contracts';
@@ -26,6 +27,8 @@ export interface WebServerOptions {
   musicOperationTimeoutMs?: number;
   /** Test/provider injection; no client-supplied upstream URLs. */
   lyricsService?: LyricsService;
+  /** Test/extractor injection for public playlist import previews. */
+  playlistImportService?: PlaylistImportService;
 }
 interface LiveStream { response: ServerResponse; tokenHash: string; userId: string; guildId: string; close: () => void }
 interface PendingOperation { tokenHash: string; userId: string; guildId: string | undefined; controller: AbortController; timedOut: boolean; done: () => void }
@@ -58,6 +61,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const now = options.now ?? Date.now;
   const oauthFetch = options.oauthFetch ?? fetch;
   const lyrics = options.lyricsService ?? createLyricsService();
+  const playlistImporter = options.playlistImportService ?? createPlaylistImportService();
   const accessMode = config.accessMode ?? 'allowlist';
   const allowed = new Set(config.allowedUserIds);
   const allowedGuilds = config.allowedGuildIds?.length || accessMode === 'guild_members' ? new Set(config.allowedGuildIds ?? []) : null;
@@ -69,6 +73,8 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const streams = new Set<LiveStream>();
   const operations = new Set<PendingOperation>();
   const loads = new Map<string, AbortController>();
+  const activeImports = new Set<string>();
+  const completedImports = new Map<string, { playlist: SavedPlaylist; expiresAt: number }>();
   const pendingStreams = new Map<string, number>();
   // Ephemeral IDs only: selection cannot turn this authenticated route into a catalogue proxy.
   const lyricChoices = new Map<string, { ids: Set<number>; expiresAt: number }>();
@@ -207,6 +213,8 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       MUSIC_BUSY: [409, 'Ya hay una búsqueda de recomendaciones en curso para esta cola.'],
       RECOMMEND_UNAVAILABLE: [503, 'No se pudo consultar YouTube Mix ahora.'],
       MUSIC_OPERATION_TIMEOUT: [504, 'La operación superó el tiempo de espera. Algunas canciones pueden estar ya en la cola; revísala antes de reintentar.'],
+      PLAYLIST_IMPORT_TIMEOUT: [504, 'La consulta de la playlist superó el tiempo de espera. Inténtalo de nuevo.'],
+      SPOTIFY_IMPORT_UNSUPPORTED: [501, 'La importación de playlists de Spotify estará disponible próximamente. Por ahora puedes importar playlists públicas de YouTube y YouTube Music.'],
     };
     const known = candidate.errorCode && Object.hasOwn(bridgeErrors, candidate.errorCode) ? bridgeErrors[candidate.errorCode] : undefined;
     if (known) { void reply.code(known[0]).send({ error: known[1] }); return; }
@@ -486,6 +494,56 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   }));
   app.get('/api/guilds/:guildId/playlists', async request => ({ playlists: database.listPlaylists(request.webSession!.user.id, params(request)['guildId']!) }));
   app.post('/api/guilds/:guildId/playlists', async request => ({ playlist: database.createPlaylist(request.webSession!.user.id, params(request)['guildId']!, playlistName(request.body), now()) }));
+  app.post('/api/guilds/:guildId/playlists/import/preview', { config: { rateLimit: { max: 12, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const userId = request.webSession!.user.id;
+    const guildId = params(request)['guildId']!;
+    const url = object(request.body)['url'];
+    playlistImporter.parseUrl(url);
+    const operation = beginOperation(request, reply.raw, options.musicOperationTimeoutMs ?? 60_000);
+    const signal = operation.controller.signal;
+    try {
+      const preview = await waitForOperation(playlistImporter.previewPlaylist(url, signal), signal);
+      if (signal.aborted) throw new WebError(409, 'La consulta de la playlist fue cancelada.');
+      authenticate(request);
+      await assertGuildAccess(userId, guildId);
+      return { preview };
+    } catch (error) {
+      if (operation.timedOut) throw Object.assign(new WebError(504, 'La consulta de la playlist superó el tiempo de espera. Inténtalo de nuevo.'), { errorCode: 'PLAYLIST_IMPORT_TIMEOUT' });
+      if (signal.aborted) throw new WebError(409, 'La consulta de la playlist fue cancelada.');
+      throw error;
+    } finally { operation.done(); }
+  });
+  app.post('/api/guilds/:guildId/playlists/import', { bodyLimit: 524_288, config: { rateLimit: { max: 15, timeWindow: '1 minute' } } }, async request => {
+    const userId = request.webSession!.user.id;
+    const guildId = params(request)['guildId']!;
+    const { name, tracks, requestId } = playlistImportCommitPayload(request.body);
+    const currentNow = now();
+    for (const [key, entry] of completedImports) {
+      if (entry.expiresAt <= currentNow) completedImports.delete(key);
+    }
+    const idempotencyKey = requestId ? `${userId}:${guildId}:${requestId}` : null;
+    if (idempotencyKey) {
+      const existing = completedImports.get(idempotencyKey);
+      if (existing && existing.expiresAt > currentNow) {
+        return { playlist: existing.playlist };
+      }
+    }
+    const lockKey = `${userId}:${guildId}`;
+    if (activeImports.has(lockKey)) {
+      throw new WebError(409, 'Ya hay una importación en curso. Espera un momento.');
+    }
+    activeImports.add(lockKey);
+    try {
+      const playlist = database.createPlaylistWithTracks(userId, guildId, name, tracks, currentNow);
+      if (idempotencyKey) {
+        while (completedImports.size >= 256) completedImports.delete(completedImports.keys().next().value!);
+        completedImports.set(idempotencyKey, { playlist, expiresAt: currentNow + 300_000 });
+      }
+      return { playlist };
+    } finally {
+      activeImports.delete(lockKey);
+    }
+  });
   app.patch('/api/guilds/:guildId/playlists/:playlistId', async request => ({ playlist: database.renamePlaylist(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, playlistName(request.body)) }));
   app.delete('/api/guilds/:guildId/playlists/:playlistId', async request => {
     database.deletePlaylist(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!); return { ok: true };

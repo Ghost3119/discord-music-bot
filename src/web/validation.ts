@@ -46,14 +46,17 @@ const IMAGE_HOSTS = [
   'i1.sndcdn.com', 'i2.sndcdn.com', 'i3.sndcdn.com', 'i4.sndcdn.com',
 ];
 
-function safeThumbnail(value: unknown): string | null {
+export function sanitizeThumbnailUrl(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim() || value.length > 2048) return null;
   try {
     const parsed = new URL(value.trim());
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || !IMAGE_HOSTS.includes(parsed.hostname)) return null;
+    parsed.search = '';
+    parsed.hash = '';
     return parsed.toString();
   } catch { return null; }
 }
+const safeThumbnail = sanitizeThumbnailUrl;
 
 function cleanMetadataText(value: unknown, max: number): string {
   if (typeof value !== 'string') return '';
@@ -147,9 +150,44 @@ export function trackMetadata(value: unknown): TrackMetadata {
     let parsed: URL;
     try { parsed = new URL(candidate); } catch { throw new WebError(400, 'Invalid thumbnail'); }
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || !IMAGE_HOSTS.includes(parsed.hostname)) throw new WebError(400, 'Invalid thumbnail host');
+    parsed.search = '';
+    parsed.hash = '';
     thumbnail = parsed.toString();
   }
   return { url, source, title: text(item['title'], 300, 'title'), artist: text(item['artist'] ?? '', 300, 'artist', true), duration: Math.round(number(item['duration'], 0, 604800, 'duration')), thumbnail: thumbnail ?? youtubeThumbnail(source, undefined, url) ?? null };
+}
+
+export function playlistImportCommitPayload(value: unknown): {
+  name: string;
+  tracks: TrackMetadata[];
+  requestId?: string;
+} {
+  const body = object(value);
+  const name = playlistName(body);
+  const rawTracks = body['tracks'];
+  if (!Array.isArray(rawTracks) || rawTracks.length === 0) {
+    throw new WebError(400, 'Selecciona al menos una canción para importar la playlist.');
+  }
+  if (rawTracks.length > 500) {
+    throw new WebError(400, 'No se pueden importar más de 500 canciones en una playlist.');
+  }
+  const tracks = rawTracks.map((item, idx) => {
+    try {
+      const validated = trackMetadata(item);
+      return {
+        ...validated,
+        artist: validated.artist || 'Artista desconocido',
+      };
+    } catch (error) {
+      const detail = error instanceof WebError ? error.message : 'Invalid track metadata';
+      throw new WebError(400, `Canción inválida en la posición ${idx + 1}: ${detail}`);
+    }
+  });
+  let requestId: string | undefined;
+  if (body['requestId'] !== undefined) {
+    requestId = text(body['requestId'], 120, 'requestId');
+  }
+  return { name, tracks, ...(requestId ? { requestId } : {}) };
 }
 export function publicPlayUrl(value: string): string {
   try { return publicTrackUrl(value).url; } catch { /* Albums and playlists are playback inputs, not saved tracks. */ }

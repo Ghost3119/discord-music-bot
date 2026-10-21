@@ -71,6 +71,21 @@ export class WebDatabase {
     });
     return { id, name, tracks: [] };
   }
+  createPlaylistWithTracks(userId: string, guildId: string, name: string, items: TrackMetadata[], now: number): SavedPlaylist {
+    if (!items.length || items.length > 500) throw new WebError(400, 'Playlists must contain between 1 and 500 tracks');
+    if (this.listPlaylists(userId, guildId).length >= 100) throw new WebError(409, 'Playlist limit reached');
+    const playlistId = randomUUID();
+    const rows = items.map((metadata, position) => ({ ...metadata, id: randomUUID(), playlistId, position }));
+    this.orm.transaction(tx => {
+      tx.insert(schema.guildSettings).values({ guildId, updatedAt: now }).onConflictDoNothing().run();
+      tx.insert(schema.playlists).values({ id: playlistId, userId, guildId, name, createdAt: now }).run();
+      const chunkSize = 50;
+      for (let i = 0; i < rows.length; i += chunkSize) {
+        tx.insert(schema.playlistTracks).values(rows.slice(i, i + chunkSize)).run();
+      }
+    });
+    return { id: playlistId, name, tracks: rows.map(track) };
+  }
   renamePlaylist(userId: string, guildId: string, id: string, name: string): SavedPlaylist {
     this.getPlaylist(userId, guildId, id);
     this.orm.update(schema.playlists).set({ name }).where(eq(schema.playlists.id, id)).run();
