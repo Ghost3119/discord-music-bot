@@ -575,7 +575,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const userId = request.webSession!.user.id;
     const guildId = params(request)['guildId']!;
     const playlist = database.getPlaylist(userId, guildId, params(request)['playlistId']!);
-    if (!playlist.tracks.length || playlist.tracks.length > 50) throw new WebError(400, 'Load playlists with 1–50 tracks');
+    if (!playlist.tracks.length || playlist.tracks.length > 500) throw new WebError(400, 'Load playlists with 1–500 tracks');
     const key = `${guildId}:${userId}`;
     if (loads.has(key)) throw new WebError(409, 'A playlist is already loading');
     const operation = beginOperation(request, reply.raw, options.musicOperationTimeoutMs ?? 300_000);
@@ -588,13 +588,18 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       'SESSION_CHANGED',
       'QUEUE_BLOCKED',
       'NO_QUEUE',
-      'INVALID_ACTION',
     ]);
     try {
       let loaded = 0;
+      let failed = 0;
       let lastError: unknown;
-      for (const item of playlist.tracks) {
+      for (let index = 0; index < playlist.tracks.length; index++) {
+        const item = playlist.tracks[index]!;
         if (controller.signal.aborted) throw new WebError(409, 'Playlist load cancelled');
+        if (index > 0 && index % 25 === 0) {
+          await new Promise<void>(resolve => setImmediate(resolve));
+          if (controller.signal.aborted) throw new WebError(409, 'Playlist load cancelled');
+        }
         authenticate(request);
         await assertGuildAccess(userId, guildId);
         try {
@@ -606,15 +611,16 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
           if (
             candidate.name === 'AbortError' ||
             (candidate.errorCode && fatalErrorCodes.has(candidate.errorCode)) ||
-            (candidate.statusCode && candidate.statusCode >= 400 && candidate.statusCode < 500)
+            (candidate.statusCode && candidate.statusCode >= 400 && candidate.statusCode < 500 && candidate.errorCode !== 'INVALID_ACTION')
           ) {
             throw trackError;
           }
+          failed++;
           lastError = trackError;
         }
       }
       if (!loaded && lastError) throw lastError;
-      return { ok: true, loaded };
+      return { ok: true, loaded, total: playlist.tracks.length, failed };
     } catch (error) {
       if (operation.timedOut) throw Object.assign(new WebError(504, 'Music operation timed out'), { errorCode: 'MUSIC_OPERATION_TIMEOUT' });
       if (controller.signal.aborted) throw new WebError(409, 'Playback operation cancelled');

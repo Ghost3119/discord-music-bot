@@ -254,8 +254,14 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     let id = url;
     try {
       const parsed = new URL(url);
-      const v = parsed.searchParams.get('v');
-      if (source === 'youtube' && v && /^[\w-]{11}$/.test(v)) id = v;
+      if (source === 'youtube') {
+        const v = parsed.searchParams.get('v');
+        const shortId = parsed.hostname.toLowerCase() === 'youtu.be'
+          ? parsed.pathname.slice(1)
+          : /^\/(?:shorts|live)\/([\w-]{11})/.exec(parsed.pathname)?.[1];
+        const candidateId = v ?? shortId;
+        if (candidateId && /^[\w-]{11}$/.test(candidateId)) id = candidateId;
+      }
     } catch { return; }
     const info: YtDlpInfo = {
       id,

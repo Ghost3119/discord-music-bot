@@ -735,3 +735,76 @@ test('track URL resolution auto-fills metadata for YouTube/Spotify and playlist 
   assert.equal(h.state.calls[0].action.track.title, 'Blessd - QUEMAROPA (Video Oficial)');
   assert.equal(h.state.calls[4].action.track.title, 'Maripilili');
 });
+
+
+test('playlist load supports 50, 51, 139 and 500 tracks, preserves order and duplicates, reports partial failures and rejects >500', async t => {
+  const h = await harness(t);
+  const auth = await h.login();
+
+  for (const size of [50, 51, 139, 500]) {
+    const items = Array.from({ length: size }, (_, idx) => {
+      // Include intentional duplicate URLs (e.g. index 10 repeats index 0)
+      const videoNum = idx === 10 ? 0 : idx;
+      const vid = String(videoNum).padStart(11, '0');
+      return {
+        url: `https://www.youtube.com/watch?v=${vid}`,
+        title: `Reggaeton Track ${idx + 1}`,
+        artist: `Artista ${(idx % 7) + 1}`,
+        duration: 180 + (idx % 45),
+        thumbnail: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
+        source: 'youtube',
+      };
+    });
+    const created = h.db.createPlaylistWithTracks(USER, GUILD, `Reggaeton ${size}`, items, h.state.time++);
+    h.state.calls.length = 0;
+    h.state.control = async () => {};
+
+    const res = await h.mutate(auth, 'POST', `${BASE}/playlists/${created.id}/load`);
+    assert.equal(res.statusCode, 200, `Expected 200 for size ${size}, got: ${res.body}`);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.loaded, size);
+    assert.equal(body.total, size);
+    assert.equal(body.failed, 0);
+    assert.equal(h.state.calls.length, size);
+    assert.equal(h.state.calls[0].action.track.title, 'Reggaeton Track 1');
+    assert.equal(h.state.calls[10].action.query, h.state.calls[0].action.query);
+    assert.equal(h.state.calls[size - 1].action.track.title, `Reggaeton Track ${size}`);
+  }
+
+  // Partial load on a 139-track playlist reports exact loaded/total/failed counts
+  const reggaeton139 = h.db.listPlaylists(USER, GUILD).find(p => p.name === 'Reggaeton 139');
+  let attempt = 0;
+  h.state.calls.length = 0;
+  h.state.control = async () => {
+    attempt++;
+    if (attempt === 15) {
+      throw Object.assign(new Error('Unsupported link'), { statusCode: 400, errorCode: 'INVALID_ACTION' });
+    }
+    if (attempt === 92) {
+      throw new Error('Temporary extractor error');
+    }
+  };
+  const partialRes = await h.mutate(auth, 'POST', `${BASE}/playlists/${reggaeton139.id}/load`);
+  assert.equal(partialRes.statusCode, 200, partialRes.body);
+  assert.deepEqual(partialRes.json(), { ok: true, loaded: 137, total: 139, failed: 2 });
+
+  // A playlist exceeding 500 tracks in storage is rejected with 400
+  const overLimit = h.db.createPlaylist(USER, GUILD, 'Over 500', h.state.time++);
+  const insertStmt = h.db.sqlite.prepare(
+    'INSERT INTO playlist_tracks (id, playlist_id, position, url, title, artist, duration, thumbnail, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  );
+  h.db.sqlite.transaction(() => {
+    for (let i = 0; i < 501; i++) {
+      insertStmt.run(`over-${i}`, overLimit.id, i, TRACK.url, `Track ${i}`, 'Artist', 120, null, 'youtube');
+    }
+  })();
+  const overRes = await h.app.inject({
+    method: 'POST',
+    url: `${BASE}/playlists/${overLimit.id}/load`,
+    remoteAddress: '127.0.0.2',
+    headers: { cookie: auth.cookie, origin: ORIGIN, 'x-csrf-token': auth.csrf },
+  });
+  assert.equal(overRes.statusCode, 400);
+  assert.match(overRes.json().error, /1–500/);
+});

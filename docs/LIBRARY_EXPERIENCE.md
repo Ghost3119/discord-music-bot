@@ -49,13 +49,24 @@ Evolución visual y funcional de la biblioteca musical de SONORA inspirada en ap
 - Muestra índice, miniatura/mosaico compacto (`48×48`), título, conteo de canciones, origen, duración y botonera de acciones directas (Reproducir, Agregar canción, Renombrar, Eliminar).
 - La preferencia entre **Cuadrícula** (`grid`) y **Lista** (`list`) se guarda de forma segura en `localStorage` (`sonora:library-layout`) con manejo defensivo de errores.
 
-### Vista de detalle de playlist (`.playlist-detail`)
-- Presenta `PlaylistArtwork` en formato destacado (`125×125` en escritorio, `85×85` en móvil), título de colección, conteo de canciones, duración honesta y plataformas.
+### Vista de detalle de playlist (`.playlist-detail` y `.playlist-tracks-section`)
+- **Cabecera editorial protagonista**:
+  - Carátula/mosaico `PlaylistArtwork` de gran formato (`184×184` en escritorio, `144×144` en tablet y `116×116` en móvil) dentro de `.playlist-detail-art-stage` con resplandor ambiental (`.playlist-detail-ambient`) coherente con el reproductor inmersivo.
+  - Resumen musical organizado: etiqueta superior de colección y orígenes, título display (`clamp(26px, 3.1vw, 38px)`), resumen de artistas destacados (`summarizePlaylistArtists`, ej. `Con Blessd, Feid, Bad Bunny y 2 más`), y línea de estadísticas tabulares (`139 canciones · 6:57:00 · YouTube`).
+  - Jerarquía clara de acciones en `.playlist-detail-actions`: botón principal destacado **Escuchar** (`.playlist-hero-play` en verde ácido `#c7f57a`), acción secundaria **Agregar canción** (`.playlist-hero-add`), separador vertical y herramientas de edición (**Renombrar playlist** y **Eliminar playlist**).
+  - Indicador de progreso en vivo (`.playlist-load-progress`) mientras se envía una playlist grande a la cola (`Enviando 139 canciones a la cola de reproducción…`).
+- **Transición visual hacia las canciones (`.playlist-tracks-section`)**:
+  - Cabecera de listado (`.playlist-tracks-header`) con contador de pistas (`.playlist-tracks-badge`), guía de reordenamiento y encabezados de columna (`#`, `CANCIÓN`, `ORIGEN`, `DURACIÓN`).
+  - Las filas a partir de la posición 26 (`index >= 25`) aplican `.track-row-deferred` (`content-visibility: auto; contain-intrinsic-size: auto none auto 58px`) para mantener fluidez en playlists de 139 a 500 canciones.
 - **Duración honesta (`summarizePlaylistDuration`)**:
   - Si todas las pistas tienen duración conocida (`> 0`), muestra el total exacto (ej. `4:00`).
   - Si algunas pistas tienen `duration === 0` (habitual en ciertas entradas parciales), muestra la suma conocida más el aviso explícito (`4:00 + 1 sin duración`).
   - Si ninguna pista tiene duración conocida, muestra `Duración pendiente` en lugar de `0:00`.
-- Conserva intacta la lista de canciones (`<TrackList context="playlist" />`) con soporte de arrastrar para reordenar, favoritos, guardado en otra playlist, eliminación y reproducción individual.
+- **Carga segura de playlists grandes (1–500 canciones)**:
+  - Se corrigió el límite antiguo de `1–50` en `POST /api/guilds/:guildId/playlists/:playlistId/load` ([`src/web/server.ts`](../src/web/server.ts)), alineándolo con el límite real de persistencia e importación de **1–500 canciones**.
+  - Cada pista siembra sus metadatos en `YtDlpSearchPlugin.seedTrackInfo` (incluyendo enlaces `watch?v=`, `youtu.be/`, `/shorts/` y `/live/`) sin resolver streams de audio por adelantado ni interrumpir el Smart Audio Preloader.
+  - Durante una carga agrupada con el mismo `AbortSignal`, [`src/music/webBridge.ts`](../src/music/webBridge.ts) reutiliza la caché corta de membresía (`membershipCacheTtlMs`) tras verificar en vivo la primera pista, evitando cientos de llamadas redundantes a Discord REST, y cede el event loop cada 25 pistas.
+  - Si alguna pista falla de forma no fatal, el endpoint devuelve `{ ok: true, loaded, total, failed }` y el cliente informa con precisión cuántas canciones se cargaron y cuántas se omitieron, sin presentar una carga parcial como completa.
 
 ---
 

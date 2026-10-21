@@ -3,13 +3,8 @@ import {
   ArrowLeft,
   Download,
   Library,
-  LoaderCircle,
-  Pencil,
-  Play,
   Plus,
-  Trash2,
 } from 'lucide-react';
-import { IconButton } from '../../components/common/IconButton';
 import { EmptyState, Loading } from '../../components/common/StateFeedback';
 import { Button } from '../../components/ui/button';
 import type { TrackActions } from '../../components/queue/TrackList';
@@ -165,52 +160,18 @@ export function LibraryView({ library, trackActions }: LibraryViewProps) {
             <p>Las canciones que merecen quedarse.</p>
           )}
         </div>
-        <div className="heading-actions">
-          {playlist ? (
-            <>
-              <IconButton
-                label="Renombrar playlist"
-                disabled={!!busy}
-                onClick={() => onRenamePlaylist(playlist)}
-              >
-                <Pencil size={17} />
-              </IconButton>
-              <IconButton
-                label="Eliminar playlist"
-                disabled={!!busy}
-                onClick={() => onDeletePlaylist(playlist)}
-              >
-                <Trash2 size={17} />
-              </IconButton>
-              <Button variant="secondary" size="sm" disabled={!!busy} onClick={() => onAddTrack(playlist)}>
-                <Plus size={16} /> Agregar canción
+        {!playlist && (
+          <div className="heading-actions">
+            {onImportPlaylist && (
+              <Button variant="secondary" size="sm" onClick={onImportPlaylist} disabled={!!busy}>
+                <Download size={15} /> Importar playlist
               </Button>
-              <Button
-                size="sm"
-                disabled={!!busy || !playlist.tracks.length || !playbackReady}
-                onClick={() => onLoadPlaylist(playlist)}
-              >
-                {busy === 'load' ? (
-                  <LoaderCircle size={15} className="spin" />
-                ) : (
-                  <Play size={15} fill="currentColor" />
-                )}{' '}
-                {busy === 'load' ? 'Cargando cola…' : 'Escuchar'}
-              </Button>
-            </>
-          ) : (
-            <>
-              {onImportPlaylist && (
-                <Button variant="secondary" size="sm" onClick={onImportPlaylist} disabled={!!busy}>
-                  <Download size={15} /> Importar playlist
-                </Button>
-              )}
-              <Button size="sm" onClick={onCreatePlaylist} disabled={!!busy}>
-                <Plus size={16} /> Nueva playlist
-              </Button>
-            </>
-          )}
-        </div>
+            )}
+            <Button size="sm" onClick={onCreatePlaylist} disabled={!!busy}>
+              <Plus size={16} /> Nueva playlist
+            </Button>
+          </div>
+        )}
       </div>
 
       {libraryLoading ? (
@@ -220,7 +181,11 @@ export function LibraryView({ library, trackActions }: LibraryViewProps) {
           playlist,
           colorIndex: selectedIndex,
           busy,
+          playbackReady,
+          onLoadPlaylist,
           onAddTrack,
+          onRenamePlaylist,
+          onDeletePlaylist,
           trackActions,
         })
       ) : playlists.length ? (

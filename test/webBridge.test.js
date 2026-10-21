@@ -577,3 +577,57 @@ test('playlist playback seeds YtDlpSearchPlugin metadata so all 5 tracks enqueue
   assert.equal(state.queue.length, 4);
   assert.deepEqual(state.queue.map(item => item.title), ['descontrol', '01-800', 'Xapiadora', 'Maripilili']);
 });
+
+
+test('139-track playlist load seeds metadata without stream resolution, preserves duplicates and reuses grouped membership cache', async t => {
+  const f = await fixture(t);
+  f.queue.songs = [];
+  let streamResolutions = 0;
+  f.plugin.getStreamURL = async () => {
+    streamResolutions++;
+    return 'https://audio.example/stream.opus';
+  };
+  f.distube.handler.resolve = async (input, options) => f.plugin.resolve(input, options);
+  f.distube.play = async (_voice, input, options) => {
+    await f.queue._taskQueue.queuing(true);
+    try { f.queue.addToQueue(await f.distube.handler.resolve(input, options)); }
+    finally { f.queue._taskQueue.resolve(); }
+  };
+
+  const bridge = createMusicBridge(f.client, undefined, {
+    accessMode: 'guild_members',
+    allowedGuildIds: [guildId],
+    adminUserIds: [],
+    membershipCacheTtlMs: 5_000,
+    now: () => 1_000_000,
+  });
+
+  const controller = new AbortController();
+  const tracks = Array.from({ length: 139 }, (_, idx) => {
+    const vidNum = idx === 25 ? 0 : idx;
+    const vid = String(vidNum).padStart(11, '0');
+    return {
+      url: idx % 3 === 0 ? `https://youtu.be/${vid}` : `https://www.youtube.com/watch?v=${vid}`,
+      title: `Reggaeton #${idx + 1}`,
+      artist: 'Blessd',
+      duration: 185,
+      thumbnail: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
+      source: 'youtube',
+    };
+  });
+
+  const fetchesBefore = f.fetches;
+  for (const item of tracks) {
+    await bridge.control(userId, guildId, { action: 'play', query: item.url, track: item }, controller.signal);
+  }
+  const fetchesSpent = f.fetches - fetchesBefore;
+
+  assert.equal(f.queue.songs.length, 139);
+  assert.equal(f.queue.songs[0].name, 'Reggaeton #1');
+  assert.equal(f.queue.songs[25].name, 'Reggaeton #26');
+  assert.equal(f.queue.songs[25].id, f.queue.songs[0].id);
+  assert.notEqual(f.queue.songs[25], f.queue.songs[0], 'duplicate tracks are independent Song instances');
+  assert.equal(f.queue.songs[138].name, 'Reggaeton #139');
+  assert.equal(streamResolutions, 0, 'playlist enqueue must not resolve audio streams upfront');
+  assert.ok(fetchesSpent <= 5, `expected grouped load to coalesce Discord REST membership checks, got ${fetchesSpent}`);
+});
