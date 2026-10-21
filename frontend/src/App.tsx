@@ -136,6 +136,10 @@ export default function App() {
                   onQueryChange={app.setQuery}
                   onAddToQueue={app.addToQueue}
                   onDiagnostics={() => app.setView('diagnostics')}
+                  onOpenSearch={(initialQuery) => {
+                    if (initialQuery) app.setQuery(initialQuery);
+                    app.setView('search');
+                  }}
                   trackActions={trackActions}
                 />
               )}
@@ -145,6 +149,8 @@ export default function App() {
                   session={app.session}
                   state={app.state}
                   busy={app.busy}
+                  initialQuery={app.query}
+                  onInitialQueryConsumed={() => app.setQuery('')}
                   trackActions={trackActions}
                   onEnqueueTrack={(track) =>
                     app.enqueueTrack

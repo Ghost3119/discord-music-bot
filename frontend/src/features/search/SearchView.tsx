@@ -24,6 +24,7 @@ import {
   type MusicSearchProviderId,
   type MusicSearchProviderStatus,
   type MusicSearchResponse,
+  type MusicSearchSuggestionsResponse,
   type MusicSearchTrack,
   type PlaybackSnapshot,
   type Session,
@@ -92,6 +93,8 @@ export interface SearchViewProps {
   busy: string;
   trackActions: TrackActions;
   onEnqueueTrack: (track: Track) => void | Promise<void>;
+  initialQuery?: string;
+  onInitialQueryConsumed?: () => void;
 }
 
 type SearchStatus = 'idle' | 'loading' | 'results' | 'empty' | 'error';
@@ -103,6 +106,8 @@ export function SearchView({
   busy,
   trackActions,
   onEnqueueTrack,
+  initialQuery,
+  onInitialQueryConsumed,
 }: SearchViewProps) {
   if (!hasReactDispatcher()) {
     return (
@@ -117,7 +122,7 @@ export function SearchView({
     );
   }
 
-  const [query, setQuery] = React.useState('');
+  const [query, setQuery] = React.useState(initialQuery ?? '');
   const [submittedQuery, setSubmittedQuery] = React.useState('');
   const [platform, setPlatform] = React.useState<MusicSearchPlatform>('all');
   const [status, setStatus] = React.useState<SearchStatus>('idle');
@@ -125,25 +130,42 @@ export function SearchView({
   const [providers, setProviders] = React.useState<MusicSearchProviderStatus[]>([]);
   const [partial, setPartial] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState('');
+  const [suggestions, setSuggestions] = React.useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = React.useState(false);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = React.useState(-1);
 
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const radioRefs = React.useRef<Array<HTMLButtonElement | null>>([]);
   const activeControllerRef = React.useRef<AbortController | null>(null);
+  const suggestControllerRef = React.useRef<AbortController | null>(null);
   const requestIdRef = React.useRef(0);
   const debounceTimerRef = React.useRef<number | null>(null);
+  const suggestTimerRef = React.useRef<number | null>(null);
   const prevGuildIdRef = React.useRef(guildId);
+
+  const cancelSuggestions = React.useCallback(() => {
+    if (suggestTimerRef.current !== null) {
+      window.clearTimeout(suggestTimerRef.current);
+      suggestTimerRef.current = null;
+    }
+    if (suggestControllerRef.current) {
+      suggestControllerRef.current.abort();
+      suggestControllerRef.current = null;
+    }
+  }, []);
 
   const cancelInFlight = React.useCallback(() => {
     if (debounceTimerRef.current !== null) {
       window.clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
+    cancelSuggestions();
     requestIdRef.current += 1;
     if (activeControllerRef.current) {
       activeControllerRef.current.abort();
       activeControllerRef.current = null;
     }
-  }, []);
+  }, [cancelSuggestions]);
 
   React.useEffect(() => {
     if (prevGuildIdRef.current !== guildId) {
@@ -170,6 +192,9 @@ export function SearchView({
         window.clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
       }
+      cancelSuggestions();
+      setShowSuggestions(false);
+      setActiveSuggestionIndex(-1);
 
       const trimmed = rawText.trim();
       if (!trimmed) {
@@ -245,16 +270,65 @@ export function SearchView({
     [guildId, session, cancelInFlight],
   );
 
+  React.useEffect(() => {
+    if (initialQuery && initialQuery.trim()) {
+      const next = initialQuery.trim();
+      setQuery(next);
+      onInitialQueryConsumed?.();
+      void executeSearch(next, platform);
+    }
+  }, [initialQuery, platform, executeSearch, onInitialQueryConsumed]);
+
   function handleQueryChange(nextValue: string) {
     setQuery(nextValue);
+    setActiveSuggestionIndex(-1);
     if (errorMessage) setErrorMessage('');
-    if (!nextValue.trim()) {
+    const trimmed = nextValue.trim();
+    if (!trimmed) {
       cancelInFlight();
+      setSuggestions([]);
+      setShowSuggestions(false);
       setStatus('idle');
       setResults([]);
       setProviders([]);
       setPartial(false);
       setSubmittedQuery('');
+      return;
+    }
+
+    cancelSuggestions();
+    if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+
+    if (trimmed.length >= 2 && session && guildId) {
+      const originGuild = guildId;
+      suggestTimerRef.current = window.setTimeout(async () => {
+        suggestTimerRef.current = null;
+        const controller = new AbortController();
+        suggestControllerRef.current = controller;
+        try {
+          const data = await api<MusicSearchSuggestionsResponse>(
+            `/api/guilds/${originGuild}/search/suggestions?q=${encodeURIComponent(trimmed)}`,
+            { method: 'GET', signal: controller.signal },
+          );
+          if (!controller.signal.aborted && Array.isArray(data?.suggestions)) {
+            setSuggestions(data.suggestions);
+            setShowSuggestions(data.suggestions.length > 0);
+          }
+        } catch {
+          // Suggestions are optional progressive enhancement
+        }
+      }, 180);
+
+      debounceTimerRef.current = window.setTimeout(() => {
+        debounceTimerRef.current = null;
+        void executeSearch(trimmed, platform);
+      }, 550);
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
     }
   }
 
@@ -262,6 +336,9 @@ export function SearchView({
     cancelInFlight();
     setQuery('');
     setSubmittedQuery('');
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setActiveSuggestionIndex(-1);
     setResults([]);
     setProviders([]);
     setPartial(false);
@@ -298,6 +375,18 @@ export function SearchView({
   }
 
   function handleInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (showSuggestions && suggestions.length > 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setActiveSuggestionIndex((prev) => (prev + 1) % suggestions.length);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setActiveSuggestionIndex((prev) => (prev <= 0 ? suggestions.length - 1 : prev - 1));
+        return;
+      }
+    }
     if (event.key === 'Enter') {
       event.preventDefault();
       if (
@@ -306,10 +395,20 @@ export function SearchView({
       ) {
         return;
       }
-      void executeSearch(query, platform);
-    } else if (event.key === 'Escape' && query) {
+      const chosen =
+        showSuggestions && activeSuggestionIndex >= 0 && suggestions[activeSuggestionIndex]
+          ? suggestions[activeSuggestionIndex]!
+          : query;
+      if (chosen !== query) setQuery(chosen);
+      void executeSearch(chosen, platform);
+    } else if (event.key === 'Escape') {
       event.preventDefault();
-      handleClear();
+      if (showSuggestions) {
+        setShowSuggestions(false);
+        setActiveSuggestionIndex(-1);
+      } else if (query) {
+        handleClear();
+      }
     }
   }
 
@@ -347,65 +446,105 @@ export function SearchView({
           onSubmit={handleSubmit}
           noValidate
         >
-          <div className={cn('music-search-input-shell', status === 'loading' && 'is-loading')}>
-            <Search size={20} className="music-search-icon" aria-hidden="true" />
-            <label className="sr-only" htmlFor="integrated-music-search">
-              Buscar canción, artista o versión
-            </label>
-            <input
-              ref={inputRef}
-              id="integrated-music-search"
-              type="search"
-              value={query}
-              onChange={(event) => handleQueryChange(event.target.value)}
-              onKeyDown={handleInputKeyDown}
-              placeholder="Canción, artista o versión (ej. Feid Luna, Remix, Acoustic)…"
-              maxLength={200}
-              autoComplete="off"
-              spellCheck={false}
-              aria-describedby="music-search-platform-hint"
-            />
-            {query.length > 0 && (
-              <IconButton
-                label="Limpiar búsqueda"
-                className="music-search-clear"
-                onClick={handleClear}
-              >
-                <X size={16} />
-              </IconButton>
-            )}
-            {status === 'loading' && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-label="Cancelar búsqueda"
-                onClick={() => {
-                  cancelInFlight();
-                  setStatus(results.length ? 'results' : 'idle');
+          <div className="music-search-box-wrap">
+            <div className={cn('music-search-input-shell', status === 'loading' && 'is-loading')}>
+              <Search size={20} className="music-search-icon" aria-hidden="true" />
+              <label className="sr-only" htmlFor="integrated-music-search">
+                Buscar canción, artista o versión
+              </label>
+              <input
+                ref={inputRef}
+                id="integrated-music-search"
+                type="search"
+                value={query}
+                onFocus={() => {
+                  if (suggestions.length > 0) setShowSuggestions(true);
                 }}
-              >
-                Cancelar
-              </Button>
-            )}
-            <Button
-              type="submit"
-              size="sm"
-              className="music-search-submit"
-              disabled={!session || !guildId || status === 'loading'}
-            >
-              {status === 'loading' ? (
-                <>
-                  <LoaderCircle size={16} className="spin" />
-                  <span>Buscando…</span>
-                </>
-              ) : (
-                <>
-                  <Search size={16} />
-                  <span>Buscar</span>
-                </>
+                onBlur={() => {
+                  window.setTimeout(() => setShowSuggestions(false), 150);
+                }}
+                onChange={(event) => handleQueryChange(event.target.value)}
+                onKeyDown={handleInputKeyDown}
+                placeholder="Canción, artista o versión (ej. José José, Feid Luna, Remix)…"
+                maxLength={200}
+                autoComplete="off"
+                spellCheck={false}
+                aria-autocomplete="list"
+                aria-controls={showSuggestions ? 'music-search-suggestions-list' : undefined}
+                aria-describedby="music-search-platform-hint"
+              />
+              {query.length > 0 && (
+                <IconButton
+                  label="Limpiar búsqueda"
+                  className="music-search-clear"
+                  onClick={handleClear}
+                >
+                  <X size={16} />
+                </IconButton>
               )}
-            </Button>
+              {status === 'loading' && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Cancelar búsqueda"
+                  onClick={() => {
+                    cancelInFlight();
+                    setStatus(results.length ? 'results' : 'idle');
+                  }}
+                >
+                  Cancelar
+                </Button>
+              )}
+              <Button
+                type="submit"
+                size="sm"
+                className="music-search-submit"
+                disabled={!session || !guildId || status === 'loading'}
+              >
+                {status === 'loading' ? (
+                  <>
+                    <LoaderCircle size={16} className="spin" />
+                    <span>Buscando…</span>
+                  </>
+                ) : (
+                  <>
+                    <Search size={16} />
+                    <span>Buscar</span>
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {showSuggestions && suggestions.length > 0 && (
+              <ul
+                id="music-search-suggestions-list"
+                className="music-search-autocomplete"
+                role="listbox"
+                aria-label="Sugerencias de búsqueda"
+              >
+                {suggestions.map((item, idx) => (
+                  <li key={item} role="option" aria-selected={idx === activeSuggestionIndex}>
+                    <button
+                      type="button"
+                      className={cn(
+                        'music-autocomplete-item',
+                        idx === activeSuggestionIndex && 'is-active',
+                      )}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        setQuery(item);
+                        setShowSuggestions(false);
+                        void executeSearch(item, platform);
+                      }}
+                    >
+                      <Search size={14} />
+                      <span>{item}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <div className="music-search-Controls">

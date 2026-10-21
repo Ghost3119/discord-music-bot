@@ -579,6 +579,7 @@ button svg { flex-shrink: 0; }
 .music-search-providers-tag { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: #13191d; border: 1px solid #273138; font-size: 10px; font-weight: 560; color: #8c98a6; letter-spacing: .2px; }
 
 .music-search-form { display: flex; flex-direction: column; gap: 14px; }
+.music-search-box-wrap { position: relative; }
 .music-search-input-shell { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 8px 6px 16px; border-radius: 12px; background: #0d1115; border: 1px solid #2a343d; transition: border-color .16s ease, box-shadow .16s ease; }
 .music-search-input-shell:focus-within { border-color: #93bd5b; box-shadow: 0 0 0 3px #93bd5b24; }
 .music-search-icon { color: #8794a2; flex-shrink: 0; }
@@ -586,6 +587,16 @@ button svg { flex-shrink: 0; }
 .music-search-input-shell input::placeholder { color: #677381; }
 .music-search-input-shell input::-webkit-search-cancel-button { display: none; }
 .music-search-submit { height: 38px; padding: 0 18px; border-radius: 9px; font-weight: 640; flex-shrink: 0; }
+
+.search-bar { position: relative; }
+.quick-search-dropdown, .music-search-autocomplete { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 40; padding: 6px; border-radius: 12px; background: #141920f8; border: 1px solid #2e3946; box-shadow: 0 20px 46px #000c; backdrop-filter: blur(14px); display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; max-height: 320px; overflow-y: auto; }
+.quick-search-explore { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 9px 12px; border: 1px solid #35492e; border-radius: 8px; background: #1a2419; color: #c7f57a; font-size: 12px; text-align: left; cursor: pointer; margin-bottom: 3px; transition: background .14s, border-color .14s; }
+.quick-search-explore:hover { background: #223020; border-color: #4c6941; }
+.quick-search-explore span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.music-autocomplete-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 11px; border: 0; border-radius: 8px; background: transparent; color: #d5dde7; font-size: 12px; text-align: left; cursor: pointer; transition: background .12s, color .12s; }
+.music-autocomplete-item svg { color: #7e8b9b; flex-shrink: 0; }
+.music-autocomplete-item:hover, .music-autocomplete-item.is-active { background: #1e2630; color: #fff; }
+.music-autocomplete-item:hover svg, .music-autocomplete-item.is-active svg { color: #c7f57a; }
 
 .music-search-platforms { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .music-platform-pill { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px; border-radius: 999px; background: #13181e; border: 1px solid #262f38; color: #95a0ae; font-size: 11px; font-weight: 560; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }

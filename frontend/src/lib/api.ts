@@ -13,6 +13,7 @@ export type {
   MusicSearchTrack,
   MusicSearchProviderStatus,
   MusicSearchResponse,
+  MusicSearchSuggestionsResponse,
 } from '../../../src/web/contracts';
 export interface Session { user: { id: string; username: string; avatar: string | null }; csrfToken: string }
 export interface Playlist { id: string; name: string; tracks: Track[] }

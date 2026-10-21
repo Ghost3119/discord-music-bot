@@ -124,3 +124,8 @@ export interface MusicSearchResponse {
   providers: MusicSearchProviderStatus[];
   partial: boolean;
 }
+
+export interface MusicSearchSuggestionsResponse {
+  query: string;
+  suggestions: string[];
+}

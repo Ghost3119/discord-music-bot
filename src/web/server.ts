@@ -491,6 +491,17 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     send(initial);
   });
 
+  app.get('/api/guilds/:guildId/search/suggestions', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const rawQuery = (request.query ?? {}) as Record<string, unknown>;
+    const q = rawQuery['q'] !== undefined ? rawQuery['q'] : rawQuery['query'];
+    const operation = beginOperation(request, reply.raw, 3_000);
+    try {
+      const suggestions = await (musicSearcher.suggest?.(q, operation.controller.signal) ?? Promise.resolve([]));
+      return { query: typeof q === 'string' ? q.trim() : '', suggestions };
+    } finally {
+      operation.done();
+    }
+  });
   app.get('/api/guilds/:guildId/search', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
     const userId = request.webSession!.user.id;
     const guildId = params(request)['guildId']!;

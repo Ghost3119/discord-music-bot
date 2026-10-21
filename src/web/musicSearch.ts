@@ -45,6 +45,7 @@ export interface ValidatedMusicSearchQuery {
 export interface MusicSearchService {
   validateQuery(input: MusicSearchQueryInput): ValidatedMusicSearchQuery;
   search(input: MusicSearchQueryInput, signal: AbortSignal): Promise<MusicSearchResponse>;
+  suggest?(query: unknown, signal?: AbortSignal): Promise<string[]>;
 }
 
 export interface MusicSearchServiceOptions {
@@ -768,6 +769,40 @@ export function createMusicSearchService(
 
   return {
     validateQuery: validateMusicSearchQuery,
+    async suggest(rawQuery: unknown, signal?: AbortSignal): Promise<string[]> {
+      if (typeof rawQuery !== 'string') return [];
+      const trimmed = rawQuery.trim().replace(/\s+/g, ' ');
+      if (
+        trimmed.length < 2 ||
+        trimmed.length > MAX_QUERY_LENGTH ||
+        /[\u0000-\u001f\u007f]/.test(trimmed) ||
+        /(?:^|\s)(?:https?|ftp|file|data|javascript|ws|wss):\/\/|^[a-z][a-z0-9+.-]*:\/\/|^\/\//i.test(trimmed)
+      ) {
+        return [];
+      }
+      try {
+        const url = `https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(trimmed)}`;
+        const timeoutSignal = signal
+          ? AbortSignal.any([AbortSignal.timeout(2_000), signal])
+          : AbortSignal.timeout(2_000);
+        const response = await fetchImpl(url, {
+          signal: timeoutSignal,
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        });
+        if (!response.ok) return [];
+        const data: unknown = await response.json();
+        if (Array.isArray(data) && Array.isArray(data[1])) {
+          return (data[1] as unknown[])
+            .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+            .map((item) => cleanText(item, 120))
+            .filter(Boolean)
+            .slice(0, 8);
+        }
+        return [];
+      } catch {
+        return [];
+      }
+    },
     async search(input: MusicSearchQueryInput, signal: AbortSignal): Promise<MusicSearchResponse> {
       signal.throwIfAborted();
       const validated = validateMusicSearchQuery(input);
