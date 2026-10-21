@@ -81,7 +81,11 @@ export function TrackItem({ track, index, context, owner, actions, drag }: Track
   const { busy, playbackReady, isFavorite, onPlay, onToggleFavorite, onSave, onRemove } = actions;
   const position = String(index + 1).padStart(2, '0');
   return (
-    <div ref={drag?.rowRef} style={drag?.style} className={cn('track-row', drag?.dragging && 'is-dragging')}>
+    <div
+      ref={drag?.rowRef}
+      style={drag?.style}
+      className={cn('track-row', index >= 25 && 'track-row-deferred', drag?.dragging && 'is-dragging')}
+    >
       {drag ? (
         <button
           type="button"

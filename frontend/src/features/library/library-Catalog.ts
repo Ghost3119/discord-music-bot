@@ -135,6 +135,22 @@ export function summarizePlaylistSources(tracks: readonly Track[]): string[] {
   return labels;
 }
 
+export function summarizePlaylistArtists(tracks: readonly Track[]): string {
+  const seen = new Set<string>();
+  const artists: string[] = [];
+  for (let i = 0; i < tracks.length; i++) {
+    const raw = tracks[i]!.artist?.trim() || '';
+    if (!raw || raw.toLowerCase() === 'artista desconocido') continue;
+    const key = normalizeLibraryText(raw);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    artists.push(raw);
+  }
+  if (artists.length === 0) return '';
+  if (artists.length <= 3) return `Con ${artists.join(', ')}`;
+  return `Con ${artists.slice(0, 3).join(', ')} y ${artists.length - 3} más`;
+}
+
 export interface FilteredPlaylistEntry {
   playlist: Playlist;
   originalIndex: number;

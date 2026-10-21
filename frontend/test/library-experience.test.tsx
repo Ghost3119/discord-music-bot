@@ -588,5 +588,95 @@ describe('SONORA Library Experience 2.0', () => {
       expect(css).toContain('@media (max-width: 600px)');
       expect(css).toContain('@media (prefers-reduced-motion: reduce)');
     });
+
+    it('renders the redesigned PlaylistDetails stage and loads 50, 51, 139 ("Reggaeton") and 500-track playlists with honest partial/complete notices', async () => {
+      for (const size of [50, 51, 139, 500]) {
+        const reggaeton = makePlaylist({
+          id: `pl-reggaeton-${size}`,
+          name: 'Reggaeton',
+          tracks: Array.from({ length: size }, (_, idx) =>
+            buildTrack(idx + 1, {
+              title: `Tema Reggaeton ${idx + 1}`,
+              artist: ['Blessd', 'Feid', 'Bad Bunny', 'Roa', 'Ovy On The Drums'][idx % 5]!,
+              duration: 180,
+            }),
+          ),
+        });
+
+        await renderNode(
+          <LibraryView
+            library={defaultLibrary({
+              playlist: reggaeton,
+              playlists: [reggaeton],
+              busy: size === 139 ? 'load' : '',
+            })}
+            trackActions={defaultActions()}
+          />,
+        );
+
+        expect(container.querySelector('.playlist-detail-art-stage')).not.toBeNull();
+        expect(container.querySelector('.playlist-detail h2')?.textContent).toBe('Reggaeton');
+        expect(container.querySelector('.playlist-detail-artists')?.textContent).toBe(
+          'Con Blessd, Feid, Bad Bunny y 2 más',
+        );
+        expect(container.querySelector('.playlist-tracks-badge')?.textContent).toBe(String(size));
+        expect(container.querySelectorAll('.track-row')).toHaveLength(size);
+        expect(container.querySelectorAll('.track-row.track-row-deferred')).toHaveLength(size - 25);
+
+        if (size === 139) {
+          expect(container.querySelector('.playlist-load-progress')?.textContent).toContain(
+            'Enviando 139 canciones a la cola de reproducción…',
+          );
+          expect(container.querySelector('.playlist-hero-play')?.textContent).toContain(
+            'Cargando 139 canciones…',
+          );
+        }
+      }
+
+      // Verify useLibrary.loadPlaylist complete vs partial notices for a 139-track playlist
+      const notices: string[] = [];
+      let mutateResult: unknown = { ok: true, loaded: 139, total: 139, failed: 0 };
+      const mutate = vi.fn(async () => mutateResult);
+      const setNotice = vi.fn((msg: string) => notices.push(msg));
+      const setView = vi.fn();
+      const refresh = vi.fn();
+      const reportError = vi.fn();
+      const playlist139 = makePlaylist({
+        id: 'reggaeton-139',
+        name: 'Reggaeton',
+        tracks: Array.from({ length: 139 }, (_, i) => buildTrack(i + 1)),
+      });
+
+      let triggerLoad!: (pl: Playlist) => Promise<void>;
+      function LoadHarness() {
+        const lib = useLibrary({
+          guildId: 'guild-a',
+          session: null,
+          reportError,
+          run: async (_k, task) => task(),
+          mutate,
+          setNotice,
+          setView,
+          refresh,
+        });
+        triggerLoad = lib.loadPlaylist;
+        return null;
+      }
+
+      await renderNode(<LoadHarness />);
+      await act(async () => {
+        await triggerLoad(playlist139);
+      });
+      expect(notices.at(-1)).toBe('«Reggaeton» (139 canciones) enviada a la cola.');
+
+      // Now simulate partial load where 137 of 139 tracks succeeded
+      mutateResult = { ok: true, loaded: 137, total: 139, failed: 2 };
+      await act(async () => {
+        await triggerLoad(playlist139);
+      });
+      expect(notices.at(-1)).toBe(
+        '«Reggaeton»: se cargaron 137 de 139 canciones en la cola (2 omitidas).',
+      );
+    });
   });
 });

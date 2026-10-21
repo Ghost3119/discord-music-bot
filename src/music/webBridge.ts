@@ -238,16 +238,18 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
     },
     async control(userId: string, guildId: string, action: MusicAction, signal?: AbortSignal): Promise<void | MusicControlResult> {
       signal?.throwIfAborted();
-      const { member } = await membership(userId, guildId, true), queue = distube.getQueue(guildId);
+      const grouped = action.action === 'play' && signal ? groupedSessions.get(signal)?.get(guildId) : undefined;
+      const forceFreshMembership = !grouped;
+      const { member } = await membership(userId, guildId, forceFreshMembership), queue = distube.getQueue(guildId);
       const voice = voiceFor(client, member, queue);
       const authorize = async () => {
         signal?.throwIfAborted();
-        const { member: current } = await membership(userId, guildId, true);
+        const { member: current } = await membership(userId, guildId, forceFreshMembership);
         signal?.throwIfAborted();
         if (voiceFor(client, current, queue).id !== voice.id) throw controlError('CONTROL_CHANNEL_REQUIRED', 'Tu canal de voz cambió mientras esperaba.');
       };
       if (action.action === 'play') {
-        const expected = signal ? groupedSessions.get(signal)?.get(guildId) : undefined;
+        const expected = grouped;
         if (expected && (expected.queue !== queue || expected.version !== musicSessionVersion(distube, guildId))) {
           throw controlError('SESSION_CHANGED', 'La sesión cambió durante la carga de la playlist.');
         }
