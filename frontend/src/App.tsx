@@ -142,6 +142,7 @@ export default function App() {
                 <LibraryView
                   trackActions={trackActions}
                   library={{
+                    guildId: app.guildId,
                     playlist: app.playlist,
                     playlists: app.playlists,
                     libraryLoading: app.libraryLoading,
