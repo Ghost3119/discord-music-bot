@@ -135,6 +135,11 @@ export default function App() {
                   onQueryChange={app.setQuery}
                   onAddToQueue={app.addToQueue}
                   onDiagnostics={() => app.setView('diagnostics')}
+                  onEnqueueTrack={(track) =>
+                    app.enqueueTrack
+                      ? app.enqueueTrack(track)
+                      : app.action({ action: 'play', query: track.url, track: trackMetadata(track) })
+                  }
                   trackActions={trackActions}
                 />
               )}

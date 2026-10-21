@@ -206,7 +206,9 @@ export function musicAction(value: unknown): MusicAction {
     case 'play': {
       const query = text(item['query'], 500, 'query');
       // Search strings are allowed; URLs must target recognized public sources.
-      return { action: 'play', query: /^[a-z][a-z\d+.-]*:|^\/\//i.test(query) ? publicPlayUrl(query) : query };
+      const normalizedQuery = /^[a-z][a-z\d+.-]*:|^\/\//i.test(query) ? publicPlayUrl(query) : query;
+      const track = item['track'] !== undefined ? trackMetadata(item['track']) : undefined;
+      return { action: 'play', query: normalizedQuery, ...(track ? { track } : {}) };
     }
     case 'pause': case 'resume': case 'skip': case 'stop': case 'shuffle': return { action: item['action'] };
     case 'autoplay':
