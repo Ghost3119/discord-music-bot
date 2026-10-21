@@ -2,6 +2,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PlayerView } from '../src/features/dashboard/PlayerView';
 import { SearchView } from '../src/features/search/SearchView';
 import type { TrackActions } from '../src/components/queue/TrackList';
 import type {
@@ -484,5 +485,98 @@ describe('SONORA Music Search 1.0 (SearchView)', () => {
     });
     expect(container.querySelectorAll('.search-result-row').length).toBe(0);
     expect(container.querySelector('.music-search-discovery')).not.toBeNull();
+  });
+
+  it('unifies live search with covers, platform selector, and actions directly inside PlayerView ("Ahora suena") as the user types', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/search/suggestions')) {
+        return new Response(
+          JSON.stringify({
+            query: 'Jose jose',
+            suggestions: ['jose jose el triste', 'jose jose gavilan o paloma'],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      const payload: MusicSearchResponse = {
+        query: 'Jose jose',
+        platform: 'all',
+        results: sampleResults,
+        providers: [
+          { platform: 'youtube_music', ok: true, count: 1 },
+          { platform: 'youtube', ok: true, count: 1 },
+          { platform: 'soundcloud', ok: true, count: 1 },
+        ],
+        partial: false,
+      };
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const actions = makeActions();
+    const onEnqueueTrack = vi.fn();
+    let currentQuery = '';
+
+    function ControlledPlayer() {
+      const [q, setQ] = (globalThis as unknown as { React?: typeof import('react') }).React
+        ? [currentQuery, (next: string) => { currentQuery = next; }]
+        : [currentQuery, (next: string) => { currentQuery = next; }];
+      return createElement(PlayerView, {
+        playback: {
+          state: makeState(),
+          busy: '',
+          controlsDisabled: false,
+          volumeDraft: null,
+          setVolumeDraft: vi.fn(),
+          action: vi.fn().mockResolvedValue(undefined),
+          isFavorite: () => false,
+          toggleFavorite: vi.fn(),
+          onSaveTrack: vi.fn(),
+        },
+        connection: 'live',
+        query: q,
+        onQueryChange: setQ,
+        onAddToQueue: vi.fn(),
+        onDiagnostics: vi.fn(),
+        onEnqueueTrack,
+        trackActions: actions,
+      });
+    }
+
+    await act(async () => {
+      currentQuery = 'Jose jose';
+      root.render(createElement(ControlledPlayer));
+    });
+
+    // Advance debounce timers (150ms for suggestions, 320ms for live search with covers)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350);
+    });
+
+    const panel = container.querySelector('.unified-search-panel');
+    expect(panel).not.toBeNull();
+    expect(panel?.querySelectorAll('.search-result-row').length).toBe(3);
+    expect(panel?.querySelector('.unified-search-suggestions')?.textContent).toContain(
+      'jose jose el triste',
+    );
+
+    const playBtn = panel?.querySelector(
+      '[aria-label="Reproducir LUNA"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      playBtn.click();
+    });
+    expect(actions.onPlay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: 'https://www.youtube.com/watch?v=aqs0aXBBC8g',
+        title: 'LUNA',
+      }),
+    );
+    vi.useRealTimers();
   });
 });

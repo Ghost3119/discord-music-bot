@@ -7,7 +7,6 @@ import {
   LoaderCircle,
   LogOut,
   Plus,
-  Search,
   ShieldCheck,
 } from 'lucide-react';
 import { Brand } from '../common/Brand';
@@ -18,7 +17,6 @@ import type { View } from '../../types/app';
 
 export const navigation = [
   { id: 'player', name: 'Ahora suena', icon: AudioLines },
-  { id: 'search', name: 'Buscar música', icon: Search },
   { id: 'library', name: 'Mi biblioteca', icon: Library },
   { id: 'favorites', name: 'Favoritos', icon: Heart },
   { id: 'diagnostics', name: 'Diagnóstico', icon: Activity },

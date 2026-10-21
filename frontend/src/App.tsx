@@ -15,7 +15,6 @@ import { LibraryDialog } from './features/library/LibraryDialog';
 import { PlaylistImportDialog } from './features/library/PlaylistImportDialog';
 import { FavoritesView } from './features/favorites/FavoritesView';
 import { DiagnosticsView } from './features/diagnostics/DiagnosticsView';
-import { SearchView } from './features/search/SearchView';
 import { useSonoraApp } from './hooks/use-sonora-app';
 import { trackMetadata } from './lib/api';
 
@@ -136,27 +135,12 @@ export default function App() {
                   onQueryChange={app.setQuery}
                   onAddToQueue={app.addToQueue}
                   onDiagnostics={() => app.setView('diagnostics')}
-                  onOpenSearch={(initialQuery) => {
-                    if (initialQuery) app.setQuery(initialQuery);
-                    app.setView('search');
-                  }}
-                  trackActions={trackActions}
-                />
-              )}
-              {app.view === 'search' && (
-                <SearchView
-                  guildId={app.guildId}
-                  session={app.session}
-                  state={app.state}
-                  busy={app.busy}
-                  initialQuery={app.query}
-                  onInitialQueryConsumed={() => app.setQuery('')}
-                  trackActions={trackActions}
                   onEnqueueTrack={(track) =>
                     app.enqueueTrack
                       ? app.enqueueTrack(track)
                       : app.action({ action: 'play', query: track.url, track: trackMetadata(track) })
                   }
+                  trackActions={trackActions}
                 />
               )}
               {app.view === 'library' && (

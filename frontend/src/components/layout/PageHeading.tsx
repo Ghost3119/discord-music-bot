@@ -32,13 +32,11 @@ export function PageHeading({
         <h1>
           {view === 'player'
             ? 'Dale ritmo al momento.'
-            : view === 'search'
-              ? 'Buscar música'
-              : view === 'library'
-                ? playlist?.name || 'Hecha a tu ritmo.'
-                : view === 'favorites'
-                  ? 'Siempre vuelves a estas.'
-                  : 'Todo bajo control.'}
+            : view === 'library'
+              ? playlist?.name || 'Hecha a tu ritmo.'
+              : view === 'favorites'
+                ? 'Siempre vuelves a estas.'
+                : 'Todo bajo control.'}
         </h1>
       </div>
       <CustomSelect

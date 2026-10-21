@@ -8,9 +8,9 @@ Buscador musical multiproveedor integrado en el dashboard web de SONORA para des
   - `createMusicSearchService` implementa una capa de proveedores (`MusicSearchProvider`) que consulta los extractores existentes de `yt-dlp` en modo `flatPlaylist` (solo metadatos, sin resolver ni descargar streams de audio ni invocar FFmpeg).
   - Los resultados se normalizan al contrato `MusicSearchTrack` (`src/web/contracts.ts`), compatible directamente con `Track` (`source: 'youtube' | 'soundcloud'`, `url` pública canónica) para que funcionen sin adaptadores paralelos con Cola, Reproducción, Favoritos, Playlists y `Artwork`.
   - Cuando el usuario reproduce o añade a la cola un resultado (`POST /api/guilds/:guildId/actions` con `action: 'play'` y `track`), `validation.ts` valida `trackMetadata` y `webBridge.ts` siembra `urlInfoCache` (`seedTrackInfo`), evitando una segunda consulta de metadatos antes de encolar en DisTube.
-- **Frontend (`frontend/src/features/search/SearchView.tsx`)**:
-  - Nueva vista `search` (**Buscar música**) integrada en la navegación lateral (`Sidebar.tsx`), cabecera (`PageHeading.tsx`) y `App.tsx`.
-  - Soporta envío seguro con `Enter` (compatible con IME), selector de plataforma accesible (`role="radiogroup"` con navegación por teclado), cancelación automática de búsquedas obsoletas mediante `AbortController` y renderizado diferido (`.track-row-deferred`) a partir de la fila 25.
+- **Frontend (`frontend/src/features/dashboard/PlayerView.tsx`, `frontend/src/features/search/SearchView.tsx`)**:
+  - Buscador unificado directamente en la barra superior de **Ahora suena** (`PlayerView.tsx`), sin requerir una pestaña adicional en la barra lateral.
+  - Conforme el usuario escribe (con debounce de 320 ms, o al pulsar `Enter`), se despliega el panel `.unified-search-panel` con sugerencias rápidas, selector de plataforma accesible (`role="radiogroup"` con navegación por teclado), resultados en vivo con portadas, cancelación automática de búsquedas obsoletas mediante `AbortController` y renderizado diferido (`.track-row-deferred`) a partir de la fila 25. Si se pega un enlace directo (YouTube, Spotify, Apple Music, SoundCloud), el botón `+ Agregar` lo envía directo a la cola.
 
 ## 2. Proveedores implementados
 

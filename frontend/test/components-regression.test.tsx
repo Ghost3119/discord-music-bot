@@ -108,7 +108,7 @@ describe('shared and navigation markup regression', () => {
     expect(html).toContain('playlist-link-active');
     const buttons = elements(node).filter(({ type, props }) => type === 'button' && String(props.className).startsWith('nav-item'));
     buttons.forEach(({ props }) => (props.onClick as () => void)());
-    expect(onNavigate.mock.calls.map(([view]) => view)).toEqual(['player', 'search', 'library', 'favorites', 'diagnostics']);
+    expect(onNavigate.mock.calls.map(([view]) => view)).toEqual(['player', 'library', 'favorites', 'diagnostics']);
     const item = elements(node).find(({ props }) => String(props.className).includes('playlist-link-active'))!;
     (item.props.onClick as () => void)();
     expect(onOpenPlaylist).toHaveBeenCalledWith('playlist-a');
