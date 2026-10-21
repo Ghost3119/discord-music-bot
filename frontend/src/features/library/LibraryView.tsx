@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Download,
   Library,
   ListMusic,
   LoaderCircle,
@@ -25,6 +26,7 @@ export interface LibraryViewBindings {
   playbackReady: boolean;
   onSelectPlaylist: (id: string) => void;
   onCreatePlaylist: () => void;
+  onImportPlaylist?: () => void;
   onRenamePlaylist: (playlist: Playlist) => void;
   onDeletePlaylist: (playlist: Playlist) => void;
   onAddTrack: (playlist: Playlist) => void;
@@ -45,6 +47,7 @@ export function LibraryView({ library, trackActions }: LibraryViewProps) {
     playbackReady,
     onSelectPlaylist,
     onCreatePlaylist,
+    onImportPlaylist,
     onRenamePlaylist,
     onDeletePlaylist,
     onAddTrack,
@@ -96,9 +99,16 @@ export function LibraryView({ library, trackActions }: LibraryViewProps) {
               </Button>
             </>
           ) : (
-            <Button size="sm" onClick={onCreatePlaylist} disabled={!!busy}>
-              <Plus size={16} /> Nueva playlist
-            </Button>
+            <>
+              {onImportPlaylist && (
+                <Button variant="secondary" size="sm" onClick={onImportPlaylist} disabled={!!busy}>
+                  <Download size={15} /> Importar playlist
+                </Button>
+              )}
+              <Button size="sm" onClick={onCreatePlaylist} disabled={!!busy}>
+                <Plus size={16} /> Nueva playlist
+              </Button>
+            </>
           )}
         </div>
       </div>

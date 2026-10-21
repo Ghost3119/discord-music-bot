@@ -56,7 +56,7 @@ export function LibraryDialog({ dialog }: LibraryDialogProps) {
   } = dialog;
   return (
     <Dialog
-      open={!!modal}
+      open={!!modal && modal.type !== 'import'}
       onOpenChange={(open) => {
         if (!open && !busy) onClose();
       }}
@@ -67,7 +67,7 @@ export function LibraryDialog({ dialog }: LibraryDialogProps) {
             ? 'Guardar en una playlist'
             : modal?.type === 'add'
               ? 'Agregar a tu colección'
-              : modal?.playlist
+              : modal?.type === 'playlist' && modal.playlist
                 ? 'Dale un nuevo nombre'
                 : 'Una playlist, un mood.'
       }

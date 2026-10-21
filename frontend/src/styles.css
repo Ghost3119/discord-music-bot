@@ -326,6 +326,60 @@ button svg { flex-shrink: 0; }
 .modal-actions .button { height: 38px; font-size: 12px; }
 .modal-error { color: #efaaaa; font-size: 11px; line-height: 1.7; margin-top: 10px; }
 .no-playlist p { color: #939eab; font-size: 12px; margin-bottom: 15px; }
+.dialog-content-import { width: min(620px, calc(100% - 28px)); max-height: min(88dvh, 760px); display: flex; flex-direction: column; overflow: hidden; }
+.import-modal-body { margin-top: 18px; display: flex; flex-direction: column; gap: 14px; min-height: 0; flex: 1; overflow-y: auto; padding-right: 2px; }
+.import-url-bar { display: flex; flex-direction: column; gap: 7px; }
+.import-field-label { font-size: 11px; color: #b4bfc7; font-weight: 550; }
+.import-platform-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: #1e2620; color: #b9de82; border: 1px solid #35442f; }
+.import-platform-pill.is-invalid { background: #331e22; color: #efaaaa; border-color: #6b3b3e; }
+.import-platform-pill.is-unsupported { background: #2c261c; color: #e2c58a; border-color: #554830; }
+.import-url-input-group { display: flex; gap: 9px; align-items: center; }
+.import-url-input-group input { flex: 1; min-width: 0; height: 41px; border: 1px solid #343f47; border-radius: 8px; background: #10151a; color: #e5e6e9; font-size: 12px; padding: 0 12px; transition: border-color .16s, box-shadow .16s; }
+.import-url-input-group input:focus-visible { outline: none; border-color: #88ab55; box-shadow: 0 0 0 3px #c7f57a1a; }
+.import-url-input-group input::placeholder { color: #55626e; }
+.import-url-input-group .button { height: 41px; padding: 0 15px; font-size: 12px; flex-shrink: 0; }
+.import-url-hint { font-size: 11px; color: #c7b48b; line-height: 1.5; }
+.import-progress-banner { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; background: #161f18; border: 1px solid #33452d; color: #c4df9b; font-size: 11px; }
+.import-progress-banner strong { display: block; color: #eaf4dc; font-weight: 600; }
+.import-progress-banner span { display: block; color: #8fa385; font-size: 10px; margin-top: 2px; }
+.import-error-banner { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border-radius: 9px; background: #361c2288; border: 1px solid #744344; color: #efaaaa; font-size: 11px; line-height: 1.5; }
+.import-error-banner svg { flex-shrink: 0; }
+.import-success-card { display: flex; flex-direction: column; gap: 15px; padding: 16px; border-radius: 11px; background: linear-gradient(125deg, #1e2a1d, #13191b); border: 1px solid #405736; }
+.import-success-head { display: flex; align-items: center; gap: 12px; }
+.import-success-icon { width: 36px; height: 36px; border-radius: 50%; background: #c7f57a24; color: var(--primary); display: grid; place-items: center; flex-shrink: 0; }
+.import-success-head strong { display: block; font-size: 13px; color: #f1f5ec; font-weight: 600; }
+.import-success-head span { display: block; font-size: 11px; color: #96a88e; margin-top: 3px; }
+.import-success-actions { display: flex; justify-content: flex-end; gap: 9px; }
+.import-preview-form { display: flex; flex-direction: column; gap: 12px; min-height: 0; flex: 1; }
+.import-dossier { display: flex; gap: 14px; align-items: flex-start; padding: 13px; border-radius: 11px; background: linear-gradient(115deg, #1b231b, #13181d); border: 1px solid #313d2d; }
+.import-dossier-art { width: 78px; height: 78px; border-radius: 8px; background: #1d261f; color: #a7bd8a; display: grid; place-items: center; flex-shrink: 0; overflow: hidden; box-shadow: 0 8px 20px #0006; }
+.import-dossier-cover { width: 100%; height: 100%; }
+.import-dossier-meta { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 7px; }
+.import-dossier-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.import-dossier-author { font-size: 10px; color: #8c9a87; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-name-field { display: flex; flex-direction: column; gap: 4px; font-size: 10px; color: #96a3ad; }
+.import-name-field input { height: 35px; border: 1px solid #313c44; border-radius: 7px; background: #0f1318; color: #eef1f4; font-size: 12px; font-weight: 560; padding: 0 10px; }
+.import-name-field input:focus-visible { outline: none; border-color: #88ab55; box-shadow: 0 0 0 2px #c7f57a1f; }
+.import-dossier-stats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 10px; color: #8c9987; font-variant-numeric: tabular-nums; }
+.import-dossier-stats strong { color: #dce7d1; font-weight: 600; }
+.import-stat-note { color: #c7b48b; }
+.import-tracklist-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 2px 0; }
+.import-tracklist-title { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: #b5c0c9; }
+.import-toggle-btn { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 4px 6px; border-radius: 5px; font-size: 11px; color: #a7be8b; }
+.import-toggle-btn:hover:not(:disabled) { background: #ffffff08; color: var(--primary); }
+.import-track-ledger { max-height: 250px; overflow-y: auto; border: 1px solid #262c34; border-radius: 9px; background: #11151a; padding: 4px; display: flex; flex-direction: column; gap: 2px; scrollbar-width: thin; scrollbar-color: #2f3641 transparent; }
+.import-ledger-row { display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 6px; cursor: pointer; user-select: none; min-height: 48px; transition: background .12s, opacity .12s; }
+.import-ledger-row:hover { background: #ffffff06; }
+.import-ledger-row.is-excluded { opacity: .48; }
+.import-ledger-row input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var(--primary); flex-shrink: 0; cursor: pointer; }
+.import-ledger-deferred { content-visibility: auto; contain-intrinsic-size: auto none auto 48px; }
+.import-ledger-index { width: 22px; font-size: 10px; color: #5f6977; font-variant-numeric: tabular-nums; text-align: right; flex-shrink: 0; }
+.import-ledger-art { width: 34px; height: 34px; border-radius: 5px; flex-shrink: 0; }
+.import-ledger-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.import-ledger-copy strong { font-size: 11px; font-weight: 560; color: #dde1e7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-ledger-copy small { font-size: 10px; color: #6e7887; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-ledger-duration { font-size: 10px; color: #6c7685; font-variant-numeric: tabular-nums; flex-shrink: 0; padding-left: 4px; }
+.import-modal-actions { margin-top: 6px; flex-shrink: 0; }
 .login-page { background: radial-gradient(ellipse at 90% 30%, #24312455, transparent 60%), #101316; min-height: 100dvh; padding: 40px 6vw 25px; overflow: hidden; display: flex; flex-direction: column; }
 .login-brand { display: flex; justify-content: space-between; align-items: center; }
 .private-badge { display: flex; align-items: center; gap: 8px; font-size: 9px; color: #859178; border: 1px solid #34402d; border-radius: 20px; letter-spacing: 1.4px; padding: 10px 15px; }
@@ -371,6 +425,16 @@ button svg { flex-shrink: 0; }
   .mobile-playback-tools > input { width: 90px; height: 3px; accent-color: var(--primary); }
   .mobile-playback-tools > span { color: #849078; font-size: 8px; min-width: 24px; }
   .mobile-playback-tools .button-icon { width: 28px; height: 28px; }
+  .dialog-content-import { width: calc(100% - 20px); max-height: calc(100dvh - 24px); padding: 22px 17px 18px; }
+  .import-url-input-group { flex-direction: column; align-items: stretch; }
+  .import-url-input-group .button { width: 100%; height: 38px; }
+  .import-dossier { padding: 11px; gap: 11px; }
+  .import-dossier-art { width: 62px; height: 62px; }
+  .import-track-ledger { max-height: 205px; }
+  .import-ledger-row { padding: 6px 7px; gap: 8px; min-height: 44px; }
+  .import-ledger-art { width: 30px; height: 30px; }
+  .import-success-actions { flex-direction: column-reverse; }
+  .import-success-actions .button { width: 100%; }
 }
 @media (max-width: 800px) {
   .sidebar { visibility: hidden; }

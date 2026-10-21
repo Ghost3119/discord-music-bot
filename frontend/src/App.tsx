@@ -12,6 +12,7 @@ import { Login } from './features/auth/Login';
 import { PlayerView } from './features/dashboard/PlayerView';
 import { LibraryView } from './features/library/LibraryView';
 import { LibraryDialog } from './features/library/LibraryDialog';
+import { PlaylistImportDialog } from './features/library/PlaylistImportDialog';
 import { FavoritesView } from './features/favorites/FavoritesView';
 import { DiagnosticsView } from './features/diagnostics/DiagnosticsView';
 import { useSonoraApp } from './hooks/use-sonora-app';
@@ -148,6 +149,7 @@ export default function App() {
                     playbackReady: !!app.state,
                     onSelectPlaylist: app.setSelectedPlaylist,
                     onCreatePlaylist: createPlaylist,
+                    onImportPlaylist: () => app.setModal({ type: 'import' }),
                     onRenamePlaylist: (playlist) => app.setModal({ type: 'playlist', playlist }),
                     onDeletePlaylist: (playlist) => app.setModal({ type: 'delete', playlist }),
                     onAddTrack: (playlist) => app.setModal({ type: 'add', playlist }),
@@ -208,6 +210,20 @@ export default function App() {
           onTrackTitleChange: app.onTrackTitleChange,
           onTrackArtistChange: app.onTrackArtistChange,
           onSubmit: app.submitModal,
+        }}
+      />
+      <PlaylistImportDialog
+        open={app.modal?.type === 'import'}
+        guildId={app.guildId}
+        session={app.session}
+        onClose={() => app.setModal(null)}
+        onImported={(imported) => {
+          app.reloadLibrary();
+          app.setNotice(`«${imported.name}» importada en tu biblioteca.`);
+        }}
+        onOpenPlaylist={(id) => {
+          app.setSelectedPlaylist(id);
+          app.setView('library');
         }}
       />
     </div>

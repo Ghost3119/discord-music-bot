@@ -1,6 +1,14 @@
 import type { Track } from '../../../src/web/contracts';
 
-export type { Track, PlaybackSnapshot, GuildSummary, MusicAction } from '../../../src/web/contracts';
+export type {
+  Track,
+  PlaybackSnapshot,
+  GuildSummary,
+  MusicAction,
+  ImportPlatform,
+  ImportedPlaylistTrack,
+  ImportedPlaylistPreview,
+} from '../../../src/web/contracts';
 export interface Session { user: { id: string; username: string; avatar: string | null }; csrfToken: string }
 export interface Playlist { id: string; name: string; tracks: Track[] }
 export class ApiError extends Error {

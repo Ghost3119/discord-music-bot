@@ -7,6 +7,7 @@ export type Modal =
   | { type: 'delete'; playlist: Playlist }
   | { type: 'save'; track: Track }
   | { type: 'add'; playlist: Playlist }
+  | { type: 'import' }
   | null;
 
 export type LibraryModal = Modal;
