@@ -8,8 +8,8 @@ import type { ServerResponse } from 'node:http';
 import type { GuildPermissions, GuildSummary, MusicBridge, PlaybackSnapshot } from './contracts';
 import { WebConfig, validateWebConfig } from './config';
 import { WebDatabase, WebError, WebSession, type SavedPlaylist, csrfTokenFor, hashToken, openWebDatabase } from './database';
-import { musicAction, object, playlistImportCommitPayload, playlistName, resolveTrackUrlMetadata, trackMetadata } from './validation';
-import { createPlaylistImportService, type PlaylistImportService } from './playlistImport';
+import { musicAction, object, playlistImportCommitPayload, playlistName, publicPlayUrl, resolveTrackUrlMetadata, trackMetadata } from './validation';
+import { createPlaylistImportService, parsePlaylistImportCsv, type PlaylistImportService } from './playlistImport';
 import { createMusicSearchService, type MusicSearchService } from './musicSearch';
 import { createLyricsService, type LyricsService } from './lyrics/service';
 import { candidateCompatibilityWarning } from './lyrics/matching';
@@ -222,10 +222,13 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       SPOTIFY_IMPORT_UNSUPPORTED: [501, 'La importación de playlists de Spotify estará disponible próximamente. Por ahora puedes importar playlists públicas de YouTube y YouTube Music.'],
     };
     const known = candidate.errorCode && Object.hasOwn(bridgeErrors, candidate.errorCode) ? bridgeErrors[candidate.errorCode] : undefined;
-    if (known) { void reply.code(known[0]).send({ error: known[1] }); return; }
+    if (known) { void reply.code(known[0]).send({ error: known[1], ...(candidate.errorCode ? { code: candidate.errorCode } : {}) }); return; }
     const status = candidate.statusCode && candidate.statusCode >= 400 && candidate.statusCode < 600 ? candidate.statusCode : 500;
     // Internal provider, database and extractor errors must never leak credentials.
-    void reply.code(status).send({ error: status >= 500 ? 'The dashboard could not complete this request' : candidate.message });
+    void reply.code(status).send({
+      error: status >= 500 ? 'The dashboard could not complete this request' : candidate.message,
+      ...(error instanceof WebError && candidate.errorCode ? { code: candidate.errorCode } : {}),
+    });
   });
 
   app.get('/auth/discord', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (_request, reply) => {
@@ -563,6 +566,18 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       throw error;
     } finally { operation.done(); }
   });
+  app.post('/api/guilds/:guildId/playlists/import/csv', { bodyLimit: 524_288, config: { rateLimit: { max: 15, timeWindow: '1 minute' } } }, async request => {
+    const body = object(request.body);
+    const input = {
+      csv: body['csv'],
+      name: body['name'],
+      sourceName: body['sourceName'],
+    };
+    const preview = typeof playlistImporter.previewCsv === 'function'
+      ? playlistImporter.previewCsv(input)
+      : parsePlaylistImportCsv(input);
+    return { preview };
+  });
   app.post('/api/guilds/:guildId/playlists/import', { bodyLimit: 524_288, config: { rateLimit: { max: 15, timeWindow: '1 minute' } } }, async request => {
     const userId = request.webSession!.user.id;
     const guildId = params(request)['guildId']!;
@@ -653,7 +668,10 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
         authenticate(request);
         await assertGuildAccess(userId, guildId);
         try {
-          await waitForOperation(bridge.control(userId, guildId, { action: 'play', query: item.url, track: item }, controller.signal), controller.signal);
+          const playQuery = item.source === 'csv' && item.url.startsWith('https://music.youtube.com/search?q=')
+            ? publicPlayUrl(item.url)
+            : item.url;
+          await waitForOperation(bridge.control(userId, guildId, { action: 'play', query: playQuery, track: item }, controller.signal), controller.signal);
           loaded++;
         } catch (trackError) {
           if (controller.signal.aborted) throw new WebError(409, 'Playlist load cancelled');

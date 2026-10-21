@@ -5,19 +5,23 @@ import {
   CheckSquare,
   Download,
   ExternalLink,
+  FileSpreadsheet,
+  Link2,
   ListMusic,
   LoaderCircle,
   Music2,
   Search,
   Square,
+  Upload,
   X,
 } from 'lucide-react';
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Artwork } from '../../components/artwork';
 import { Button } from '../../components/ui/button';
 import {
   api,
   ApiError,
+  type ImportPlatform,
   type ImportedPlaylistPreview,
   type Playlist,
   type Session,
@@ -35,6 +39,24 @@ export interface PlaylistImportDialogProps {
 }
 
 type ImportPhase = 'idle' | 'previewing' | 'ready' | 'saving' | 'saved';
+type ImportSourceMode = 'url' | 'csv';
+
+const SAMPLE_CSV = `Title,Artist,Album,Duration,Spotify URI
+Tití Me Preguntó,Bad Bunny,Un Verano Sin Ti,243,spotify:track:1IHWl5LamUGEuP4ozKQSXZ
+As It Was,Harry Styles,Harry's House,167,spotify:track:4LRPiXqCikLlN15c3yImP7`;
+
+function formatPlatformLabel(platform: ImportPlatform): string {
+  switch (platform) {
+    case 'youtube_music':
+      return 'YouTube Music';
+    case 'youtube':
+      return 'YouTube';
+    case 'spotify':
+      return 'Spotify';
+    case 'csv':
+      return 'CSV · Spotify / Manual';
+  }
+}
 
 function makeRequestId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -52,8 +74,13 @@ export function PlaylistImportDialog({
   onOpenPlaylist,
 }: PlaylistImportDialogProps) {
   const urlInputId = useId();
+  const csvInputId = useId();
+  const csvFileInputId = useId();
   const nameInputId = useId();
+  const [sourceMode, setSourceMode] = useState<ImportSourceMode>('url');
   const [url, setUrl] = useState('');
+  const [csvText, setCsvText] = useState('');
+  const [csvSourceName, setCsvSourceName] = useState('');
   const [playlistName, setPlaylistName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
   const [preview, setPreview] = useState<ImportedPlaylistPreview | null>(null);
@@ -75,7 +102,10 @@ export function PlaylistImportDialog({
     saveControllerRef.current?.abort();
     saveControllerRef.current = null;
     savingLockRef.current = false;
+    setSourceMode('url');
     setUrl('');
+    setCsvText('');
+    setCsvSourceName('');
     setPlaylistName('');
     setNameTouched(false);
     setPreview(null);
@@ -197,6 +227,109 @@ export function PlaylistImportDialog({
     }
   };
 
+  const handleSwitchSourceMode = (nextMode: ImportSourceMode) => {
+    if (phase === 'saving' || nextMode === sourceMode) return;
+    if (phase === 'previewing') {
+      sessionCycleRef.current += 1;
+      previewControllerRef.current?.abort();
+      previewControllerRef.current = null;
+    }
+    setSourceMode(nextMode);
+    setError('');
+    setPreview(null);
+    setExcludedPositions(new Set());
+    setSavedPlaylist(null);
+    setPhase('idle');
+    setRequestId(makeRequestId());
+    if (!nameTouched) {
+      setPlaylistName('');
+    }
+  };
+
+  const handleCsvFileSelect = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setError('');
+    if (file.size > 262_144) {
+      setError('El archivo CSV supera el tamaño máximo permitido (256 KB).');
+      event.target.value = '';
+      return;
+    }
+    try {
+      const content = await file.text();
+      setCsvSourceName(file.name);
+      setCsvText(content);
+      if (preview) {
+        setPreview(null);
+        setExcludedPositions(new Set());
+        setSavedPlaylist(null);
+        setPhase('idle');
+        setRequestId(makeRequestId());
+      }
+      if (!nameTouched) {
+        const baseName = file.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' ').trim();
+        if (baseName) setPlaylistName(baseName.slice(0, 100));
+      }
+    } catch {
+      setError('No se pudo leer el archivo CSV seleccionado.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const handlePreviewCsv = async (event?: FormEvent) => {
+    event?.preventDefault();
+    if (!guildId || !session) return;
+    if (!csvText.trim()) {
+      setError('Selecciona un archivo .csv o pega las filas del CSV para analizar.');
+      return;
+    }
+    const cycle = ++sessionCycleRef.current;
+    previewControllerRef.current?.abort();
+    const controller = new AbortController();
+    previewControllerRef.current = controller;
+    setPhase('previewing');
+    setError('');
+    setSavedPlaylist(null);
+
+    try {
+      const response = await api<{ preview: ImportedPlaylistPreview }>(
+        `/api/guilds/${encodeURIComponent(guildId)}/playlists/import/csv`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            csv: csvText,
+            ...(csvSourceName ? { sourceName: csvSourceName } : {}),
+            ...(nameTouched && playlistName.trim() ? { name: playlistName.trim() } : {}),
+          }),
+          signal: controller.signal,
+        },
+        session.csrfToken,
+      );
+      if (controller.signal.aborted || cycle !== sessionCycleRef.current) return;
+      setPreview(response.preview);
+      setExcludedPositions(new Set());
+      setRequestId(makeRequestId());
+      if (!nameTouched || !playlistName.trim()) {
+        setPlaylistName(response.preview.title);
+        setNameTouched(false);
+      }
+      setPhase('ready');
+    } catch (problem) {
+      if (controller.signal.aborted || cycle !== sessionCycleRef.current) return;
+      setPhase(preview ? 'ready' : 'idle');
+      setError(
+        problem instanceof ApiError
+          ? problem.message
+          : 'No pudimos procesar el archivo CSV. Revisa los encabezados e inténtalo de nuevo.',
+      );
+    } finally {
+      if (previewControllerRef.current === controller) {
+        previewControllerRef.current = null;
+      }
+    }
+  };
+
   const toggleTrackSelection = (position: number) => {
     if (phase === 'saving' || phase === 'saved') return;
     setExcludedPositions((prev) => {
@@ -300,58 +433,166 @@ export function PlaylistImportDialog({
         <DialogPrimitive.Content className="dialog-content dialog-content-import">
           <DialogPrimitive.Title className="dialog-title">Importar playlist</DialogPrimitive.Title>
           <DialogPrimitive.Description className="muted dialog-description">
-            Pega el enlace público de una playlist de YouTube Music o YouTube, revisa su repertorio y guárdala en tu
-            biblioteca.
+            Importa playlists desde enlaces de YouTube Music, YouTube o Spotify autorizado, o mediante un archivo CSV
+            exportado de Spotify.
           </DialogPrimitive.Description>
 
           <div className="import-modal-body">
-            <form className="import-url-bar" onSubmit={(event) => void handleFetchPreview(event)}>
-              <div className="field-label-row">
-                <label htmlFor={urlInputId} className="import-field-label">
-                  Enlace de la playlist
-                </label>
-                {inspection.status !== 'empty' && (
-                  <span
-                    className={`import-platform-pill is-${inspection.status} ${
-                      inspection.platform ? `platform-${inspection.platform}` : ''
-                    }`}
-                  >
-                    {inspection.label}
-                  </span>
+            <div className="import-mode-tabs" role="tablist" aria-label="Método de importación">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sourceMode === 'url'}
+                className={`import-mode-tab ${sourceMode === 'url' ? 'is-active' : ''}`}
+                disabled={phase === 'saving'}
+                onClick={() => handleSwitchSourceMode('url')}
+              >
+                <Link2 size={14} />
+                <span>Enlace (YouTube / Spotify)</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sourceMode === 'csv'}
+                className={`import-mode-tab ${sourceMode === 'csv' ? 'is-active' : ''}`}
+                disabled={phase === 'saving'}
+                onClick={() => handleSwitchSourceMode('csv')}
+              >
+                <FileSpreadsheet size={14} />
+                <span>Archivo CSV (Spotify / Manual)</span>
+              </button>
+            </div>
+
+            {sourceMode === 'url' ? (
+              <form className="import-url-bar" onSubmit={(event) => void handleFetchPreview(event)}>
+                <div className="field-label-row">
+                  <label htmlFor={urlInputId} className="import-field-label">
+                    Enlace de la playlist
+                  </label>
+                  {inspection.status !== 'empty' && (
+                    <span
+                      className={`import-platform-pill is-${inspection.status} ${
+                        inspection.platform ? `platform-${inspection.platform}` : ''
+                      }`}
+                    >
+                      {inspection.label}
+                    </span>
+                  )}
+                </div>
+                <div className="import-url-input-group">
+                  <input
+                    id={urlInputId}
+                    type="url"
+                    value={url}
+                    onChange={(event) => handleUrlChange(event.target.value)}
+                    disabled={phase === 'saving'}
+                    maxLength={2048}
+                    placeholder="https://music.youtube.com/playlist?list=… o https://open.spotify.com/playlist/…"
+                    autoFocus
+                  />
+                  {phase === 'previewing' ? (
+                    <Button variant="secondary" type="button" onClick={cancelActiveOperation}>
+                      Cancelar
+                    </Button>
+                  ) : (
+                    <Button
+                      variant={preview ? 'secondary' : 'default'}
+                      type="submit"
+                      disabled={!url.trim() || inspection.status !== 'valid' || phase === 'saving'}
+                    >
+                      <Search size={15} />
+                      {preview ? 'Actualizar' : 'Analizar'}
+                    </Button>
+                  )}
+                </div>
+                {inspection.hint && (
+                  <div className="import-url-hint-row">
+                    <p className="import-url-hint" role="status">
+                      {inspection.hint}
+                    </p>
+                    {inspection.platform === 'spotify' && (
+                      <button
+                        type="button"
+                        className="import-csv-switch-link"
+                        onClick={() => handleSwitchSourceMode('csv')}
+                      >
+                        Importar desde CSV →
+                      </button>
+                    )}
+                  </div>
                 )}
-              </div>
-              <div className="import-url-input-group">
-                <input
-                  id={urlInputId}
-                  type="url"
-                  value={url}
-                  onChange={(event) => handleUrlChange(event.target.value)}
+              </form>
+            ) : (
+              <form className="import-csv-form" onSubmit={(event) => void handlePreviewCsv(event)}>
+                <div className="import-csv-header-row">
+                  <div>
+                    <label htmlFor={csvInputId} className="import-field-label">
+                      Contenido CSV (Exportify, TuneMyMusic o formato SONORA)
+                    </label>
+                    <span className="import-csv-columns-hint">
+                      Columnas: <code>Title</code> (o <code>Track Name</code>), <code>Artist</code> (o{' '}
+                      <code>Artist Name(s)</code>), y opcionales <code>Album</code>, <code>Duration</code>,{' '}
+                      <code>Spotify URI</code> / <code>URL</code>.
+                    </span>
+                  </div>
+                  <div className="import-csv-file-actions">
+                    <input
+                      id={csvFileInputId}
+                      type="file"
+                      accept=".csv,text/csv"
+                      className="sr-only"
+                      disabled={phase === 'saving'}
+                      onChange={(event) => void handleCsvFileSelect(event)}
+                    />
+                    <label htmlFor={csvFileInputId} className="import-file-btn">
+                      <Upload size={14} />
+                      <span>{csvSourceName ? csvSourceName : 'Subir .csv'}</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="import-toggle-btn"
+                      disabled={phase === 'saving'}
+                      onClick={() => {
+                        setCsvSourceName('spotify-favoritas.csv');
+                        setCsvText(SAMPLE_CSV);
+                        setError('');
+                      }}
+                    >
+                      Cargar ejemplo
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  id={csvInputId}
+                  className="import-csv-textarea"
+                  rows={4}
+                  value={csvText}
+                  onChange={(event) => {
+                    setCsvText(event.target.value);
+                    setError('');
+                    if (preview) {
+                      setPreview(null);
+                      setExcludedPositions(new Set());
+                      setSavedPlaylist(null);
+                      setPhase('idle');
+                    }
+                  }}
                   disabled={phase === 'saving'}
-                  maxLength={2048}
-                  placeholder="https://music.youtube.com/playlist?list=…"
-                  autoFocus
+                  placeholder={'Title,Artist,Album,Duration,Spotify URI\nTití Me Preguntó,Bad Bunny,Un Verano Sin Ti,243,spotify:track:1IHWl5LamUGEuP4ozKQSXZ'}
                 />
-                {phase === 'previewing' ? (
-                  <Button variant="secondary" type="button" onClick={cancelActiveOperation}>
-                    Cancelar
-                  </Button>
-                ) : (
+                <div className="import-csv-submit-row">
+                  <span className="muted">Máximo 256 KB · UTF-8 · hasta 500 canciones</span>
                   <Button
                     variant={preview ? 'secondary' : 'default'}
                     type="submit"
-                    disabled={!url.trim() || inspection.status !== 'valid' || phase === 'saving'}
+                    disabled={!csvText.trim() || phase === 'saving' || phase === 'previewing'}
                   >
-                    <Search size={15} />
-                    {preview ? 'Actualizar' : 'Analizar'}
+                    <FileSpreadsheet size={15} />
+                    {preview ? 'Reanalizar CSV' : 'Analizar CSV'}
                   </Button>
-                )}
-              </div>
-              {inspection.hint && inspection.status !== 'valid' && (
-                <p className="import-url-hint" role="status">
-                  {inspection.hint}
-                </p>
-              )}
-            </form>
+                </div>
+              </form>
+            )}
 
             {phase === 'previewing' && (
               <div className="import-progress-banner" role="status" aria-live="polite">
@@ -377,6 +618,15 @@ export function PlaylistImportDialog({
               <div className="import-error-banner" role="alert">
                 <AlertCircle size={16} />
                 <span>{error}</span>
+                {sourceMode === 'url' && (inspection.platform === 'spotify' || /CSV/i.test(error)) && (
+                  <button
+                    type="button"
+                    className="import-csv-switch-link"
+                    onClick={() => handleSwitchSourceMode('csv')}
+                  >
+                    Cambiar a Archivo CSV
+                  </button>
+                )}
               </div>
             )}
 
@@ -437,7 +687,7 @@ export function PlaylistImportDialog({
                   <div className="import-dossier-meta">
                     <div className="import-dossier-badges">
                       <span className="track-preview-badge">
-                        {preview.platform === 'youtube_music' ? 'YouTube Music' : 'YouTube'}
+                        {formatPlatformLabel(preview.platform)}
                       </span>
                       {preview.author && <span className="import-dossier-author">por {preview.author}</span>}
                     </div>
@@ -534,7 +784,7 @@ export function PlaylistImportDialog({
                         />
                         <span className="import-ledger-copy">
                           <strong>{item.title}</strong>
-                          <small>{item.artist}</small>
+                          <small>{item.album ? `${item.artist} · ${item.album}` : item.artist}</small>
                         </span>
                         <span className="import-ledger-duration">
                           {item.duration > 0 ? duration(item.duration) : '—'}

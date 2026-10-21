@@ -34,10 +34,10 @@ export function inspectPlaylistUrl(raw: string): PlaylistUrlInspection {
   const host = url.hostname.toLowerCase();
   if (host === 'open.spotify.com' && /^\/(?:intl-[a-z]{2}\/)?playlist\/([A-Za-z0-9]{22})\/?$/.test(url.pathname)) {
     return {
-      status: 'unsupported',
+      status: 'valid',
       platform: 'spotify',
-      label: 'Spotify · Próximamente',
-      hint: 'El adaptador para Spotify está preparado, pero en esta entrega solo se importan playlists de YouTube y YouTube Music.',
+      label: 'Spotify',
+      hint: 'Spotify Web API requiere autorización en modo desarrollo. Si la playlist está restringida, usa la pestaña «Archivo CSV».',
     };
   }
 

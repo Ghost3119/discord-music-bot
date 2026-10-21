@@ -146,8 +146,9 @@ describe('playlist URL inspection helper', () => {
       label: 'YouTube Music',
     });
     expect(inspectPlaylistUrl('https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M')).toMatchObject({
-      status: 'unsupported',
+      status: 'valid',
       platform: 'spotify',
+      label: 'Spotify',
     });
     expect(inspectPlaylistUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toMatchObject({
       status: 'invalid',
@@ -384,5 +385,113 @@ describe('PlaylistImportDialog user workflow and invariants', () => {
     expect(document.querySelector('.import-error-banner')?.textContent).toContain(
       'La playlist es privada o requiere iniciar sesión.',
     );
+  });
+
+  it('handles Spotify restriction errors by offering a one-click switch to CSV import and completes CSV preview/save', async () => {
+    const harness = await mountImportDialog();
+    const urlInput = document.querySelector<HTMLInputElement>('input[type="url"]')!;
+
+    await act(async () => {
+      setNativeInputValue(urlInput, 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M');
+    });
+    expect(document.querySelector('.import-platform-pill')?.textContent).toBe('Spotify');
+
+    const analyzeBtn = [...document.querySelectorAll('button')].find((btn) =>
+      btn.textContent?.includes('Analizar'),
+    )!;
+    await act(async () => {
+      analyzeBtn.click();
+    });
+
+    await act(async () => {
+      pendingCalls[0]!.reject(
+        new ApiError(
+          'La playlist de Spotify no es accesible en Development Mode. Usa la pestaña «Archivo CSV».',
+          404,
+          'SPOTIFY_PLAYLIST_INACCESSIBLE',
+        ),
+      );
+    });
+
+    const switchBtn = [...document.querySelectorAll<HTMLButtonElement>('.import-error-banner button')].find((btn) =>
+      btn.textContent?.includes('Cambiar a Archivo CSV'),
+    );
+    expect(switchBtn).toBeDefined();
+
+    await act(async () => {
+      switchBtn!.click();
+    });
+
+    // Now in CSV mode: click Cargar ejemplo and Analizar CSV
+    const loadSampleBtn = [...document.querySelectorAll('button')].find((btn) =>
+      btn.textContent?.includes('Cargar ejemplo'),
+    )!;
+    await act(async () => {
+      loadSampleBtn.click();
+    });
+
+    const analyzeCsvBtn = [...document.querySelectorAll('button')].find((btn) =>
+      btn.textContent?.includes('Analizar CSV'),
+    )!;
+    await act(async () => {
+      analyzeCsvBtn.click();
+    });
+
+    expect(pendingCalls).toHaveLength(2);
+    expect(pendingCalls[1]!.path).toBe('/api/guilds/guild-a/playlists/import/csv');
+
+    const csvPreview: ImportedPlaylistPreview = {
+      platform: 'csv',
+      playlistId: 'csv-import',
+      sourceUrl: 'https://music.youtube.com/search?q=playlist',
+      title: 'spotify favoritas',
+      author: 'Archivo CSV',
+      thumbnail: null,
+      totalCount: 2,
+      importedCount: 2,
+      omittedCount: 0,
+      truncated: false,
+      tracks: [
+        {
+          url: 'https://open.spotify.com/track/1IHWl5LamUGEuP4ozKQSXZ',
+          title: 'Tití Me Preguntó',
+          artist: 'Bad Bunny',
+          album: 'Un Verano Sin Ti',
+          duration: 243,
+          thumbnail: null,
+          source: 'spotify',
+          sourceId: '1IHWl5LamUGEuP4ozKQSXZ',
+          platform: 'csv',
+          position: 0,
+        },
+      ],
+    };
+
+    await act(async () => {
+      pendingCalls[1]!.resolve({ preview: csvPreview });
+    });
+
+    expect(document.body.textContent).toContain('CSV · Spotify / Manual');
+    expect(document.body.textContent).toContain('Bad Bunny · Un Verano Sin Ti');
+
+    const importSubmitBtn = [...document.querySelectorAll('button')].find((btn) =>
+      btn.textContent?.includes('Importar (1)'),
+    )!;
+    await act(async () => {
+      importSubmitBtn.click();
+    });
+
+    expect(pendingCalls).toHaveLength(3);
+    expect(pendingCalls[2]!.path).toBe('/api/guilds/guild-a/playlists/import');
+    await act(async () => {
+      pendingCalls[2]!.resolve({
+        playlist: {
+          id: 'pl-csv-1',
+          name: 'spotify favoritas',
+          tracks: csvPreview.tracks.map((t, i) => ({ ...t, id: `trk-${i}` })),
+        },
+      });
+    });
+    expect(harness.props.onImported).toHaveBeenCalledOnce();
   });
 });

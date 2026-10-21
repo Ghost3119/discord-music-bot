@@ -328,6 +328,10 @@ button svg { flex-shrink: 0; }
 .no-playlist p { color: #939eab; font-size: 12px; margin-bottom: 15px; }
 .dialog-content-import { width: min(620px, calc(100% - 28px)); max-height: min(88dvh, 760px); display: flex; flex-direction: column; overflow: hidden; }
 .import-modal-body { margin-top: 18px; display: flex; flex-direction: column; gap: 14px; min-height: 0; flex: 1; overflow-y: auto; padding-right: 2px; }
+.import-mode-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; border-radius: 9px; background: #0f1318; border: 1px solid #283138; }
+.import-mode-tab { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: #95a2ae; font-size: 11px; font-weight: 560; cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
+.import-mode-tab:hover:not(:disabled) { color: #dce3ea; background: #171d23; }
+.import-mode-tab.is-active { background: #1e281d; color: #d5f39b; border-color: #3a4f30; }
 .import-url-bar { display: flex; flex-direction: column; gap: 7px; }
 .import-field-label { font-size: 11px; color: #b4bfc7; font-weight: 550; }
 .import-platform-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: #1e2620; color: #b9de82; border: 1px solid #35442f; }
@@ -338,7 +342,21 @@ button svg { flex-shrink: 0; }
 .import-url-input-group input:focus-visible { outline: none; border-color: #88ab55; box-shadow: 0 0 0 3px #c7f57a1a; }
 .import-url-input-group input::placeholder { color: #55626e; }
 .import-url-input-group .button { height: 41px; padding: 0 15px; font-size: 12px; flex-shrink: 0; }
+.import-url-hint-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .import-url-hint { font-size: 11px; color: #c7b48b; line-height: 1.5; }
+.import-csv-switch-link { border: none; background: transparent; color: #c7f57a; font-size: 11px; font-weight: 600; cursor: pointer; padding: 2px 0; text-decoration: underline; text-underline-offset: 3px; flex-shrink: 0; }
+.import-csv-switch-link:hover { color: #e2fba8; }
+.import-csv-form { display: flex; flex-direction: column; gap: 9px; }
+.import-csv-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.import-csv-columns-hint { display: block; font-size: 10px; color: #87949f; margin-top: 3px; line-height: 1.45; }
+.import-csv-columns-hint code { color: #c5d4b6; background: #182019; padding: 1px 4px; border-radius: 4px; font-size: 10px; }
+.import-csv-file-actions { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
+.import-file-btn { display: inline-flex; align-items: center; gap: 6px; height: 29px; padding: 0 10px; border-radius: 6px; border: 1px solid #35442f; background: #192219; color: #cce898; font-size: 11px; font-weight: 550; cursor: pointer; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-file-btn:hover { background: #212e20; border-color: #4b6141; }
+.import-csv-textarea { width: 100%; min-height: 88px; max-height: 160px; resize: vertical; border: 1px solid #343f47; border-radius: 8px; background: #10151a; color: #e5e6e9; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; line-height: 1.45; padding: 9px 11px; }
+.import-csv-textarea:focus-visible { outline: none; border-color: #88ab55; box-shadow: 0 0 0 3px #c7f57a1a; }
+.import-csv-submit-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .import-progress-banner { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; background: #161f18; border: 1px solid #33452d; color: #c4df9b; font-size: 11px; }
 .import-progress-banner strong { display: block; color: #eaf4dc; font-weight: 600; }
 .import-progress-banner span { display: block; color: #8fa385; font-size: 10px; margin-top: 2px; }
