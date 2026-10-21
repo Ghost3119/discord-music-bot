@@ -72,11 +72,11 @@ describe('application composition regression', () => {
     expect(app.setMobileNav).toHaveBeenLastCalledWith(false);
   });
 
-  it.each([['player', 'search-bar'], ['library', 'library-view'], ['favorites', 'favorites-view'], ['diagnostics', 'diagnostics-view']] as const)('composes only the selected %s view', (view, className) => {
+  it.each([['player', 'search-bar'], ['search', 'search-view'], ['library', 'library-view'], ['favorites', 'favorites-view'], ['diagnostics', 'diagnostics-view']] as const)('composes only the selected %s view', (view, className) => {
     vi.mocked(useSonoraApp).mockReturnValue(appState({ view }));
     const html = renderToStaticMarkup(<App />);
     expect(html).toContain(`class="${className}"`);
-    const others = ['search-bar', 'library-view', 'favorites-view', 'diagnostics-view'].filter((value) => value !== className);
+    const others = ['search-bar', 'search-view', 'library-view', 'favorites-view', 'diagnostics-view'].filter((value) => value !== className);
     others.forEach((value) => expect(html).not.toContain(`class="${value}"`));
     expect(html).toContain('id="main-content"');
     expect(html).toContain('aria-label="Controles de reproducción"');

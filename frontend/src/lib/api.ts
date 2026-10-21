@@ -8,6 +8,11 @@ export type {
   ImportPlatform,
   ImportedPlaylistTrack,
   ImportedPlaylistPreview,
+  MusicSearchPlatform,
+  MusicSearchProviderId,
+  MusicSearchTrack,
+  MusicSearchProviderStatus,
+  MusicSearchResponse,
 } from '../../../src/web/contracts';
 export interface Session { user: { id: string; username: string; avatar: string | null }; csrfToken: string }
 export interface Playlist { id: string; name: string; tracks: Track[] }

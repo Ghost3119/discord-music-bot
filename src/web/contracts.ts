@@ -93,3 +93,34 @@ export interface ImportedPlaylistPreview {
   truncated: boolean;
   tracks: ImportedPlaylistTrack[];
 }
+
+export type MusicSearchPlatform = 'all' | 'youtube_music' | 'youtube' | 'soundcloud';
+export type MusicSearchProviderId = 'youtube_music' | 'youtube' | 'soundcloud';
+
+export interface MusicSearchTrack {
+  id: string;
+  url: string;
+  title: string;
+  artist: string;
+  channel: string | null;
+  duration: number;
+  thumbnail: string | null;
+  source: 'youtube' | 'soundcloud';
+  sourceId: string;
+  platform: MusicSearchProviderId;
+}
+
+export interface MusicSearchProviderStatus {
+  platform: MusicSearchProviderId;
+  ok: boolean;
+  count: number;
+  error?: string;
+}
+
+export interface MusicSearchResponse {
+  query: string;
+  platform: MusicSearchPlatform;
+  results: MusicSearchTrack[];
+  providers: MusicSearchProviderStatus[];
+  partial: boolean;
+}

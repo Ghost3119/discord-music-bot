@@ -10,6 +10,7 @@ import { WebConfig, validateWebConfig } from './config';
 import { WebDatabase, WebError, WebSession, type SavedPlaylist, csrfTokenFor, hashToken, openWebDatabase } from './database';
 import { musicAction, object, playlistImportCommitPayload, playlistName, resolveTrackUrlMetadata, trackMetadata } from './validation';
 import { createPlaylistImportService, type PlaylistImportService } from './playlistImport';
+import { createMusicSearchService, type MusicSearchService } from './musicSearch';
 import { createLyricsService, type LyricsService } from './lyrics/service';
 import { candidateCompatibilityWarning } from './lyrics/matching';
 import type { LyricsCurrentResponse, LyricsSearchResponse, LyricsResult, LyricsSearchResult } from './lyrics/contracts';
@@ -29,6 +30,8 @@ export interface WebServerOptions {
   lyricsService?: LyricsService;
   /** Test/extractor injection for public playlist import previews. */
   playlistImportService?: PlaylistImportService;
+  /** Test/provider injection for integrated multi-platform music search. */
+  musicSearchService?: MusicSearchService;
 }
 interface LiveStream { response: ServerResponse; tokenHash: string; userId: string; guildId: string; close: () => void }
 interface PendingOperation { tokenHash: string; userId: string; guildId: string | undefined; controller: AbortController; timedOut: boolean; done: () => void }
@@ -62,6 +65,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const oauthFetch = options.oauthFetch ?? fetch;
   const lyrics = options.lyricsService ?? createLyricsService();
   const playlistImporter = options.playlistImportService ?? createPlaylistImportService();
+  const musicSearcher = options.musicSearchService ?? createMusicSearchService({ fetch: oauthFetch });
   const accessMode = config.accessMode ?? 'allowlist';
   const allowed = new Set(config.allowedUserIds);
   const allowedGuilds = config.allowedGuildIds?.length || accessMode === 'guild_members' ? new Set(config.allowedGuildIds ?? []) : null;
@@ -214,6 +218,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       RECOMMEND_UNAVAILABLE: [503, 'No se pudo consultar YouTube Mix ahora.'],
       MUSIC_OPERATION_TIMEOUT: [504, 'La operación superó el tiempo de espera. Algunas canciones pueden estar ya en la cola; revísala antes de reintentar.'],
       PLAYLIST_IMPORT_TIMEOUT: [504, 'La consulta de la playlist superó el tiempo de espera. Inténtalo de nuevo.'],
+      MUSIC_SEARCH_TIMEOUT: [504, 'La búsqueda superó el tiempo de espera. Inténtalo de nuevo.'],
       SPOTIFY_IMPORT_UNSUPPORTED: [501, 'La importación de playlists de Spotify estará disponible próximamente. Por ahora puedes importar playlists públicas de YouTube y YouTube Music.'],
     };
     const known = candidate.errorCode && Object.hasOwn(bridgeErrors, candidate.errorCode) ? bridgeErrors[candidate.errorCode] : undefined;
@@ -486,6 +491,40 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     send(initial);
   });
 
+  app.get('/api/guilds/:guildId/search', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const userId = request.webSession!.user.id;
+    const guildId = params(request)['guildId']!;
+    const rawQuery = (request.query ?? {}) as Record<string, unknown>;
+    const allowedKeys = new Set(['q', 'query', 'platform', 'limit']);
+    if (Object.keys(rawQuery).some(key => !allowedKeys.has(key))) {
+      throw new WebError(400, 'Parámetros de búsqueda no válidos.');
+    }
+    const input = {
+      query: rawQuery['q'] !== undefined ? rawQuery['q'] : rawQuery['query'],
+      platform: rawQuery['platform'],
+      limit: rawQuery['limit'],
+    };
+    musicSearcher.validateQuery(input);
+    const operation = beginOperation(request, reply.raw, options.musicOperationTimeoutMs ?? 25_000);
+    const signal = operation.controller.signal;
+    try {
+      const response = await waitForOperation(musicSearcher.search(input, signal), signal);
+      if (signal.aborted) throw new WebError(409, 'La búsqueda fue cancelada.');
+      authenticate(request);
+      await assertGuildAccess(userId, guildId);
+      return response;
+    } catch (error) {
+      if (operation.timedOut) {
+        throw Object.assign(new WebError(504, 'La búsqueda superó el tiempo de espera. Inténtalo de nuevo.'), {
+          errorCode: 'MUSIC_SEARCH_TIMEOUT',
+        });
+      }
+      if (signal.aborted) throw new WebError(409, 'La búsqueda fue cancelada.');
+      throw error;
+    } finally {
+      operation.done();
+    }
+  });
   app.get('/api/guilds/:guildId/tracks/resolve', async request => ({
     track: await resolveTrackUrlMetadata((request.query as Record<string, unknown>)['url'], oauthFetch),
   }));

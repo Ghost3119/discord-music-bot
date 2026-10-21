@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useSession } from '../features/auth/use-session';
 import { useLibrary } from '../features/library/use-library';
-import { api, type MusicAction } from '../lib/api';
+import { api, trackMetadata, type MusicAction, type Track } from '../lib/api';
 import type { MusicControlResult } from '../../../src/web/contracts';
 import { AbandonedOperation, createOperationScope } from '../lib/operation-scope';
 import type { View } from '../types/app';
@@ -133,6 +133,18 @@ export function useSonoraApp() {
     });
   }
 
+  async function enqueueTrack(track: Track) {
+    await run('play', async () => {
+      await mutate(`/api/guilds/${guildId}/actions`, 'POST', {
+        action: 'play',
+        query: track.url,
+        track: trackMetadata(track),
+      });
+      setNotice(`«${track.title}» añadida a la cola.`);
+      await refresh();
+    });
+  }
+
   const current = state?.current;
   return {
     session,
@@ -167,6 +179,7 @@ export function useSonoraApp() {
     query,
     setQuery,
     addToQueue,
+    enqueueTrack,
     ...library,
   };
 }
