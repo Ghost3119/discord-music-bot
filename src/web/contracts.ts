@@ -65,3 +65,31 @@ export interface MusicBridge {
   invalidateMembership?(userId?: string, guildId?: string): void;
 }
 export interface MusicControlResult { autoplay?: boolean; recommendationsAdded?: number }
+
+export type ImportPlatform = 'youtube' | 'youtube_music' | 'spotify';
+
+export interface ImportedPlaylistTrack {
+  url: string;
+  title: string;
+  artist: string;
+  duration: number;
+  thumbnail: string | null;
+  source: string;
+  sourceId: string;
+  platform: ImportPlatform;
+  position: number;
+}
+
+export interface ImportedPlaylistPreview {
+  platform: ImportPlatform;
+  playlistId: string;
+  sourceUrl: string;
+  title: string;
+  author: string | null;
+  thumbnail: string | null;
+  totalCount: number;
+  importedCount: number;
+  omittedCount: number;
+  truncated: boolean;
+  tracks: ImportedPlaylistTrack[];
+}

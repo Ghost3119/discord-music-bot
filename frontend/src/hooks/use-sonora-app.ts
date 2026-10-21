@@ -157,6 +157,7 @@ export function useSonoraApp() {
     state,
     connection,
     refresh,
+    setNotice,
     current,
     controlsDisabled: !!busy || loggingOut || !state,
     playing: state?.status === 'playing',
