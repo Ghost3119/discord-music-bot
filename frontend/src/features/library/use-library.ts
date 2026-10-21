@@ -7,7 +7,7 @@ interface LibraryOptions {
   session: Session | null;
   reportError: (problem: unknown) => void;
   run: (key: string, task: () => Promise<void>) => Promise<void>;
-  mutate: (path: string, method: string, data?: unknown) => Promise<void>;
+  mutate: (path: string, method: string, data?: unknown) => Promise<unknown>;
   setNotice: (notice: string) => void;
   setView: (view: View) => void;
   refresh: () => Promise<void> | undefined;
@@ -193,10 +193,21 @@ export function useLibrary({
 
   function loadPlaylist(playlist: Playlist) {
     return run('load', async () => {
-      await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/load`, 'POST');
-      setNotice(
-        `«${playlist.name}» (${playlist.tracks.length} ${playlist.tracks.length === 1 ? 'canción' : 'canciones'}) enviada a la cola.`,
-      );
+      const response = (await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/load`, 'POST')) as
+        | { loaded?: number; total?: number; failed?: number }
+        | undefined;
+      const totalCount = playlist.tracks.length;
+      const loadedCount = typeof response?.loaded === 'number' ? response.loaded : totalCount;
+      const omittedCount = Math.max(0, totalCount - loadedCount);
+      if (omittedCount > 0) {
+        setNotice(
+          `«${playlist.name}»: se cargaron ${loadedCount} de ${totalCount} canciones en la cola (${omittedCount} ${omittedCount === 1 ? 'omitida' : 'omitidas'}).`,
+        );
+      } else {
+        setNotice(
+          `«${playlist.name}» (${loadedCount} ${loadedCount === 1 ? 'canción' : 'canciones'}) enviada a la cola.`,
+        );
+      }
       setView('player');
       await refresh();
     });

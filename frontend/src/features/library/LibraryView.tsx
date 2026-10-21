@@ -1,24 +1,29 @@
+import * as React from 'react';
 import {
   ArrowLeft,
   Download,
   Library,
-  ListMusic,
-  LoaderCircle,
-  Music2,
-  Pencil,
-  Play,
   Plus,
-  Trash2,
 } from 'lucide-react';
-import { Artwork } from '../../components/artwork';
-import { IconButton } from '../../components/common/IconButton';
 import { EmptyState, Loading } from '../../components/common/StateFeedback';
 import { Button } from '../../components/ui/button';
-import { TrackList, type TrackActions } from '../../components/queue/TrackList';
-import { duration } from '../../lib/utils';
+import type { TrackActions } from '../../components/queue/TrackList';
 import type { Playlist } from '../../lib/api';
+import { LibraryToolbar } from './LibraryToolbar';
+import { PlaylistDetails } from './PlaylistDetails';
+import { PlaylistGrid } from './PlaylistGrid';
+import {
+  filterAndSortPlaylists,
+  readStoredLayoutMode,
+  readStoredSortOrder,
+  writeStoredLayoutMode,
+  writeStoredSortOrder,
+  type LibraryLayoutMode,
+  type LibrarySortOrder,
+} from './library-Catalog';
 
 export interface LibraryViewBindings {
+  guildId?: string;
   playlist?: Playlist;
   playlists: Playlist[];
   libraryLoading: boolean;
@@ -31,11 +36,88 @@ export interface LibraryViewBindings {
   onDeletePlaylist: (playlist: Playlist) => void;
   onAddTrack: (playlist: Playlist) => void;
   onLoadPlaylist: (playlist: Playlist) => void | Promise<void>;
+  searchQuery?: string;
+  onSearchQueryChange?: (value: string) => void;
+  sortOrder?: LibrarySortOrder;
+  onSortOrderChange?: (value: LibrarySortOrder) => void;
+  layoutMode?: LibraryLayoutMode;
+  onLayoutModeChange?: (value: LibraryLayoutMode) => void;
 }
 
 export interface LibraryViewProps {
   library: LibraryViewBindings;
   trackActions: TrackActions;
+}
+
+function hasReactDispatcher(): boolean {
+  const internals = (
+    React as unknown as {
+      __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE?: { H: unknown };
+    }
+  ).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+  return Boolean(internals && internals.H);
+}
+
+function useCatalogState(library: LibraryViewBindings) {
+  if (!hasReactDispatcher()) {
+    return {
+      searchQuery: library.searchQuery ?? '',
+      setSearchQuery: (next: string) => library.onSearchQueryChange?.(next),
+      sortOrder: library.sortOrder ?? readStoredSortOrder(),
+      setSortOrder: (next: LibrarySortOrder) => {
+        writeStoredSortOrder(next);
+        library.onSortOrderChange?.(next);
+      },
+      layoutMode: library.layoutMode ?? readStoredLayoutMode(),
+      setLayoutMode: (next: LibraryLayoutMode) => {
+        writeStoredLayoutMode(next);
+        library.onLayoutModeChange?.(next);
+      },
+    };
+  }
+
+  const [localSearch, setLocalSearch] = React.useState('');
+  const [prevGuildId, setPrevGuildId] = React.useState(library.guildId);
+  if (library.guildId !== prevGuildId) {
+    setPrevGuildId(library.guildId);
+    if (localSearch) setLocalSearch('');
+  }
+  const [localSort, setLocalSort] = React.useState<LibrarySortOrder>(() =>
+    readStoredSortOrder(),
+  );
+  const [localLayout, setLocalLayout] = React.useState<LibraryLayoutMode>(() =>
+    readStoredLayoutMode(),
+  );
+
+  const searchQuery = library.searchQuery !== undefined ? library.searchQuery : localSearch;
+  const sortOrder = library.sortOrder !== undefined ? library.sortOrder : localSort;
+  const layoutMode = library.layoutMode !== undefined ? library.layoutMode : localLayout;
+
+  const setSearchQuery = (next: string) => {
+    setLocalSearch(next);
+    library.onSearchQueryChange?.(next);
+  };
+
+  const setSortOrder = (next: LibrarySortOrder) => {
+    setLocalSort(next);
+    writeStoredSortOrder(next);
+    library.onSortOrderChange?.(next);
+  };
+
+  const setLayoutMode = (next: LibraryLayoutMode) => {
+    setLocalLayout(next);
+    writeStoredLayoutMode(next);
+    library.onLayoutModeChange?.(next);
+  };
+
+  return {
+    searchQuery,
+    setSearchQuery,
+    sortOrder,
+    setSortOrder,
+    layoutMode,
+    setLayoutMode,
+  };
 }
 
 export function LibraryView({ library, trackActions }: LibraryViewProps) {
@@ -53,6 +135,19 @@ export function LibraryView({ library, trackActions }: LibraryViewProps) {
     onAddTrack,
     onLoadPlaylist,
   } = library;
+
+  const {
+    searchQuery,
+    setSearchQuery,
+    sortOrder,
+    setSortOrder,
+    layoutMode,
+    setLayoutMode,
+  } = useCatalogState(library);
+
+  const entries = filterAndSortPlaylists(playlists, searchQuery, sortOrder);
+  const selectedIndex = playlist ? Math.max(0, playlists.findIndex((item) => item.id === playlist.id)) : 0;
+
   return (
     <section className="library-view">
       <div className="section-heading">
@@ -65,150 +160,78 @@ export function LibraryView({ library, trackActions }: LibraryViewProps) {
             <p>Las canciones que merecen quedarse.</p>
           )}
         </div>
-        <div className="heading-actions">
-          {playlist ? (
-            <>
-              <IconButton
-                label="Renombrar playlist"
-                disabled={!!busy}
-                onClick={() => onRenamePlaylist(playlist)}
-              >
-                <Pencil size={17} />
-              </IconButton>
-              <IconButton
-                label="Eliminar playlist"
-                disabled={!!busy}
-                onClick={() => onDeletePlaylist(playlist)}
-              >
-                <Trash2 size={17} />
-              </IconButton>
-              <Button variant="secondary" size="sm" disabled={!!busy} onClick={() => onAddTrack(playlist)}>
-                <Plus size={16} /> Agregar canción
+        {!playlist && (
+          <div className="heading-actions">
+            {onImportPlaylist && (
+              <Button variant="secondary" size="sm" onClick={onImportPlaylist} disabled={!!busy}>
+                <Download size={15} /> Importar playlist
               </Button>
-              <Button
-                size="sm"
-                disabled={!!busy || !playlist.tracks.length || !playbackReady}
-                onClick={() => onLoadPlaylist(playlist)}
-              >
-                {busy === 'load' ? (
-                  <LoaderCircle size={15} className="spin" />
-                ) : (
-                  <Play size={15} fill="currentColor" />
-                )}{' '}
-                {busy === 'load' ? 'Cargando cola…' : 'Escuchar'}
-              </Button>
-            </>
-          ) : (
-            <>
-              {onImportPlaylist && (
-                <Button variant="secondary" size="sm" onClick={onImportPlaylist} disabled={!!busy}>
-                  <Download size={15} /> Importar playlist
-                </Button>
-              )}
-              <Button size="sm" onClick={onCreatePlaylist} disabled={!!busy}>
-                <Plus size={16} /> Nueva playlist
-              </Button>
-            </>
-          )}
-        </div>
+            )}
+            <Button size="sm" onClick={onCreatePlaylist} disabled={!!busy}>
+              <Plus size={16} /> Nueva playlist
+            </Button>
+          </div>
+        )}
       </div>
+
       {libraryLoading ? (
         <Loading text="Abriendo tu biblioteca…" />
       ) : playlist ? (
-        <>
-          <div className="playlist-detail">
-            <div className="playlist-detail-art">
-              {playlist.tracks[0]?.thumbnail ? (
-                <Artwork track={playlist.tracks[0]} className="playlist-detail-cover" decorative />
-              ) : (
-                <ListMusic size={52} strokeWidth={1.2} />
-              )}
-            </div>
-            <div>
-              <span className="eyebrow">TU COLECCIÓN</span>
-              <h2>{playlist.name}</h2>
-              <p>
-                {playlist.tracks.length} canciones ·{' '}
-                {duration(playlist.tracks.reduce((sum, track) => sum + track.duration, 0))}
-              </p>
-            </div>
-          </div>
-          {playlist.tracks.length ? (
-            <div className="track-list">
-              <TrackList
-                tracks={playlist.tracks}
-                context="playlist"
-                owner={playlist}
-                actions={trackActions}
-              />
-            </div>
-          ) : (
-            <EmptyState
-              icon={<Music2 size={30} />}
-              title="Una playlist llena de posibilidades"
-              text="Agrega un enlace o guarda canciones desde el reproductor y la cola."
-            />
-          )}
-        </>
+        PlaylistDetails({
+          playlist,
+          colorIndex: selectedIndex,
+          busy,
+          playbackReady,
+          onLoadPlaylist,
+          onAddTrack,
+          onRenamePlaylist,
+          onDeletePlaylist,
+          trackActions,
+        })
       ) : playlists.length ? (
-        <div className="playlist-grid">
-          {playlists.map((item, index) => (
-            <div
-              key={item.id}
-              className="playlist-card"
-              role="button"
-              tabIndex={0}
-              onClick={() => onSelectPlaylist(item.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  onSelectPlaylist(item.id);
-                }
-              }}
-            >
-              <div className={`playlist-cover playlist-color-${index % 4}`}>
-                {item.tracks[0]?.thumbnail ? (
-                  <Artwork track={item.tracks[0]} className="playlist-cover-img" decorative />
-                ) : (
-                  <ListMusic size={62} strokeWidth={1.1} />
-                )}
-                <span>{String(index + 1).padStart(2, '0')}</span>
-                <button
-                  type="button"
-                  className="playlist-cover-play"
-                  aria-label={`Escuchar ${item.name}`}
-                  disabled={!!busy || !item.tracks.length || !playbackReady}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void onLoadPlaylist(item);
-                  }}
-                >
-                  <Play size={19} fill="currentColor" />
-                </button>
-              </div>
-              <h3>{item.name}</h3>
-              <p>
-                {item.tracks.length} canciones <span>•</span> Tu colección
-              </p>
-            </div>
-          ))}
-          <button className="playlist-new" onClick={onCreatePlaylist}>
-            <span>
-              <Plus size={27} />
-            </span>
-            <strong>Crea tu próxima playlist</strong>
-            <p>Para cada versión de ti.</p>
-          </button>
-        </div>
+        <>
+          {LibraryToolbar({
+            totalPlaylists: playlists.length,
+            visiblePlaylists: entries.length,
+            searchQuery,
+            sortOrder,
+            layoutMode,
+            onSearchChange: setSearchQuery,
+            onClearSearch: () => setSearchQuery(''),
+            onSortChange: setSortOrder,
+            onLayoutChange: setLayoutMode,
+          })}
+          {PlaylistGrid({
+            entries,
+            layoutMode,
+            searchQuery,
+            busy,
+            playbackReady,
+            onClearSearch: () => setSearchQuery(''),
+            onSelectPlaylist,
+            onCreatePlaylist,
+            onLoadPlaylist,
+            onAddTrack,
+            onRenamePlaylist,
+            onDeletePlaylist,
+          })}
+        </>
       ) : (
         <EmptyState
           icon={<Library size={30} />}
           title="Tu próximo soundtrack empieza aquí"
-          text="Crea una playlist y guarda las canciones que quieras volver a escuchar."
+          text="Crea una playlist o importa una colección existente para guardar las canciones que quieras volver a escuchar."
           action={
-            <Button onClick={onCreatePlaylist}>
-              <Plus size={16} /> Crear mi primera playlist
-            </Button>
+            <div className="empty-state-actions">
+              <Button onClick={onCreatePlaylist} disabled={!!busy}>
+                <Plus size={16} /> Crear mi primera playlist
+              </Button>
+              {onImportPlaylist && (
+                <Button variant="secondary" onClick={onImportPlaylist} disabled={!!busy}>
+                  <Download size={15} /> Importar playlist
+                </Button>
+              )}
+            </div>
           }
         />
       )}

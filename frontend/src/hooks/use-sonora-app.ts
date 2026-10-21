@@ -53,9 +53,9 @@ export function useSonoraApp() {
     }
   }
 
-  async function mutate(path: string, method: string, data?: unknown) {
-    if (!session) return;
-    await operationScope.current.run(() =>
+  async function mutate(path: string, method: string, data?: unknown): Promise<unknown> {
+    if (!session) return undefined;
+    return await operationScope.current.run(() =>
       api(
         path,
         {
