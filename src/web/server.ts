@@ -8,8 +8,8 @@ import type { ServerResponse } from 'node:http';
 import type { GuildPermissions, GuildSummary, MusicBridge, PlaybackSnapshot } from './contracts';
 import { WebConfig, validateWebConfig } from './config';
 import { WebDatabase, WebError, WebSession, type SavedPlaylist, csrfTokenFor, hashToken, openWebDatabase } from './database';
-import { musicAction, object, playlistImportCommitPayload, playlistName, publicPlayUrl, resolveTrackUrlMetadata, trackMetadata } from './validation';
-import { createPlaylistImportService, parsePlaylistImportCsv, type PlaylistImportService } from './playlistImport';
+import { musicAction, object, playlistImportCommitPayload, playlistName, resolveTrackUrlMetadata, trackMetadata } from './validation';
+import { createPlaylistImportService, type PlaylistImportService } from './playlistImport';
 import { createMusicSearchService, type MusicSearchService } from './musicSearch';
 import { createLyricsService, type LyricsService } from './lyrics/service';
 import { candidateCompatibilityWarning } from './lyrics/matching';
@@ -76,6 +76,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const states = new Map<string, number>();
   const streams = new Set<LiveStream>();
   const operations = new Set<PendingOperation>();
+  const operationSockets = new WeakSet<object>();
   const loads = new Map<string, AbortController>();
   const activeImports = new Set<string>();
   const completedImports = new Map<string, { playlist: SavedPlaylist; expiresAt: number }>();
@@ -87,6 +88,9 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const app = Fastify({ logger: false, bodyLimit: 16_384, requestTimeout: 120_000, connectionTimeout: 15_000, trustProxy: false });
   // Listener errors are isolated from the process hosting the music engine.
   app.server.on('error', () => { console.warn('[Web] Dashboard HTTP listener error; audio remains available.'); });
+  app.server.on('timeout', (socket: { _httpMessage?: unknown; destroy?: () => void }) => {
+    if (!operationSockets.has(socket) && socket._httpMessage) socket.destroy?.();
+  });
   try {
   app.decorateRequest('webSession', null);
   await app.register(cookie);
@@ -146,6 +150,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const guildId = params(request)['guildId'];
     const controller = new AbortController();
     const socket = request.raw.socket;
+    if (socket) operationSockets.add(socket);
     const previousSocketTimeout = socket?.timeout;
     // Slow authenticated handlers use an explicit deadline instead of the global 15s idle reset.
     socket?.setTimeout?.(timeoutMs + 1000);
@@ -165,7 +170,10 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     monitor.unref();
     const operation: PendingOperation = { tokenHash: session.tokenHash, userId: session.user.id, guildId, controller, timedOut: false, done: () => {
       clearTimeout(deadline); clearTimeout(operationDeadline); clearInterval(monitor);
-      if (!socket?.destroyed) socket?.setTimeout?.(previousSocketTimeout ?? 15_000);
+      response.once('close', () => {
+        if (socket) operationSockets.delete(socket);
+        if (!socket?.destroyed) socket?.setTimeout?.(previousSocketTimeout ?? 15_000);
+      });
       response.off('close', abort); request.raw.off('aborted', abort);
       operations.delete(operation);
     } };
@@ -222,13 +230,10 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       SPOTIFY_IMPORT_UNSUPPORTED: [501, 'La importación de playlists de Spotify estará disponible próximamente. Por ahora puedes importar playlists públicas de YouTube y YouTube Music.'],
     };
     const known = candidate.errorCode && Object.hasOwn(bridgeErrors, candidate.errorCode) ? bridgeErrors[candidate.errorCode] : undefined;
-    if (known) { void reply.code(known[0]).send({ error: known[1], ...(candidate.errorCode ? { code: candidate.errorCode } : {}) }); return; }
+    if (known) { void reply.code(known[0]).send({ error: known[1] }); return; }
     const status = candidate.statusCode && candidate.statusCode >= 400 && candidate.statusCode < 600 ? candidate.statusCode : 500;
     // Internal provider, database and extractor errors must never leak credentials.
-    void reply.code(status).send({
-      error: status >= 500 ? 'The dashboard could not complete this request' : candidate.message,
-      ...(error instanceof WebError && candidate.errorCode ? { code: candidate.errorCode } : {}),
-    });
+    void reply.code(status).send({ error: status >= 500 ? 'The dashboard could not complete this request' : candidate.message });
   });
 
   app.get('/auth/discord', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (_request, reply) => {
@@ -566,18 +571,6 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       throw error;
     } finally { operation.done(); }
   });
-  app.post('/api/guilds/:guildId/playlists/import/csv', { bodyLimit: 524_288, config: { rateLimit: { max: 15, timeWindow: '1 minute' } } }, async request => {
-    const body = object(request.body);
-    const input = {
-      csv: body['csv'],
-      name: body['name'],
-      sourceName: body['sourceName'],
-    };
-    const preview = typeof playlistImporter.previewCsv === 'function'
-      ? playlistImporter.previewCsv(input)
-      : parsePlaylistImportCsv(input);
-    return { preview };
-  });
   app.post('/api/guilds/:guildId/playlists/import', { bodyLimit: 524_288, config: { rateLimit: { max: 15, timeWindow: '1 minute' } } }, async request => {
     const userId = request.webSession!.user.id;
     const guildId = params(request)['guildId']!;
@@ -668,10 +661,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
         authenticate(request);
         await assertGuildAccess(userId, guildId);
         try {
-          const playQuery = item.source === 'csv' && item.url.startsWith('https://music.youtube.com/search?q=')
-            ? publicPlayUrl(item.url)
-            : item.url;
-          await waitForOperation(bridge.control(userId, guildId, { action: 'play', query: playQuery, track: item }, controller.signal), controller.signal);
+          await waitForOperation(bridge.control(userId, guildId, { action: 'play', query: item.url, track: item }, controller.signal), controller.signal);
           loaded++;
         } catch (trackError) {
           if (controller.signal.aborted) throw new WebError(409, 'Playlist load cancelled');

@@ -66,13 +66,12 @@ export interface MusicBridge {
 }
 export interface MusicControlResult { autoplay?: boolean; recommendationsAdded?: number }
 
-export type ImportPlatform = 'youtube' | 'youtube_music' | 'spotify' | 'csv';
+export type ImportPlatform = 'youtube' | 'youtube_music' | 'spotify';
 
 export interface ImportedPlaylistTrack {
   url: string;
   title: string;
   artist: string;
-  album?: string;
   duration: number;
   thumbnail: string | null;
   source: string;

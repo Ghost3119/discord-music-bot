@@ -148,37 +148,12 @@ Para cada entrada disponible se importa:
 
 ---
 
-## 9. Importación desde Spotify y archivo CSV (Viabilidad e Implementación Controlada)
+## 9. Preparación para Spotify
 
-### 9.1 Análisis de viabilidad oficial de Spotify Web API
-De acuerdo con la documentación oficial vigente de Spotify for Developers:
-1. **Endpoints de lectura**: `GET /v1/playlists/{playlist_id}` y `GET /v1/playlists/{playlist_id}/tracks` (con paginación de hasta 100 elementos por página).
-2. **Restricciones en Development Mode**:
-   - Las playlists algorítmicas y editoriales propiedad de Spotify devuelven `404 Not Found` para aplicaciones en Development Mode.
-   - El límite de usuarios autorizados en Development Mode es de **5 usuarios** dados de alta manualmente en el panel de desarrolladores de Spotify (`403 Forbidden` para usuarios fuera de la lista).
-   - El propietario de la aplicación en Development Mode debe mantener una suscripción **Spotify Premium** activa; si caduca, el acceso a la API se suspende inmediatamente.
-3. **OAuth2 y Client Credentials**:
-   - `grant_type=client_credentials` no incluye contexto de usuario, por lo que no permite leer playlists privadas, colaborativas ni listas restringidas en Development Mode.
-   - La lectura autorizada de playlists de usuario requiere **Authorization Code Flow** con los scopes `playlist-read-private` y `playlist-read-collaborative`.
-4. **Políticas y restricciones de metadatos**:
-   - Los términos de Spotify prohíben descargar o extraer flujos de audio de Spotify. SONORA nunca descarga audio de Spotify: almacena únicamente metadatos públicos y enlaces canónicos (`https://open.spotify.com/track/<id>`) o consultas de búsqueda reproducibles por el motor existente.
+El sistema incluye la interfaz `PlaylistImportAdapter` y el adaptador `SpotifyPlaylistImportStubAdapter` (`src/web/playlistImport.ts`) registrado para `platform: 'spotify'`. Para activar la importación completa de Spotify en una entrega futura sin alterar la UI ni la persistencia:
 
-### 9.2 Adaptador `SpotifyPlaylistImportAdapter` (Fase B)
-- Implementado en `src/web/playlistImport.ts` cumpliendo `PlaylistImportAdapter`.
-- Cuando se proporciona un token o credenciales autorizadas (`SpotifyPlaylistImportAdapterOptions`), consulta `GET /v1/playlists/{id}` y pagina `GET /v1/playlists/{id}/tracks`, omitiendo pistas locales (`is_local === true`) y episodios de podcast (`type !== 'track'`).
-- Mapea estados de error de forma explícita:
-  - `401` (`SPOTIFY_NOT_CONNECTED`): sesión expirada o no conectada.
-  - `403` (`SPOTIFY_INSUFFICIENT_PERMISSIONS`): falta de permisos o límite de 5 usuarios en Development Mode.
-  - `404` (`SPOTIFY_PLAYLIST_INACCESSIBLE`): playlist privada, editorial o restringida por Development Mode.
-  - `429` (`SPOTIFY_RATE_LIMITED`): límite de solicitudes alcanzado.
-  - `501` (`SPOTIFY_IMPORT_UNSUPPORTED`): credenciales directas no configuradas, ofreciendo cambio en un clic a la pestaña **Archivo CSV**.
-
-### 9.3 Importación controlada por CSV (Fase C — Siempre disponible)
-- Endpoint: `POST /api/guilds/:guildId/playlists/import/csv` (`parsePlaylistImportCsv` en `src/web/playlistImport.ts`).
-- Compatible con archivos `.csv` exportados desde **Exportify**, **TuneMyMusic**, **Soundiiz** o creados manualmente:
-  - **Título** (obligatorio): `Title`, `Track Name`, `Título`, `Track`, `Song`.
-  - **Artista** (obligatorio): `Artist`, `Artist Name(s)`, `Artista`, `Artists`.
-  - **Álbum** (opcional): `Album`, `Album Name`, `Álbum`.
-  - **Duración** (opcional): `Duration`, `Duration (ms)`, `Duración` (acepta segundos, milisegundos o `mm:ss` / `hh:mm:ss`).
-  - **Origen / URL** (opcional): `Spotify URI` (`spotify:track:<id>`), `Track URI`, `Track ID`, `URL` (`open.spotify.com/track/…`, `youtube.com/watch?v=…`, `soundcloud.com/…`, `music.apple.com/…`). Si la fila no incluye URL ni ID, SONORA genera una referencia de búsqueda canónica (`source: 'csv'`) que se resuelve automáticamente al reproducir.
-- **Seguridad**: límite de `256 KB` (`413`), validación de UTF-8 (`400`), parser RFC-4180 con soporte de delimitadores `,`, `;` y `\t`, y cero ejecución de solicitudes de red sobre URLs del CSV (prevención total de SSRF).
+1. Implementar un `SpotifyPlaylistImportAdapter` que cumpla `PlaylistImportAdapter`:
+   - **Opción A (Client Credentials API oficial de Spotify)**: usar `SPOTIFY_CLIENT_ID` y `SPOTIFY_CLIENT_SECRET` en backend para consultar `GET /v1/playlists/{playlist_id}/tracks` con paginación de 100 elementos, convirtiendo cada pista a su URL canónica `https://open.spotify.com/track/<id>`, carátula de `i.scdn.co` y `source: 'spotify'`.
+   - **Opción B (oEmbed / Web API pública sin OAuth de usuario)**: para listas públicas de hasta 100 pistas si no se configuran credenciales de API.
+2. Reemplazar `SpotifyPlaylistImportStubAdapter` en `createPlaylistImportService`.
+3. Cambiar el estado de `inspectPlaylistUrl` en `frontend/src/features/library/playlist-import-url.ts` de `'unsupported'` a `'valid'` para los enlaces `open.spotify.com/playlist/…`.

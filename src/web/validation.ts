@@ -36,10 +36,6 @@ export function publicTrackUrl(value: unknown): { url: string; source: string } 
   if (host === 'open.spotify.com' && /^\/(intl-[a-z]{2}\/)?track\/[A-Za-z0-9]{22}$/.test(url.pathname)) return { url: `https://open.spotify.com/track/${url.pathname.split('/').at(-1)!}`, source: 'spotify' };
   if (host === 'music.apple.com' && /^\/[a-z]{2}\/album\/[^/]+\/\d+$/.test(url.pathname) && /^\d+$/.test(url.searchParams.get('i') ?? '')) return { url: `https://music.apple.com${url.pathname}?i=${url.searchParams.get('i')!}`, source: 'apple_music' };
   if (host === 'music.apple.com' && /^\/[a-z]{2}\/song\/[^/]+\/\d+$/.test(url.pathname)) return { url: `https://music.apple.com${url.pathname}`, source: 'apple_music' };
-  if (host === 'music.youtube.com' && url.pathname === '/search') {
-    const q = cleanMetadataText(url.searchParams.get('q'), 400);
-    if (q) return { url: `https://music.youtube.com/search?q=${encodeURIComponent(q)}`, source: 'csv' };
-  }
   throw new WebError(400, 'Use a permanent YouTube, SoundCloud, Spotify track or Apple Music song URL');
 }
 const IMAGE_HOSTS = [
@@ -194,14 +190,7 @@ export function playlistImportCommitPayload(value: unknown): {
   return { name, tracks, ...(requestId ? { requestId } : {}) };
 }
 export function publicPlayUrl(value: string): string {
-  try {
-    const resolved = publicTrackUrl(value);
-    if (resolved.source === 'csv') {
-      const q = cleanMetadataText(new URL(resolved.url).searchParams.get('q'), 400);
-      if (q) return q;
-    }
-    return resolved.url;
-  } catch { /* Albums and playlists are playback inputs, not saved tracks. */ }
+  try { return publicTrackUrl(value).url; } catch { /* Albums and playlists are playback inputs, not saved tracks. */ }
   let url: URL;
   try { url = new URL(value); } catch { throw new WebError(400, 'Invalid media URL'); }
   if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash) throw new WebError(400, 'Use a public HTTPS media link');
