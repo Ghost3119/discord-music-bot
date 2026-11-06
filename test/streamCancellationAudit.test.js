@@ -25,7 +25,7 @@ function harness(t) {
   t.after(registerDisTubeEvents(distube));
   function queue(id, urlId = id) {
     const song = new Song({ plugin, source: 'youtube', playFromSource: true, id: urlId,
-      name: 'Artist Song', duration: 200, url: `https://www.youtube.com/watch?v=${urlId}` });
+      name: 'Artist Song', duration: 200, url: `https://www.youtube.com/watch?v=${urlId.padEnd(11, '_').slice(0, 11)}` });
     const next = new Song({ plugin, source: 'youtube', playFromSource: true, id: `${id}-next`, name: 'Next' });
     let lock = Promise.resolve();
     const q = { id, songs: [song, next], stopped: false, currentTime: 10, voice: new EventEmitter(),

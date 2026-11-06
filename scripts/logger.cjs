@@ -9,6 +9,8 @@ function redact(value) {
     .replace(/\b(?:authorization|cookie|set-cookie)\s*[:=][^\r\n]*/gi, '[cabecera oculta]')
     .replace(/((?:token|secret|password|client_secret)\s*['"]?\s*[:=]\s*)(?:'[^']*'|"[^"]*"|[^\s,}]+)/gi, '$1[oculto]')
     .replace(/\b(?:Bot|Bearer)\s+[\w.\-/+=]{20,}/gi, '[credencial oculta]')
+    .replace(/(?:\b[A-Za-z]:\\|\\\\)[^\s<>"']+/g, '[ruta oculta]')
+    .replace(/\/(?:home|Users|usr|var|tmp|opt|etc)\/[^\s<>"']+/g, '[ruta oculta]')
     .slice(0, 8_000);
 }
 

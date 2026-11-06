@@ -45,7 +45,7 @@ export interface PlayerViewProps {
   query: string;
   onQueryChange: (value: string) => void;
   onAddToQueue: (event: FormEvent) => void | Promise<void>;
-  onDiagnostics: () => void;
+  onDiagnostics?: () => void;
   onEnqueueTrack?: (track: Track) => void | Promise<void>;
   trackActions: TrackActions;
 }
@@ -162,7 +162,7 @@ export function PlayerView({
                 <dd>{connection === 'live' ? 'En tiempo real' : 'Reconectando…'}</dd>
               </div>
             </dl>
-            <button className="text-link" onClick={onDiagnostics}>
+            <button hidden={!onDiagnostics} className="text-link" onClick={onDiagnostics}>
               Ver diagnóstico <ArrowRight size={14} />
             </button>
           </aside>
@@ -802,7 +802,7 @@ export function PlayerView({
               <dd>{connection === 'live' ? 'En tiempo real' : 'Reconectando…'}</dd>
             </div>
           </dl>
-          <button className="text-link" onClick={onDiagnostics}>
+          <button hidden={!onDiagnostics} className="text-link" onClick={onDiagnostics}>
             Ver diagnóstico <ArrowRight size={14} />
           </button>
         </aside>

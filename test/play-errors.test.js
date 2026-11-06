@@ -61,7 +61,7 @@ test('/play keeps URL handling in DisTube and explains voice failures', async (t
   t.mock.method(console, 'error', () => {});
   const plugin = new YtDlpSearchPlugin();
   plugin.searchSong = async () => assert.fail('URLs should not be searched');
-  const url = 'https://open.spotify.com/track/test';
+  const url = 'https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC';
   const { interaction, edits } = makeInteraction(plugin, url);
   interaction.client.distube.play = async (_channel, input) => {
     assert.equal(input, url);

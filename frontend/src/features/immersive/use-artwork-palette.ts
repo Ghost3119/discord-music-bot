@@ -1,3 +1,4 @@
+import { sanitizeThumbnailUrl } from '../../lib/artwork';
 import { useEffect, useState } from 'react';
 
 /**
@@ -133,7 +134,7 @@ function sourceSquare(image: HTMLImageElement, youtube: boolean) {
 export function useArtworkPalette(url?: string | null): ArtworkPalette {
   const [result, setResult] = useState<{ url: string; palette: ArtworkPalette } | null>(null);
   useEffect(() => {
-    if (!url) return;
+    if (!url || !sanitizeThumbnailUrl(url)) return;
     const cached = palettes.get(url);
     if (cached) { setResult({ url, palette: cached }); return; }
     let live = true;

@@ -14,8 +14,8 @@ test('supervisor terminates only registered audio workers when a bot exits or wa
   const context = {
     module: { exports: {} }, __dirname: path.dirname(require.resolve('../scripts/supervise.cjs')),
     process: processMock, console: { error() {} },
-    require: name => name === 'node:path' ? path : { fork: () => {
-      child = new EventEmitter(); child.connected = true; child.kill = signal => killed.push(['bot', signal]);
+    require: name => name === 'node:path' ? path : name === './process-identity.cjs' ? { processIdentity: pid => ({ parent: pid === 9999 ? 1234 : 4000, created: String(pid) }) } : { fork: () => {
+      child = new EventEmitter(); child.pid = 4000; child.connected = true; child.kill = signal => killed.push(['bot', signal]);
       child.send = () => {}; return child;
     } },
     setInterval: callback => { watchdog = callback; return 1; }, clearInterval() {},
@@ -27,6 +27,7 @@ test('supervisor terminates only registered audio workers when a bot exits or wa
   child.emit('message', { type: 'audioWorker', action: 'started', pid: 5001 });
   child.emit('message', { type: 'audioWorker', action: 'started', pid: 5002 });
   child.emit('message', { type: 'audioWorker', action: 'closed', pid: 5002 });
+  child.emit('message', { type: 'audioWorker', action: 'started', pid: 9999 });
   child.emit('close', 1);
   assert.deepEqual(killed, [[5001, 'SIGKILL']], 'Reap tracked FFmpeg processes on unexpected bot exit');
   killed.length = 0;

@@ -34,7 +34,8 @@ export default function App() {
   };
   const trackActions: TrackActions = {
     busy: !!app.busy,
-    playbackReady: !!app.state,
+    playbackReady: app.state?.permissions?.canControl === true,
+    canManageLibrary: app.state?.permissions?.canManageLibrary === true,
     isFavorite: app.isFavorite,
     onPlay: (track) => app.action({ action: 'play', query: track.url, track: trackMetadata(track) }),
     onToggleFavorite: app.toggleFavorite,
@@ -52,6 +53,8 @@ export default function App() {
   return (
     <div className="app-shell">
       <Sidebar
+        canViewDiagnostics={app.state?.permissions?.canViewDiagnostics === true}
+        canManageLibrary={app.state?.permissions?.canManageLibrary === true}
         mobileNav={app.mobileNav}
         view={app.view}
         playing={app.playing}
@@ -134,7 +137,7 @@ export default function App() {
                   query={app.query}
                   onQueryChange={app.setQuery}
                   onAddToQueue={app.addToQueue}
-                  onDiagnostics={() => app.setView('diagnostics')}
+                  onDiagnostics={app.state?.permissions?.canViewDiagnostics ? () => app.setView('diagnostics') : undefined}
                   onEnqueueTrack={(track) =>
                     app.enqueueTrack
                       ? app.enqueueTrack(track)
@@ -152,7 +155,8 @@ export default function App() {
                     playlists: app.playlists,
                     libraryLoading: app.libraryLoading,
                     busy: app.busy,
-                    playbackReady: !!app.state,
+                    playbackReady: app.state?.permissions?.canControl === true,
+                    canManageLibrary: app.state?.permissions?.canManageLibrary === true,
                     onSelectPlaylist: app.setSelectedPlaylist,
                     onCreatePlaylist: createPlaylist,
                     onImportPlaylist: () => app.setModal({ type: 'import' }),
@@ -170,7 +174,7 @@ export default function App() {
                   trackActions={trackActions}
                 />
               )}
-              {app.view === 'diagnostics' && (
+              {app.view === 'diagnostics' && app.state?.permissions?.canViewDiagnostics === true && (
                 <DiagnosticsView
                   state={app.state}
                   connection={app.connection}

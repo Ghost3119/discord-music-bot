@@ -1,6 +1,7 @@
 import { json } from '@distube/yt-dlp';
 import { setTimeout as delay } from 'node:timers/promises';
 import { classifyMusicError } from './errors';
+import { extractionInput } from './mediaPolicy';
 
 export type YtDlpFlags = NonNullable<Parameters<typeof json>[1]> & { jsRuntimes?: string };
 export type ExtractionPriority = 'interactive' | 'background';
@@ -85,6 +86,7 @@ export async function runYtDlp(
   signal?: AbortSignal,
   priority: ExtractionPriority = 'interactive',
 ): Promise<unknown> {
+  input = extractionInput(input);
   // Waiting for a slot and retry backoff share the total operation budget.
   const deadline = AbortSignal.timeout(60_000);
   const budget = signal ? AbortSignal.any([signal, deadline]) : deadline;
@@ -98,6 +100,7 @@ export async function runYtDlp(
           jsRuntimes: `node:${process.execPath}`,
           socketTimeout: 8, retries: 0, extractorRetries: 0,
           ...flags,
+          ignoreConfig: true, useExtractors: 'youtube.*,soundcloud.*',
         }, { signal: attempt, windowsHide: true });
       } catch (error) {
         budget.throwIfAborted();

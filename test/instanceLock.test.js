@@ -34,7 +34,7 @@ function runner(t, failLogin = false) {
   });
   return { file, options: { cwd: directory, windowsHide: true, timeout: 10000 } };
 }
-const environment = id => ({ ...process.env, CLIENT_ID: id, GUILD_ID: '1082065100111872170', DISCORD_TOKEN: 'fixture-not-real-token' });
+const environment = id => ({ ...process.env, CLIENT_ID: id, GUILD_ID: '333333333333333333', DISCORD_TOKEN: 'fixture-not-real-token' });
 async function startFixture(t, f, id) {
   const child = fork(f.file, [], { ...f.options, timeout: undefined, env: environment(id), stdio: ['ignore','pipe','pipe','ipc'] });
   const closed = new Promise(resolve => child.once('close', code => resolve(code)));

@@ -18,6 +18,7 @@ export interface PlaylistGridProps {
   searchQuery: string;
   busy: string;
   playbackReady: boolean;
+  canManageLibrary?: boolean;
   onClearSearch: () => void;
   onSelectPlaylist: (id: string) => void;
   onCreatePlaylist: () => void;
@@ -33,6 +34,7 @@ export function PlaylistGrid({
   searchQuery,
   busy,
   playbackReady,
+  canManageLibrary = true,
   onClearSearch,
   onSelectPlaylist,
   onCreatePlaylist,
@@ -121,21 +123,21 @@ export function PlaylistGrid({
                 </IconButton>
                 <IconButton
                   label={`Agregar canción a ${playlist.name}`}
-                  disabled={!!busy}
+                  disabled={!!busy || !canManageLibrary}
                   onClick={() => onAddTrack(playlist)}
                 >
                   <Plus size={15} />
                 </IconButton>
                 <IconButton
                   label={`Renombrar ${playlist.name}`}
-                  disabled={!!busy}
+                  disabled={!!busy || !canManageLibrary}
                   onClick={() => onRenamePlaylist(playlist)}
                 >
                   <Pencil size={15} />
                 </IconButton>
                 <IconButton
                   label={`Eliminar ${playlist.name}`}
-                  disabled={!!busy}
+                  disabled={!!busy || !canManageLibrary}
                   onClick={() => onDeletePlaylist(playlist)}
                 >
                   <Trash2 size={15} />
@@ -156,6 +158,7 @@ export function PlaylistGrid({
           displayIndex,
           busy,
           playbackReady,
+          canManageLibrary,
           onSelectPlaylist,
           onLoadPlaylist,
           onAddTrack,
@@ -164,7 +167,7 @@ export function PlaylistGrid({
         }),
       )}
       {!hasActiveSearch && (
-        <button type="button" className="playlist-new" onClick={onCreatePlaylist} disabled={!!busy}>
+        <button type="button" className="playlist-new" onClick={onCreatePlaylist} disabled={!!busy || !canManageLibrary}>
           <span>
             <Plus size={27} />
           </span>

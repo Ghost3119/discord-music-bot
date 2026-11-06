@@ -7,6 +7,8 @@ import { getPlaybackState } from './playbackState';
 import { getPlaybackHealth } from './playbackHealth';
 import { registerCheckpoint } from './queueChanges';
 import { youtubeThumbnail } from './artwork';
+import { isPublicPlaybackUrl } from './mediaPolicy';
+import { sanitizeThumbnailUrl } from './artwork';
 
 interface SavedSong {
   id: string;
@@ -45,12 +47,7 @@ interface RestoreAttempt {
 }
 
 function publicThumbnail(value: unknown): string | undefined {
-  if (typeof value !== 'string' || value.length > 2_000) return undefined;
-  try {
-    const url = new URL(value);
-    if (url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash) return url.href;
-  } catch { /* Artwork is optional; never persist a signed or unusable image URL. */ }
-  return undefined;
+  return sanitizeThumbnailUrl(value) ?? undefined;
 }
 
 function isSavedQueue(value: unknown): value is SavedQueue {
@@ -68,7 +65,7 @@ function isSavedQueue(value: unknown): value is SavedQueue {
     queue.songs.every((song) => song && typeof song.id === 'string' && typeof song.source === 'string' &&
       (song.thumbnail === undefined || publicThumbnail(song.thumbnail) === song.thumbnail) &&
       typeof song.name === 'string' && song.name.length <= 500 && typeof song.uploader === 'string' && song.uploader.length <= 500 &&
-      typeof song.url === 'string' && /^https?:\/\//i.test(song.url) &&
+      isPublicPlaybackUrl(song.url) &&
       song.url.length <= 2_000 && Number.isFinite(song.duration) && song.duration >= 0 &&
       typeof song.ageRestricted === 'boolean' && typeof song.playFromSource === 'boolean' &&
       ['youtube', 'soundcloud'].includes(song.searchSource));

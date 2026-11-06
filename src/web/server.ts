@@ -2,12 +2,12 @@ import Fastify, { FastifyInstance, FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import serveStatic from '@fastify/static';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
 import type { GuildPermissions, GuildSummary, MusicBridge, PlaybackSnapshot } from './contracts';
 import { WebConfig, validateWebConfig } from './config';
-import { WebDatabase, WebError, WebSession, type SavedPlaylist, csrfTokenFor, hashToken, openWebDatabase } from './database';
+import { WebDatabase, WebError, WebSession, type SavedPlaylist, hashToken, openWebDatabase } from './database';
 import { musicAction, object, playlistImportCommitPayload, playlistName, resolveTrackUrlMetadata, trackMetadata } from './validation';
 import { createPlaylistImportService, type PlaylistImportService } from './playlistImport';
 import { createMusicSearchService, type MusicSearchService } from './musicSearch';
@@ -35,7 +35,6 @@ export interface WebServerOptions {
 }
 interface LiveStream { response: ServerResponse; tokenHash: string; userId: string; guildId: string; close: () => void }
 interface PendingOperation { tokenHash: string; userId: string; guildId: string | undefined; controller: AbortController; timedOut: boolean; done: () => void }
-const SESSION_COOKIE = 'music_session';
 const STATE_COOKIE = 'music_oauth_state';
 
 function safeEqual(left: string, right: string): boolean {
@@ -43,6 +42,8 @@ function safeEqual(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 function params(request: FastifyRequest): Record<string, string> { return request.params as Record<string, string>; }
+/** Fastify decodes route segments; security checks must use the matched route too. */
+function routePath(request: FastifyRequest): string { return request.routeOptions.url ?? request.url.split('?')[0]!; }
 
 /** Stop waiting promptly even when an external resolver settles after cancellation. */
 function waitForOperation<T>(task: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -59,6 +60,8 @@ function waitForOperation<T>(task: Promise<T>, signal: AbortSignal): Promise<T> 
 /** Creates an isolated server; the bot lifecycle explicitly decides whether to listen. */
 export async function createWebServer(options: WebServerOptions): Promise<FastifyInstance> {
   const { config, bridge } = options;
+  const SESSION_COOKIE = config.secureCookies ? '__Host-music_session' : 'music_session';
+  const CSRF_COOKIE = config.secureCookies ? '__Host-music_csrf' : 'music_csrf';
   validateWebConfig(config);
   const database = options.database ?? openWebDatabase(config.databasePath);
   const now = options.now ?? Date.now;
@@ -69,11 +72,9 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const accessMode = config.accessMode ?? 'allowlist';
   const allowed = new Set(config.allowedUserIds);
   const allowedGuilds = config.allowedGuildIds?.length || accessMode === 'guild_members' ? new Set(config.allowedGuildIds ?? []) : null;
-  const adminUsers = config.adminUserIds !== undefined
-    ? new Set(config.adminUserIds)
-    : accessMode === 'allowlist' ? new Set(config.allowedUserIds) : new Set<string>();
+  const adminUsers = new Set(config.adminUserIds ?? []);
   const isAdmin = (userId: string): boolean => adminUsers.has(userId);
-  const states = new Map<string, number>();
+  const states = new Map<string, { expiresAt: number; verifier: string }>();
   const streams = new Set<LiveStream>();
   const operations = new Set<PendingOperation>();
   const loads = new Map<string, AbortController>();
@@ -90,7 +91,26 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   try {
   app.decorateRequest('webSession', null);
   await app.register(cookie);
-  await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+  const rateKey = (request: FastifyRequest): string => {
+    if (routePath(request).startsWith('/auth/discord')) return `ip:${request.ip}`;
+    const session = database.getSession(request.cookies[SESSION_COOKIE], now());
+    return session && (accessMode !== 'allowlist' || allowed.has(session.user.id)) ? `user:${session.user.id}` : `ip:${request.ip}`;
+  };
+  // Attach explicit budgets to routes that otherwise only inherit the global limit.
+  app.addHook('onRoute', route => {
+    const path = route.url;
+    const max = path.includes('/tracks/resolve') ? 20
+      : path.includes('/playlists') || path.includes('/favorites') ? 60
+        : path === '/api/session' || path.startsWith('/auth/logout') ? 30
+          : path.endsWith('/state') ? 60 : undefined;
+    if (max !== undefined && !route.config?.rateLimit) route.config = { ...route.config, rateLimit: { max, timeWindow: '1 minute' } };
+  });
+  await app.register(rateLimit, { max: 120, timeWindow: '1 minute', hook: 'preHandler', keyGenerator: rateKey });
+  const aggregateLimit = app.createRateLimit({ max: 120, timeWindow: '1 minute', keyGenerator: request => `aggregate:${rateKey(request)}` });
+  app.addHook('preHandler', async request => {
+    const result = await aggregateLimit(request);
+    if (!result.isAllowed && result.isExceeded) throw new WebError(429, 'Too many requests; try again shortly');
+  });
   const cookieOptions = { httpOnly: true, secure: config.secureCookies, sameSite: 'lax' as const, path: '/' };
   const stateOptions = { ...cookieOptions, path: '/auth/discord', maxAge: 300 };
 
@@ -113,7 +133,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   async function resolvePermissions(userId: string, guildId: string, snapshot?: PlaybackSnapshot): Promise<GuildPermissions> {
     const admin = isAdmin(userId);
     const base = snapshot?.permissions ?? (await bridge.getPermissions?.(userId, guildId));
-    const canControl = base ? base.canControl : true;
+    const canControl = base?.canControl ?? false;
     const inVoiceChannel = base ? base.inVoiceChannel : Boolean(snapshot?.voice);
     return {
       role: admin ? 'admin' : canControl ? 'voice' : 'member',
@@ -122,7 +142,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       canControl,
       isAdmin: admin,
       canRead: true,
-      canManageLibrary: true,
+      canManageLibrary: base?.canManageLibrary ?? false,
       canViewDiagnostics: admin,
       canManageConfig: admin,
     };
@@ -176,23 +196,27 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     if (closing) abort();
     return operation;
   }
+  const securityHeaders: Record<string, string> = {
+    'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Resource-Policy': 'same-origin',
+    'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://i.ytimg.com https://img.youtube.com https://*.scdn.co https://*.spotifycdn.com https://*.sndcdn.com https://*.mzstatic.com https://images.genius.com https://cdn.discordapp.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    ...(config.secureCookies ? { 'Strict-Transport-Security': 'max-age=31536000' } : {}),
+  };
   app.addHook('onRequest', async (request, reply) => {
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('X-Frame-Options', 'DENY');
-    reply.header('Referrer-Policy', 'no-referrer');
-    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-    if (config.secureCookies) reply.header('Strict-Transport-Security', 'max-age=31536000');
-    const route = request.url.split('?')[0]!;
+    for (const [header, value] of Object.entries(securityHeaders)) reply.header(header, value);
+    const route = routePath(request);
     if (route.startsWith('/api/') || route.startsWith('/auth/')) reply.header('Cache-Control', 'no-store');
     if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && request.headers.origin !== config.origin) throw new WebError(403, 'Invalid request origin');
-    if ((route.startsWith('/api/') || route === '/auth/logout') && request.headers.origin && request.headers.origin !== config.origin) throw new WebError(403, 'Invalid request origin');
+    if ((route.startsWith('/api/') || route.startsWith('/auth/logout')) && request.headers.origin && request.headers.origin !== config.origin) throw new WebError(403, 'Invalid request origin');
   });
   app.addHook('preHandler', async request => {
-    const route = request.url.split('?')[0]!;
-    if (!(route.startsWith('/api/') || route === '/auth/logout')) return;
+    const route = routePath(request);
+    if (!(route.startsWith('/api/') || route.startsWith('/auth/logout'))) return;
     const session = authenticate(request);
     request.webSession = session;
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+    const upstreamRead = /\/(?:search(?:\/suggestions)?|lyrics\/(?:current|search|selection)|tracks\/resolve)$/.test(route);
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) || upstreamRead) {
       const csrf = request.headers['x-csrf-token'];
       if (typeof csrf !== 'string' || csrf.length !== 64 || !safeEqual(hashToken(csrf), session.csrfHash)) throw new WebError(403, 'Invalid CSRF token');
     }
@@ -200,6 +224,16 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     if (guildId) {
       if (!/^\d{17,20}$/.test(guildId)) throw new WebError(400, 'Invalid Discord guild ID');
       await assertGuildAccess(session.user.id, guildId);
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && /\/(?:playlists|favorites)(?:\/|$)/.test(route) && !(await resolvePermissions(session.user.id, guildId)).canManageLibrary) throw new WebError(403, 'Library access is required');
+    }
+  });
+  app.addHook('onResponse', async (request, reply) => {
+    const route = request.routeOptions.url ?? '';
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) || route === '/auth/discord/callback') {
+      // Route templates and fixed action names only: no bodies, query strings, cookies or tokens.
+      const body = request.body as Record<string, unknown> | undefined;
+      const action = route.endsWith('/actions') && body && typeof body['action'] === 'string' && ['play', 'pause', 'resume', 'skip', 'stop', 'shuffle', 'autoplay', 'recommend', 'volume', 'repeat', 'remove', 'move'].includes(body['action']) ? body['action'] : route;
+      console.info('[Web audit]', JSON.stringify({ time: new Date(now()).toISOString(), userId: request.webSession?.user.id ?? null, guildId: params(request)?.['guildId'] ?? null, action, status: reply.statusCode }));
     }
   });
   app.setErrorHandler((error, _request, reply) => {
@@ -225,16 +259,18 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     if (known) { void reply.code(known[0]).send({ error: known[1] }); return; }
     const status = candidate.statusCode && candidate.statusCode >= 400 && candidate.statusCode < 600 ? candidate.statusCode : 500;
     // Internal provider, database and extractor errors must never leak credentials.
-    void reply.code(status).send({ error: status >= 500 ? 'The dashboard could not complete this request' : candidate.message });
+    void reply.code(status).send({ error: status >= 500 ? 'The dashboard could not complete this request' : candidate instanceof WebError ? candidate.message : status === 429 ? 'Too many requests; try again shortly' : 'Invalid dashboard request' });
   });
 
-  app.get('/auth/discord', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (_request, reply) => {
-    for (const [key, expiry] of states) if (expiry <= now()) states.delete(key);
-    if (states.size >= 1000) throw new WebError(503, 'Too many pending sign-ins');
+  app.get('/auth/discord', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (_request, reply) => {
+    for (const [key, expiry] of states) if (expiry.expiresAt <= now()) states.delete(key);
+    if (states.size >= 200) throw new WebError(503, 'Too many pending sign-ins');
     const state = randomBytes(32).toString('base64url');
-    states.set(hashToken(state), now() + 300_000);
+    const verifier = randomBytes(32).toString('base64url');
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+    states.set(hashToken(state), { expiresAt: now() + 300_000, verifier });
     const url = new URL('https://discord.com/oauth2/authorize');
-    url.search = new URLSearchParams({ client_id: config.oauthClientId, redirect_uri: config.oauthRedirectUri, response_type: 'code', scope: 'identify', state }).toString();
+    url.search = new URLSearchParams({ client_id: config.oauthClientId, redirect_uri: config.oauthRedirectUri, response_type: 'code', scope: 'identify', state, code_challenge: challenge, code_challenge_method: 'S256' }).toString();
     return reply.setCookie(STATE_COOKIE, state, stateOptions).redirect(url.toString());
   });
   app.get('/auth/discord/callback', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -246,9 +282,9 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const key = hashToken(state);
     const expiry = states.get(key);
     states.delete(key); // Consume before network work: failures and parallel callbacks cannot replay.
-    if (!expiry || expiry <= now()) throw new WebError(400, 'Invalid or expired OAuth state');
+    if (!expiry || expiry.expiresAt <= now()) throw new WebError(400, 'Invalid or expired OAuth state');
     if (typeof query['code'] !== 'string' || !query['code'] || query['code'].length > 2048 || query['error']) throw new WebError(400, 'Discord authorization was not completed');
-    const tokenResponse = await oauthFetch('https://discord.com/api/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'authorization_code', client_id: config.oauthClientId, client_secret: config.oauthClientSecret, redirect_uri: config.oauthRedirectUri, code: query['code'] }), signal: AbortSignal.timeout(10_000) });
+    const tokenResponse = await oauthFetch('https://discord.com/api/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'authorization_code', client_id: config.oauthClientId, client_secret: config.oauthClientSecret, redirect_uri: config.oauthRedirectUri, code: query['code'], code_verifier: expiry.verifier }), signal: AbortSignal.timeout(10_000) });
     if (!tokenResponse.ok) throw new WebError(502, 'Discord sign-in is temporarily unavailable');
     const token = object(await tokenResponse.json());
     if (typeof token['access_token'] !== 'string' || token['token_type'] !== 'Bearer') throw new WebError(502, 'Invalid Discord token response');
@@ -267,16 +303,28 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const avatar = avatarHash ? `https://cdn.discordapp.com/avatars/${profile['id']}/${avatarHash}.png?size=128` : null;
     database.deleteSession(request.cookies[SESSION_COOKIE]);
     const session = database.createSession({ id: profile['id'], username: profile['username'], avatar }, now(), config.sessionTtlMs);
+    request.webSession = database.getSession(session.token, now());
+    for (const stream of streams) if (stream.userId === profile['id']) stream.close();
+    for (const operation of operations) if (operation.userId === profile['id']) operation.controller.abort();
+    reply.setCookie(CSRF_COOKIE, session.csrfToken, { ...cookieOptions, maxAge: Math.floor(config.sessionTtlMs / 1000) });
     return reply.setCookie(SESSION_COOKIE, session.token, { ...cookieOptions, maxAge: Math.floor(config.sessionTtlMs / 1000) }).redirect('/');
   });
   app.post('/auth/logout', async (request, reply) => {
     database.deleteSession(request.cookies[SESSION_COOKIE]);
     for (const stream of streams) if (stream.tokenHash === request.webSession!.tokenHash) stream.close();
     for (const operation of operations) if (operation.tokenHash === request.webSession!.tokenHash) operation.controller.abort();
-    return reply.clearCookie(SESSION_COOKIE, cookieOptions).send({ ok: true });
+    return reply.clearCookie(CSRF_COOKIE, cookieOptions).clearCookie(SESSION_COOKIE, cookieOptions).send({ ok: true });
+  });
+  app.post('/auth/logout/all', async (request, reply) => {
+    const userId = request.webSession!.user.id;
+    database.deleteUserSessions(userId);
+    for (const stream of streams) if (stream.userId === userId) stream.close();
+    for (const operation of operations) if (operation.userId === userId) operation.controller.abort();
+    return reply.clearCookie(CSRF_COOKIE, cookieOptions).clearCookie(SESSION_COOKIE, cookieOptions).send({ ok: true });
   });
   app.get('/api/session', async request => {
     const session = request.webSession!;
+    bridge.invalidateMembership?.(session.user.id);
     if (accessMode === 'guild_members') {
       const guilds = await listAuthorizedGuilds(session.user.id).catch(() => []);
       if (!guilds.length) {
@@ -286,7 +334,9 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       }
     }
     const admin = isAdmin(session.user.id);
-    return { user: session.user, csrfToken: csrfTokenFor(request.cookies[SESSION_COOKIE]!), accessMode, role: admin ? 'admin' : 'member', isAdmin: admin };
+    const csrfToken = request.cookies[CSRF_COOKIE];
+    if (!csrfToken || !/^[a-f0-9]{64}$/.test(csrfToken) || !safeEqual(hashToken(csrfToken), session.csrfHash)) throw new WebError(401, 'Sign in again to renew the dashboard session');
+    return { user: session.user, csrfToken, accessMode, role: admin ? 'admin' : 'member', isAdmin: admin };
   });
   app.get('/api/config', async request => {
     const userId = request.webSession!.user.id;
@@ -448,7 +498,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     authenticate(request);
     reply.hijack();
     const response = reply.raw;
-    response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', 'X-Content-Type-Options': 'nosniff', 'Access-Control-Allow-Origin': config.origin });
+    response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', ...securityHeaders, 'Access-Control-Allow-Origin': config.origin });
     response.setTimeout(0);
     let closed = false;
     let busy = false;
@@ -496,7 +546,10 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const q = rawQuery['q'] !== undefined ? rawQuery['q'] : rawQuery['query'];
     const operation = beginOperation(request, reply.raw, 3_000);
     try {
-      const suggestions = await (musicSearcher.suggest?.(q, operation.controller.signal) ?? Promise.resolve([]));
+      const suggestions = await waitForOperation(musicSearcher.suggest?.(q, operation.controller.signal) ?? Promise.resolve([]), operation.controller.signal);
+      operation.controller.signal.throwIfAborted();
+      authenticate(request);
+      await assertGuildAccess(request.webSession!.user.id, params(request)['guildId']!);
       return { query: typeof q === 'string' ? q.trim() : '', suggestions };
     } finally {
       operation.done();

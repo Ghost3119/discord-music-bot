@@ -37,7 +37,7 @@ test('flat YouTube Music albums preserve individual thumbnails and recover missi
       {id:'invalid',title:'Missing',url:'https://www.youtube.com/watch?v=invalid'},
     ]};};
   const playlist=await plugin.resolve('https://music.youtube.com/playlist?list=OLAKexample',{});
-  assert.deepEqual(playlist.songs.map(song=>song.thumbnail),[image('AAAAAAAAAAA'),image('BBBBBBBBBBB'),image('CCCCCCCCCCC'),image('CCCCCCCCCCC'),undefined]);
+  assert.deepEqual(playlist.songs.map(song=>song.thumbnail),[image('AAAAAAAAAAA'),image('BBBBBBBBBBB'),image('CCCCCCCCCCC'),image('CCCCCCCCCCC')]);
   assert.equal(calls,1);
 });
 test('Mix recommendations and autoplay related songs recover artwork from their own IDs',async()=>{

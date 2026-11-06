@@ -6,7 +6,7 @@ export const PREBUFFER_MAX_BYTES = 1024 * 1024;
 export const PREBUFFER_READY_MS = 8000;
 export function audioStreamOptions(queue: Queue, seek = 0): StreamOptions {
   return { ffmpeg: { path: queue.distube.options.ffmpeg.path,
-    args: { global: { ...queue.ffmpegArgs.global }, input: { ...queue.ffmpegArgs.input },
+    args: { global: { ...queue.ffmpegArgs.global }, input: { ...queue.ffmpegArgs.input, protocol_whitelist: 'http,https,tcp,tls,crypto' },
       output: { ...queue.ffmpegArgs.output, ...queue.filters.ffmpegArgs } } }, ...(seek > 0 ? { seek } : {}) };
 }
 

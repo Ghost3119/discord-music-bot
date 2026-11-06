@@ -29,6 +29,7 @@ export interface LibraryViewBindings {
   libraryLoading: boolean;
   busy: string;
   playbackReady: boolean;
+  canManageLibrary?: boolean;
   onSelectPlaylist: (id: string) => void;
   onCreatePlaylist: () => void;
   onImportPlaylist?: () => void;
@@ -163,11 +164,11 @@ export function LibraryView({ library, trackActions }: LibraryViewProps) {
         {!playlist && (
           <div className="heading-actions">
             {onImportPlaylist && (
-              <Button variant="secondary" size="sm" onClick={onImportPlaylist} disabled={!!busy}>
+              <Button variant="secondary" size="sm" onClick={onImportPlaylist} disabled={!!busy || library.canManageLibrary === false}>
                 <Download size={15} /> Importar playlist
               </Button>
             )}
-            <Button size="sm" onClick={onCreatePlaylist} disabled={!!busy}>
+            <Button size="sm" onClick={onCreatePlaylist} disabled={!!busy || library.canManageLibrary === false}>
               <Plus size={16} /> Nueva playlist
             </Button>
           </div>
@@ -182,6 +183,7 @@ export function LibraryView({ library, trackActions }: LibraryViewProps) {
           colorIndex: selectedIndex,
           busy,
           playbackReady,
+          canManageLibrary: library.canManageLibrary,
           onLoadPlaylist,
           onAddTrack,
           onRenamePlaylist,
@@ -207,6 +209,7 @@ export function LibraryView({ library, trackActions }: LibraryViewProps) {
             searchQuery,
             busy,
             playbackReady,
+          canManageLibrary: library.canManageLibrary,
             onClearSearch: () => setSearchQuery(''),
             onSelectPlaylist,
             onCreatePlaylist,
@@ -223,11 +226,11 @@ export function LibraryView({ library, trackActions }: LibraryViewProps) {
           text="Crea una playlist o importa una colección existente para guardar las canciones que quieras volver a escuchar."
           action={
             <div className="empty-state-actions">
-              <Button onClick={onCreatePlaylist} disabled={!!busy}>
+              <Button onClick={onCreatePlaylist} disabled={!!busy || library.canManageLibrary === false}>
                 <Plus size={16} /> Crear mi primera playlist
               </Button>
               {onImportPlaylist && (
-                <Button variant="secondary" onClick={onImportPlaylist} disabled={!!busy}>
+                <Button variant="secondary" onClick={onImportPlaylist} disabled={!!busy || library.canManageLibrary === false}>
                   <Download size={15} /> Importar playlist
                 </Button>
               )}

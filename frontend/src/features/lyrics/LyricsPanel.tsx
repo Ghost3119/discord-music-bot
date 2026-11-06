@@ -73,7 +73,7 @@ export function LyricsPanel({ snapshot, positionSeconds, discontinuity, enabled 
     }}>
       {lines ? <div className="immersive-lyric-lines">{renderedLines}</div> : data?.status === 'plain' ? <div className="immersive-plain-lyrics">{data.plainLyrics}</div> : <LyricsFeedback status={manual ? 'ready' : lyrics.status} data={data} error={lyrics.error} canRetry={lyrics.canRetry} retry={lyrics.retry} search={offerSearch ? openSearch : undefined} />}
     </div>
-    {source && <p className="immersive-lyrics-source">Letras de <a href={source.url} target="_blank" rel="noreferrer">{source.name}</a></p>}
+    {source && <p className="immersive-lyrics-source">Letras de <a href="https://lrclib.net" target="_blank" rel="noreferrer">{source.name}</a></p>}
     {manual && <div className="immersive-manual-actions"><button onClick={() => clearManualLyrics(snapshot)}>Volver a búsqueda automática</button>{(lines || data?.status === 'plain') && <button onClick={openSearch}>Cambiar selección de letras</button>}</div>}
     {!manual && data?.status === 'plain' && offerSearch && <div className="immersive-manual-actions"><button onClick={openSearch}>Buscar letras manualmente</button></div>}
     {data && 'warning' in data && data.warning && <p className="immersive-lyrics-source">{data.warning}</p>}

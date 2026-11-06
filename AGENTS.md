@@ -78,7 +78,7 @@ solo tus archivos. Crea una rama nueva cuando el usuario lo solicite.
 No hagas push, merge ni despliegue sin autorización explícita; tampoco alteres producción.
 
 `targeted-patch` vive en `.agents/skills/targeted-patch/SKILL.md`.
-La skill global `frontend-design` se conserva en `C:\Users\picud\.agents\skills\frontend-design\SKILL.md`:
+La skill global `frontend-design` se conserva en `~/.agents/skills/frontend-design/SKILL.md`:
 úsala para nuevas interfaces, cambios visuales sustanciales, componentes complejos,
 animaciones y responsive. Para retoques pequeños evalúa si bastan las convenciones
 existentes. Puedes combinar ambas; no copies ni reinstales la global.

@@ -16,6 +16,7 @@ export interface PlaylistDetailsProps {
   colorIndex?: number;
   busy: string;
   playbackReady: boolean;
+  canManageLibrary?: boolean;
   onLoadPlaylist: (playlist: Playlist) => void | Promise<void>;
   onAddTrack: (playlist: Playlist) => void;
   onRenamePlaylist: (playlist: Playlist) => void;
@@ -28,6 +29,7 @@ export function PlaylistDetails({
   colorIndex = 0,
   busy,
   playbackReady,
+  canManageLibrary = true,
   onLoadPlaylist,
   onAddTrack,
   onRenamePlaylist,
@@ -83,7 +85,7 @@ export function PlaylistDetails({
               variant="secondary"
               size="sm"
               className="playlist-hero-add"
-              disabled={!!busy}
+              disabled={!!busy || !canManageLibrary}
               onClick={() => onAddTrack(playlist)}
             >
               <Plus size={16} /> Agregar canción
@@ -92,14 +94,14 @@ export function PlaylistDetails({
             <div className="playlist-hero-tools">
               <IconButton
                 label="Renombrar playlist"
-                disabled={!!busy}
+                disabled={!!busy || !canManageLibrary}
                 onClick={() => onRenamePlaylist(playlist)}
               >
                 <Pencil size={17} />
               </IconButton>
               <IconButton
                 label="Eliminar playlist"
-                disabled={!!busy}
+                disabled={!!busy || !canManageLibrary}
                 onClick={() => onDeletePlaylist(playlist)}
               >
                 <Trash2 size={17} />
@@ -148,7 +150,7 @@ export function PlaylistDetails({
           title="Una playlist llena de posibilidades"
           text="Agrega un enlace o guarda canciones desde el reproductor y la cola."
           action={
-            <Button variant="secondary" size="sm" disabled={!!busy} onClick={() => onAddTrack(playlist)}>
+            <Button variant="secondary" size="sm" disabled={!!busy || !canManageLibrary} onClick={() => onAddTrack(playlist)}>
               <Plus size={15} /> Agregar canción
             </Button>
           }

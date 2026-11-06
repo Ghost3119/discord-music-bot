@@ -232,7 +232,7 @@ test('searches YouTube, YouTube Music, and SoundCloud individually and normalize
   const ytmRes = await h.app.inject({
     method: 'GET',
     url: `${BASE}/search?q=Feid+Luna&platform=youtube_music`,
-    headers: { cookie: auth.cookie },
+    headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
   });
   assert.equal(ytmRes.statusCode, 200);
   const ytmBody = ytmRes.json();
@@ -253,7 +253,7 @@ test('searches YouTube, YouTube Music, and SoundCloud individually and normalize
   const ytRes = await h.app.inject({
     method: 'GET',
     url: `${BASE}/search?q=Feid+Luna&platform=youtube`,
-    headers: { cookie: auth.cookie },
+    headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
   });
   assert.equal(ytRes.statusCode, 200);
   const ytBody = ytRes.json();
@@ -268,7 +268,7 @@ test('searches YouTube, YouTube Music, and SoundCloud individually and normalize
   const scRes = await h.app.inject({
     method: 'GET',
     url: `${BASE}/search?q=Feid+Luna&platform=soundcloud`,
-    headers: { cookie: auth.cookie },
+    headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
   });
   assert.equal(scRes.statusCode, 200);
   const scBody = scRes.json();
@@ -365,7 +365,7 @@ test('returns 200 with empty results when no songs match (not a technical error)
   const res = await h.app.inject({
     method: 'GET',
     url: `${BASE}/search?q=xyznonexistenttrack999&platform=all`,
-    headers: { cookie: auth.cookie },
+    headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
   });
   assert.equal(res.statusCode, 200);
   const body = res.json();
@@ -398,7 +398,7 @@ test('returns partial results when one provider fails in "all" mode and 502/504 
   const partialRes = await h.app.inject({
     method: 'GET',
     url: `${BASE}/search?q=Shared+Song&platform=all`,
-    headers: { cookie: auth.cookie },
+    headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
   });
   assert.equal(partialRes.statusCode, 200);
   const partialBody = partialRes.json();
@@ -415,7 +415,7 @@ test('returns partial results when one provider fails in "all" mode and 502/504 
   const failRes = await h.app.inject({
     method: 'GET',
     url: `${BASE}/search?q=Fail+Track&platform=soundcloud`,
-    headers: { cookie: auth.cookie },
+    headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
   });
   assert.equal(failRes.statusCode, 502);
 
@@ -428,7 +428,7 @@ test('returns partial results when one provider fails in "all" mode and 502/504 
   const timeoutRes = await h.app.inject({
     method: 'GET',
     url: `${BASE}/search?q=Slow+Track&platform=youtube`,
-    headers: { cookie: auth.cookie },
+    headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
   });
   assert.equal(timeoutRes.statusCode, 504);
 });
@@ -481,7 +481,7 @@ test('enforces authentication, guild isolation, voice-independent search, and ra
   const forbiddenGuild = await h.app.inject({
     method: 'GET',
     url: `/api/guilds/${OTHER_GUILD}/search?q=Feid`,
-    headers: { cookie: auth.cookie },
+    headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
   });
   assert.equal(forbiddenGuild.statusCode, 403);
 
@@ -490,7 +490,7 @@ test('enforces authentication, guild isolation, voice-independent search, and ra
   const searchNoVoice = await h.app.inject({
     method: 'GET',
     url: `${BASE}/search?q=Feid&platform=youtube`,
-    headers: { cookie: auth.cookie },
+    headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
   });
   assert.equal(searchNoVoice.statusCode, 200);
   const foundTrack = searchNoVoice.json().results[0];
@@ -543,7 +543,7 @@ test('enforces authentication, guild isolation, voice-independent search, and ra
     const r = await h.app.inject({
       method: 'GET',
       url: `${BASE}/search?q=Feid&platform=youtube`,
-      headers: { cookie: auth.cookie },
+      headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
     });
     if (r.statusCode === 429) {
       status429 = true;

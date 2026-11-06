@@ -1,6 +1,7 @@
 import { GuildMember, GuildTextBasedChannel, VoiceBasedChannel } from 'discord.js';
 import { DisTube, DisTubeError, isURL, PlayOptions, Song } from 'distube';
 import { resolveAppleMusic } from '../utils/appleMusic';
+import { playbackQuery } from './mediaPolicy';
 import { PlaybackMetadata, SearchSource, YtDlpSearchPlugin } from './ytDlpSearchPlugin';
 import { getPlaybackState } from './playbackState';
 import { controlError, installQueueControlGuard, musicSessionIsCreating, musicSessionVersion, withMusicAccess, withoutMusicAccess } from './controlAccess';
@@ -31,7 +32,7 @@ export async function requestPlayback(distube: DisTube, request: PlaybackRequest
   };
   signal?.throwIfAborted();
   await request.authorize();
-  const resolved = await resolveAppleMusic(query);
+  const resolved = await resolveAppleMusic(playbackQuery(query));
   signal?.throwIfAborted();
   await request.searching?.(resolved.isAppleMusic && resolved.artist && resolved.title ? `${resolved.artist} - ${resolved.title}` : query);
   const options: PlayOptions<PlaybackMetadata> = { member, metadata: { searchSource }, ...(request.textChannel ? { textChannel: request.textChannel } : {}) };

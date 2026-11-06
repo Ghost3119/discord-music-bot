@@ -5,6 +5,7 @@ export type { WebAccessMode } from './contracts';
 export interface WebConfig {
   enabled: boolean;
   host: string;
+  bindPublic?: boolean;
   port: number;
   origin: string;
   oauthClientId: string;
@@ -33,10 +34,11 @@ export function readWebConfig(env: NodeJS.ProcessEnv = process.env): WebConfig {
   const allowedUserIds = parseIds(env['WEB_ALLOWED_USER_IDS']);
   const allowedGuildIds = parseIds(env['WEB_ALLOWED_GUILD_IDS']);
   const explicitAdmins = parseIds(env['WEB_ADMIN_USER_IDS']);
-  const adminUserIds = env['WEB_ADMIN_USER_IDS']?.trim() ? explicitAdmins : accessMode === 'allowlist' ? allowedUserIds : [];
+  const adminUserIds = explicitAdmins;
   const config: WebConfig = {
     enabled,
     host: env['WEB_HOST'] ?? '127.0.0.1',
+    bindPublic: env['WEB_BIND_PUBLIC'] === 'true',
     port,
     origin,
     oauthClientId: env['WEB_CLIENT_ID'] || env['CLIENT_ID'] || '',
@@ -48,7 +50,7 @@ export function readWebConfig(env: NodeJS.ProcessEnv = process.env): WebConfig {
     adminUserIds,
     membershipCacheTtlMs: Number(env['WEB_MEMBERSHIP_CACHE_TTL_MS'] ?? '5000'),
     databasePath: path.resolve(env['WEB_DATABASE_PATH'] ?? 'data/dashboard.sqlite'),
-    sessionTtlMs: Number(env['WEB_SESSION_TTL_HOURS'] ?? '168') * 3_600_000,
+    sessionTtlMs: Number(env['WEB_SESSION_TTL_HOURS'] ?? '24') * 3_600_000,
     secureCookies: origin.startsWith('https:'),
     staticRoot: path.resolve('frontend/dist'),
   };
@@ -68,6 +70,7 @@ export function validateWebConfig(config: WebConfig): void {
   if (origin.protocol !== 'https:' && !(origin.protocol === 'http:' && local)) throw new Error('WEB_ORIGIN requires HTTPS outside localhost');
   if (origin.protocol === 'https:' && !config.secureCookies) throw new Error('HTTPS dashboard cookies must be Secure');
   if (origin.protocol === 'http:' && !['127.0.0.1', 'localhost', '::1'].includes(config.host)) throw new Error('HTTP dashboards must bind to localhost; use HTTPS for a public bind');
+  if (!['127.0.0.1', 'localhost', '::1'].includes(config.host) && !config.bindPublic) throw new Error('WEB_HOST must bind to localhost unless WEB_BIND_PUBLIC=true');
   if (redirect.origin !== origin.origin || redirect.pathname !== '/auth/discord/callback' || redirect.search || redirect.hash || redirect.username || redirect.password) throw new Error('WEB_REDIRECT_URI must be WEB_ORIGIN/auth/discord/callback');
   if (!isSnowflake(config.oauthClientId) || !config.oauthClientSecret) throw new Error('WEB_CLIENT_ID/CLIENT_ID and WEB_CLIENT_SECRET are required');
   const accessMode = config.accessMode ?? 'allowlist';

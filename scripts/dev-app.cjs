@@ -2,6 +2,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const net = require('node:net');
+const { createHash } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 
@@ -152,6 +153,8 @@ async function ensureDependencies(root, signal, install = true) {
     const names = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
     if (names.some(name => !fs.existsSync(path.join(directory, 'node_modules', name, 'package.json')))) {
       if (!install) throw new Error(`Faltan dependencias ${directory === root ? 'del backend' : 'de la vista'}. npm run dev las instalará automáticamente.`);
+      const lockHash = createHash('sha256').update(fs.readFileSync(path.join(directory, 'package-lock.json'))).digest('hex');
+      console.log(`[App] npm ci con lockfile SHA-256 ${lockHash}`);
       console.log(`[App] Instalando dependencias ${directory === root ? 'del backend' : 'de la vista'}…`);
       await runNpm(root, directory === root ? ['ci'] : ['--prefix', 'frontend', 'ci'], signal);
     }

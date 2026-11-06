@@ -168,7 +168,7 @@ test('snapshot projects public fields, pending queue only, and removes tokens, s
   const state = getPlaybackState(f.queue);
   state.lastError = { code: 'NETWORK_ERROR', reference: 'credential', time: Date.now() };
   state.mode = 'recovering';
-  const snapshot = await f.bridge.getState(userId, guildId), serialized = JSON.stringify(snapshot);
+  const snapshot = await createMusicBridge(f.client, undefined, { adminUserIds: [userId] }).getState(userId, guildId), serialized = JSON.stringify(snapshot);
   assert.equal(snapshot.status, 'recovering');
   assert.equal(snapshot.current.id, 'AAAAAAAAAAA');
   assert.deepEqual(snapshot.queue.map(s => s.id), ['BBBBBBBBBBB', 'CCCCCCCCCCC']);

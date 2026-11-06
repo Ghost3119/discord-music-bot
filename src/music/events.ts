@@ -4,7 +4,7 @@ import { createAddQueueEmbed } from '../utils/embed';
 import { BotColors } from '../utils/colors';
 import { PLAYLIST_SEARCH_WARM_LIMIT, YtDlpSearchPlugin } from './ytDlpSearchPlugin';
 import { getStreamDiagnostics, observeStreamErrors, observeVoiceErrors } from './streamErrors';
-import { describeMusicError } from './errors';
+import { classifyMusicError, describeMusicError } from './errors';
 import { PlaybackRecovery } from './playbackRecovery';
 import { guardedEvent } from '../runtime/safety';
 import { PlayerPanels } from './playerPanel';
@@ -103,7 +103,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
       const playable = song.stream.playFromSource ? song : song.stream.song;
       if (!playable?.stream.playFromSource || !playable.stream.url) throw Object.assign(new Error('No stream URL attached'), { errorCode: 'NO_STREAM_URL' });
       stream ??= new DisTubeStream(playable.stream.url, {
-        ffmpeg: { path: distube.options.ffmpeg.path, args: { global: { ...queue.ffmpegArgs.global }, input: { ...queue.ffmpegArgs.input },
+        ffmpeg: { path: distube.options.ffmpeg.path, args: { global: { ...queue.ffmpegArgs.global }, input: { ...queue.ffmpegArgs.input, protocol_whitelist: 'http,https,tcp,tls,crypto' },
           output: { ...queue.ffmpegArgs.output, ...queue.filters.ffmpegArgs } } }, ...(playable.duration ? { seek: queue._beginTime } : {}),
       });
       queue._beginTime = 0;
@@ -340,9 +340,9 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
   });
 
   on(Events.ERROR, async (error, queue: Queue, song) => {
-    console.error('DisTube Error:', error);
+    console.error('DisTube Error:', classifyMusicError(error));
     const diagnostics = getStreamDiagnostics(error);
-    if (diagnostics.length) console.error('[FFmpeg]', diagnostics.join('\n'));
+    if (diagnostics.length) console.error('[FFmpeg]', classifyMusicError(error));
     if (!ownsQueue(queue)) return;
     // Must run before the first await: DisTube decides whether to stop immediately after emit.
     recovery.retry(queue, song, error, findSearchPlugin(distube));
