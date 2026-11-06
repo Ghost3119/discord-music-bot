@@ -40,7 +40,9 @@ export function createWebLifecycle(options: LifecycleOptions): { start(): Promis
 export function createWebDashboard(client: Client, history: HistoryStore): ReturnType<typeof createWebLifecycle> {
   return createWebLifecycle({
     enabled: () => process.env['WEB_ENABLED'] === 'true',
-    report: () => {
+    report: error => {
+      const { classifyMusicError } = require('../music/errors') as typeof import('../music/errors');
+      console.error('[Web] Código de fallo de arranque:', classifyMusicError(error));
       console.error('[Web] Panel no disponible. Revisa la configuración WEB_* y la disponibilidad del puerto; el audio continúa.');
       if (process.connected) process.send?.({ type: 'webStartupFailed' }, () => {});
     },
@@ -51,7 +53,7 @@ export function createWebDashboard(client: Client, history: HistoryStore): Retur
       const config = readWebConfig();
       const bridge = createMusicBridge(client, history, {
         ...(config.accessMode ? { accessMode: config.accessMode } : {}),
-        ...(config.allowedGuildIds ? { allowedGuildIds: config.allowedGuildIds } : {}),
+        ...(config.allowedGuildIds?.length ? { allowedGuildIds: config.allowedGuildIds } : {}),
         ...(config.adminUserIds ? { adminUserIds: config.adminUserIds } : {}),
         ...(config.membershipCacheTtlMs !== undefined ? { membershipCacheTtlMs: config.membershipCacheTtlMs } : {}),
       });

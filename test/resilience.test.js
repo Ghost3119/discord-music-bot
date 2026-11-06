@@ -122,9 +122,9 @@ test('audio recovery resumes only a song that actually started playing', () => {
 test('a different song by the requested artist is rejected in favor of the Music match', async () => {
   const plugin = new YtDlpSearchPlugin();
   plugin.fetchInfo = async (input) => {
-    if (input.startsWith('ytsearch')) return { entries: [{ _type: 'url', title: 'Es de la Mafia', url: 'https://youtube.com/wrong' }] };
-    if (input.endsWith('wrong')) return { id: 'wrong', title: 'Es de la Mafia', uploader: 'La Mafia del Amor', webpage_url: input };
-    if (input.startsWith('https://music')) return { entries: [{ _type: 'url', title: 'Multiorgásmica', url: 'https://youtube.com/correct' }] };
+    if (input.startsWith('ytsearch')) return { entries: [{ _type: 'url', title: 'Es de la Mafia', url: 'https://youtube.com/watch?v=WRONG______' }] };
+    if (input.endsWith('WRONG______')) return { id: 'wrong', title: 'Es de la Mafia', uploader: 'La Mafia del Amor', webpage_url: input };
+    if (input.startsWith('https://music')) return { entries: [{ _type: 'url', title: 'Multiorgásmica', url: 'https://youtube.com/watch?v=CORRECT____' }] };
     return { id: 'correct', title: 'Multiorgásmica', uploader: 'La Mafia del Amor', webpage_url: input };
   };
   assert.equal((await plugin.searchSong('la mafia del amor multiorgasmica', {})).id, 'correct');
@@ -208,10 +208,10 @@ test('search tries another candidate when the best result is unavailable', async
   plugin.fetchInfo = async (input) => {
     inputs.push(input);
     if (input.startsWith('ytsearch')) return { entries: [
-      { _type: 'url', title: 'Artist Song', url: 'https://youtube.com/first' },
-      { _type: 'url', title: 'Artist Song audio', url: 'https://youtube.com/second' },
+      { _type: 'url', title: 'Artist Song', url: 'https://youtube.com/watch?v=FIRST______' },
+      { _type: 'url', title: 'Artist Song audio', url: 'https://youtube.com/watch?v=SECOND_____' },
     ] };
-    if (input.endsWith('first')) throw new Error('Video unavailable');
+    if (input.endsWith('FIRST______')) throw new Error('Video unavailable');
     return { id: 'BBBBBBBBBBB', extractor: 'youtube', title: 'Artist Song audio', webpage_url: input, url: 'https://audio.test/valid' };
   };
   const result = await plugin.searchSong('Artist Song', {});
@@ -292,7 +292,7 @@ test('yt-dlp user cancellation kills the extraction and preserves its reason wit
     queueMicrotask(() => controller.abort());
     return child;
   });
-  await assert.rejects(runYtDlp('test', {}, controller.signal), error => error === controller.signal.reason && error.name === 'AbortError');
+  await assert.rejects(runYtDlp('ytsearch5:test', {}, controller.signal), error => error === controller.signal.reason && error.name === 'AbortError');
   assert.equal(starts, 1);
 });
 

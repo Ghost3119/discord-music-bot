@@ -1,6 +1,7 @@
 'use strict';
 const { fork } = require('node:child_process');
 const path = require('node:path');
+const { processIdentity } = require('./process-identity.cjs');
 
 function supervise(options = {}) {
   const entry = options.entry || path.resolve(__dirname, '../dist/bootstrap.js');
@@ -13,9 +14,15 @@ function supervise(options = {}) {
   let failures = 0;
   let lastHeartbeat = Date.now();
   let lastStart = 0;
-  const audioWorkers = new Set();
+  const audioWorkers = new Map();
+  const restarts = [];
+  const restartLimit = options.restartLimit ?? 10;
+  const restartWindow = options.restartWindow ?? 10 * 60_000;
   function closeAudioWorkers() {
-    for (const pid of audioWorkers) {
+    for (const [pid, identity] of audioWorkers) {
+      const current = processIdentity(pid);
+      // Parentage was checked at registration. A crashed bot's workers are reparented on Unix.
+      if (!current || current.created !== identity.created) continue;
       try { process.kill(pid, 'SIGKILL'); }
       catch (error) { if (error.code !== 'ESRCH') console.error('[Supervisor] No se pudo cerrar FFmpeg preparado:', error.code); }
     }
@@ -39,7 +46,10 @@ function supervise(options = {}) {
       options.onMessage?.(message);
       if (message && message.type === 'audioWorker' && Number.isSafeInteger(message.pid) && message.pid > 1 &&
         message.pid !== process.pid && message.pid !== child?.pid) {
-        if (message.action === 'started') audioWorkers.add(message.pid);
+        if (message.action === 'started') {
+          const identity = processIdentity(message.pid);
+          if (identity && identity.parent === child?.pid) audioWorkers.set(message.pid, identity);
+        }
         if (message.action === 'closed') audioWorkers.delete(message.pid);
       }
     });
@@ -54,6 +64,12 @@ function supervise(options = {}) {
         return;
       }
       if (Date.now() - lastStart > 60000) failures = 0;
+      while (restarts.length && restarts[0] <= Date.now() - restartWindow) restarts.shift();
+      if (restarts.length >= restartLimit) {
+        console.error('[Supervisor] Límite de reinicios alcanzado; revisa los logs antes de iniciar de nuevo.');
+        finish(1); return;
+      }
+      restarts.push(Date.now());
       const wait = Math.min(maximumDelay, minimumDelay * 2 ** Math.min(failures++, 10));
       console.error(`[Supervisor] El bot terminó (${code ?? signal}); reinicio en ${wait} ms.`);
       timer = setTimeout(start, wait);

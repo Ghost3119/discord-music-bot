@@ -42,6 +42,7 @@ export type TrackContext = 'queue' | 'favorites' | 'playlist';
 export interface TrackActions {
   busy: boolean;
   playbackReady: boolean;
+  canManageLibrary?: boolean;
   isFavorite: (track: Track) => boolean;
   onPlay: (track: Track) => void | Promise<void>;
   onToggleFavorite: (track: Track) => void | Promise<void>;
@@ -124,7 +125,7 @@ export function TrackItem({ track, index, context, owner, actions, drag }: Track
           label={`${isFavorite(track) ? 'Quitar de' : 'Guardar en'} favoritos: ${track.title}`}
           active={isFavorite(track)}
           aria-pressed={isFavorite(track)}
-          disabled={busy}
+          disabled={busy || actions.canManageLibrary === false}
           onClick={() => onToggleFavorite(track)}
         >
           <Heart size={16} fill={isFavorite(track) ? 'currentColor' : 'none'} />
@@ -132,7 +133,7 @@ export function TrackItem({ track, index, context, owner, actions, drag }: Track
         {context === 'queue' && (
           <IconButton
             label={`Guardar ${track.title} en playlist`}
-            disabled={busy}
+            disabled={busy || actions.canManageLibrary === false}
             onClick={() => onSave(track)}
           >
             <Plus size={17} />
@@ -141,7 +142,7 @@ export function TrackItem({ track, index, context, owner, actions, drag }: Track
         {context !== 'favorites' && (
           <IconButton
             label={`Retirar ${track.title}`}
-            disabled={busy}
+            disabled={busy || (context === 'queue' ? !playbackReady : actions.canManageLibrary === false)}
             onClick={() => onRemove(track, index, owner)}
           >
             <X size={16} />
@@ -197,7 +198,7 @@ function SortableTrackList({ tracks, ...itemProps }: TrackListProps) {
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
-  const locked = itemProps.actions.busy || pending !== null || items.length < 2;
+  const locked = (itemProps.context === 'queue' ? !itemProps.actions.playbackReady : itemProps.actions.canManageLibrary === false) || itemProps.actions.busy || pending !== null || items.length < 2;
   const position = (id: UniqueIdentifier) => ids.indexOf(String(id)) + 1;
 
   function handleDragEnd({ active, over }: DragEndEvent) {

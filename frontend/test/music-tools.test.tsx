@@ -96,3 +96,10 @@ it('keeps genuine high-quality images and intentional default-size thumbnails',(
   image.src='https://i.ytimg.com/vi/AAAAAAAAAAA/default.jpg';expect(unavailableYouTubeImage(image)).toBe(false);
   image.src='https://other.example/hqdefault.jpg';expect(unavailableYouTubeImage(image)).toBe(false);
 });
+
+it('does not send music mutations without the backend control grant',async()=>{
+  mocks.playback.state=snapshot({permissions:{canControl:false} as never});
+  const view=await mount();
+  await act(async()=>{await view.app.action({action:'pause'});});
+  expect(view.app.controlsDisabled).toBe(true);expect(requests).toHaveLength(0);
+});

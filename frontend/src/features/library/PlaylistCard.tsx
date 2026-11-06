@@ -13,6 +13,7 @@ export interface PlaylistCardProps {
   displayIndex: number;
   busy: string;
   playbackReady: boolean;
+  canManageLibrary?: boolean;
   onSelectPlaylist: (id: string) => void;
   onLoadPlaylist: (playlist: Playlist) => void | Promise<void>;
   onAddTrack: (playlist: Playlist) => void;
@@ -30,6 +31,7 @@ export function PlaylistCard({
   displayIndex,
   busy,
   playbackReady,
+  canManageLibrary = true,
   onSelectPlaylist,
   onLoadPlaylist,
   onAddTrack,
@@ -115,7 +117,7 @@ export function PlaylistCard({
             <button
               type="button"
               role="menuitem"
-              disabled={!!busy}
+              disabled={!!busy || !canManageLibrary}
               onClick={(event) => {
                 closeParentMenu(event);
                 onAddTrack(playlist);
@@ -126,7 +128,7 @@ export function PlaylistCard({
             <button
               type="button"
               role="menuitem"
-              disabled={!!busy}
+              disabled={!!busy || !canManageLibrary}
               onClick={(event) => {
                 closeParentMenu(event);
                 onRenamePlaylist(playlist);
@@ -138,7 +140,7 @@ export function PlaylistCard({
               type="button"
               role="menuitem"
               className="is-danger"
-              disabled={!!busy}
+              disabled={!!busy || !canManageLibrary}
               onClick={(event) => {
                 closeParentMenu(event);
                 onDeletePlaylist(playlist);

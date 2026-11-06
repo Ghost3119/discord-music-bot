@@ -24,6 +24,8 @@ export const navigation = [
 
 export interface SidebarProps {
   mobileNav: boolean;
+  canViewDiagnostics?: boolean;
+  canManageLibrary?: boolean;
   view: View;
   playing: boolean;
   guildId: string;
@@ -38,6 +40,8 @@ export interface SidebarProps {
 }
 
 export function Sidebar({
+  canViewDiagnostics = false,
+  canManageLibrary = false,
   mobileNav,
   view,
   playing,
@@ -60,7 +64,7 @@ export function Sidebar({
         <Brand />
         <span className="sidebar-label">TU ESPACIO</span>
         <nav aria-label="Navegación principal">
-          {navigation.map(({ id, name: itemName, icon: Icon }) => (
+          {navigation.filter(item => item.id !== 'diagnostics' || canViewDiagnostics).map(({ id, name: itemName, icon: Icon }) => (
             <button
               key={id}
               className={cn('nav-item', view === id && 'nav-active')}
@@ -82,7 +86,7 @@ export function Sidebar({
         <div className="sidebar-divider" />
         <div className="sidebar-library-heading">
           <span className="sidebar-label">TUS PLAYLISTS</span>
-          <IconButton label="Crear playlist" onClick={onCreatePlaylist} disabled={!guildId}>
+          <IconButton label="Crear playlist" onClick={onCreatePlaylist} disabled={!guildId || !canManageLibrary}>
             <Plus size={17} />
           </IconButton>
         </div>

@@ -7,7 +7,7 @@ export function track(id = 'track-a', overrides: Partial<Track> = {}): Track {
 }
 
 export function snapshot(overrides: Partial<PlaybackSnapshot> = {}): PlaybackSnapshot {
-  return { guildId: 'guild-a', status: 'playing', current: track(), queue: [track('track-b'), track('track-c')], currentTime: 30, volume: 65, repeat: 0, voice: { id: 'voice-a', name: 'Lounge', members: 4 }, health: {}, incidents: [], ...overrides };
+  return { guildId: 'guild-a', status: 'playing', current: track(), queue: [track('track-b'), track('track-c')], currentTime: 30, volume: 65, repeat: 0, voice: { id: 'voice-a', name: 'Lounge', members: 4 }, health: {}, incidents: [], permissions: { role: 'admin', isMember: true, inVoiceChannel: true, canControl: true, isAdmin: true, canRead: true, canManageLibrary: true, canViewDiagnostics: true, canManageConfig: true }, ...overrides };
 }
 
 export function playlist(overrides: Partial<Playlist> = {}): Playlist {

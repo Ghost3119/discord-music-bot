@@ -18,3 +18,22 @@ export function youtubeThumbnail(source: string, id?: unknown, inputUrl?: unknow
   const videoId = valid(urlId) ? urlId : valid(id) ? id : undefined;
   return videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : undefined;
 }
+
+export const IMAGE_HOSTS = [
+  'i.ytimg.com', 'img.youtube.com',
+  'i.scdn.co', 'image-cdn-ak.spotifycdn.com', 'image-cdn-fa.spotifycdn.com', 'mosaic.scdn.co',
+  'images.genius.com',
+  'is1-ssl.mzstatic.com', 'is2-ssl.mzstatic.com', 'is3-ssl.mzstatic.com', 'is4-ssl.mzstatic.com', 'is5-ssl.mzstatic.com',
+  'i1.sndcdn.com', 'i2.sndcdn.com', 'i3.sndcdn.com', 'i4.sndcdn.com',
+];
+
+export function sanitizeThumbnailUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim() || value.length > 2048) return null;
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || !IMAGE_HOSTS.includes(parsed.hostname)) return null;
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString();
+  } catch { return null; }
+}

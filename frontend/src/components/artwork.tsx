@@ -2,11 +2,11 @@ import { AudioLines } from 'lucide-react';
 import { useState } from 'react';
 import type { Track } from '../lib/api';
 import { cn } from '../lib/utils';
-import { unavailableYouTubeImage } from '../lib/artwork';
+import { sanitizeThumbnailUrl, unavailableYouTubeImage } from '../lib/artwork';
 
 export function Artwork({ track, className, decorative = false }: { track?: Track | null; className?: string; decorative?: boolean }) {
   const [failed, setFailed] = useState('');
-  const thumbnail = track?.thumbnail;
+  const thumbnail = sanitizeThumbnailUrl(track?.thumbnail);
   return <div className={cn('artwork', className)}>
     {thumbnail && failed !== thumbnail
       ? <img key={thumbnail} src={thumbnail} onError={() => setFailed(thumbnail)} onLoad={(event) => { if (unavailableYouTubeImage(event.currentTarget)) setFailed(thumbnail); }} alt={decorative ? '' : `Portada de ${track?.title}`} loading="lazy" referrerPolicy="no-referrer" />

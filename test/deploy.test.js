@@ -23,7 +23,7 @@ function fixture(t, replacement) {
   `);
   // Cold module reads on Windows can exceed ten seconds, especially beside the full suite.
   return { preload, options: { cwd: directory, windowsHide: true, timeout: 30000,
-    env: { ...process.env, DISCORD_TOKEN: 'fixture-token', CLIENT_ID: '1503904508109918299', GUILD_ID: '1082065100111872170' } } };
+    env: { ...process.env, DISCORD_TOKEN: 'fixture-token', CLIENT_ID: '111111111111111111', GUILD_ID: '333333333333333333' } } };
 }
 
 test('command deployment can be checked without credentials, network or a bot session', async t => {

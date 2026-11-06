@@ -12,13 +12,13 @@ async function setup(t, overrides = {}) {
   const config = { enabled:true, host:'127.0.0.1', port:8080, origin:'http://127.0.0.1:8080', oauthClientId:USER, oauthClientSecret:'qa-only-secret', oauthRedirectUri:'http://127.0.0.1:8080/auth/discord/callback', allowedUserIds:[USER], databasePath:':memory:', sessionTtlMs:60000, secureCookies:false, ...overrides.config };
   const session = db.createSession({ id: USER, username: 'QA', avatar: null }, Date.now(),overrides.sessionTtlMs ?? 60000);
   const app = await createWebServer({ config,database:db,now:overrides.now,
-    bridge: { async listGuilds(){return[{id:GUILD,name:'QA',icon:null}];}, async assertGuildAccess(){ if(!data.allowed) throw Object.assign(new Error('Denied'),{statusCode:403}); }, async getState(){return structuredClone(data.state);}, async control(){data.controls++;} },
+    bridge: { async listGuilds(){return[{id:GUILD,name:'QA',icon:null}];}, async getPermissions(){return {canControl:true,canManageLibrary:true};}, async assertGuildAccess(){ if(!data.allowed) throw Object.assign(new Error('Denied'),{statusCode:403}); }, async getState(){return structuredClone(data.state);}, async control(){data.controls++;} },
     lyricsService:{ async findLyrics(query,signal){ data.queries.push(query); return overrides.find ? overrides.find(query,signal) : {status:'synced',lines:[{timeMs:0,text:'Original test line'}],source:{name:'LRCLIB',url:'https://lrclib.net',recordId:1}};},
       async searchLyrics(query,signal){data.queries.push(query);return overrides.search ? overrides.search(query,signal) : {status:'results',candidates:[{id:1,title:track.title,artist:track.artist,album:'Test',duration:120,synced:true,plain:true,instrumental:false}]};},
       async selectLyrics(id,signal){data.queries.push({recordId:id});return overrides.select ? overrides.select(id,signal) : {status:'plain',plainLyrics:'Selected original line',source:{name:'LRCLIB',url:'https://lrclib.net',recordId:id}};}, close(){} }
   });
   t.after(async()=>{await app.close();db.close();});
-  const get = (url=URL) => app.inject({url,headers:{cookie:'music_session='+session.token}});
+  const get = (url=URL) => app.inject({url,headers:{cookie:'music_session='+session.token,'x-csrf-token':session.csrfToken}});
   return {app,db,data,get,session};
 }
 test('lyrics requires session and current guild membership before querying provider',async t=>{
@@ -52,7 +52,7 @@ test('manual search exposes metadata and selection only admits returned IDs for 
   assert.equal(selected.json().status,'plain');assert.equal(selected.json().plainLyrics,'Selected original line');
   assert.equal(selected.json().playbackId,'instance-A');assert.equal(h.data.controls,0);
   const other=h.db.createSession({id:USER,username:'Other',avatar:null},Date.now(),60000);
-  assert.equal((await h.app.inject({url:manualUrl('selection'),headers:{cookie:'music_session='+other.token}})).statusCode,409);
+  assert.equal((await h.app.inject({url:manualUrl('selection'),headers:{cookie:'music_session='+other.token,'x-csrf-token':other.csrfToken}})).statusCode,409);
 });
 for(const kind of ['search','selection']){
   test('manual '+kind+' rejects stale identity before provider and discards a late response after repeat',async t=>{

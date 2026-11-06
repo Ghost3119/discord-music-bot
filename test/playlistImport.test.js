@@ -57,7 +57,7 @@ async function createTestHarness(t, overrides = {}) {
     ...overrides.config,
   };
   const bridge = {
-    async assertGuildAccess(_userId, guildId) {
+    async getPermissions(){return {canControl:true,canManageLibrary:true};}, async assertGuildAccess(_userId, guildId) {
       if (!state.permissions.has(guildId)) {
         throw Object.assign(new Error('Guild access denied'), { statusCode: 403 });
       }
@@ -134,7 +134,7 @@ async function createTestHarness(t, overrides = {}) {
       headers: { cookie: `music_oauth_state=${stateCookie}` },
     });
     const token = finish.cookies.find(item => item.name === 'music_session').value;
-    const cookie = `music_session=${token}`;
+    const cookie = `music_session=${token}; music_csrf=${finish.cookies.find(item => item.name === 'music_csrf').value}`;
     const session = (await app.inject({ url: '/api/session', headers: { cookie } })).json();
     return { cookie, csrf: session.csrfToken };
   }

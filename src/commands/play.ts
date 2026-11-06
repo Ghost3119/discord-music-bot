@@ -21,12 +21,13 @@ function parseSearchSource(value: string | null): SearchSource {
 export const play: Command = {
   data: new SlashCommandBuilder()
     .setName('play')
-    .setDescription('Reproduce YouTube, SoundCloud, Spotify, Apple Music y URLs compatibles')
+    .setDescription('Reproduce YouTube, SoundCloud, Spotify y Apple Music')
     .addStringOption((opt) =>
       opt
         .setName('query')
         .setDescription('URL o nombre de la canción')
         .setRequired(true)
+        .setMaxLength(500)
         .setAutocomplete(true),
     )
     .addStringOption((opt) =>

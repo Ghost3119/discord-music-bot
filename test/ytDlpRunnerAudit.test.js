@@ -33,7 +33,7 @@ function runnerHarness(t) {
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
-    child.input = args[0];
+    child.input = args[0].replace(/^ytsearch5:/, '');
     child.signal = options.signal;
     child.closed = false;
     child.abortCount = 0;
@@ -66,7 +66,7 @@ function runnerHarness(t) {
     children, deadlines, sleeps,
     run(input, controller = new AbortController()) {
       controllers.push(controller);
-      const operation = runYtDlp(input, {}, controller.signal);
+      const operation = runYtDlp(`ytsearch5:${input}`, {}, controller.signal);
       // Cleanup can cancel any outstanding task even after a failed assertion.
       operation.catch(() => {});
       operations.push(operation);
@@ -298,7 +298,7 @@ test('user cancellation terminates a real local extraction child process', async
     process.on('exit', () => { if (child && child.exitCode === null && child.signalCode === null) child.kill(); });
     childProcess.spawn = (...args) => {
       starts++;
-      child = spawn(...args);
+      child = spawn(process.execPath, [${JSON.stringify(fixture)}], args[2]);
       closed = new Promise(resolve => child.once('close', resolve));
       child.once('spawn', () => controller.abort(reason));
       return child;
@@ -306,7 +306,7 @@ test('user cancellation terminates a real local extraction child process', async
     (async () => {
       try {
         await assert.rejects(require(${JSON.stringify(require.resolve('../dist/music/ytDlpRunner'))}).runYtDlp(
-          ${JSON.stringify(fixture)}, {}, controller.signal), error => error === reason);
+          'ytsearch5:local cancellation fixture', {}, controller.signal), error => error === reason);
         await closed;
         assert.equal(starts, 1);
         assert.ok(child.exitCode !== null || child.signalCode !== null);

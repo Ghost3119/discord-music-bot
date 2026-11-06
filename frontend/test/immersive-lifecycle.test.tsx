@@ -102,7 +102,7 @@ describe('artwork extraction effects', () => {
     return { ...screen, get current() { return current; }, async setUrl(next: string) { url = next; await act(async () => render()); } };
   }
   it('samples a 24px canvas once with anonymous CORS and does not overwrite success at timeout', async () => {
-    const screen = await palette(`https://art.test/success-${testId}.jpg`);
+    const screen = await palette(`https://i.scdn.co/success-${testId}.jpg`);
     expect(images[0].crossOrigin).toBe('anonymous'); expect(images[0].referrerPolicy).toBe('no-referrer');
     await act(async () => images[0].onload?.());
     const result = screen.current.primary;
@@ -113,10 +113,10 @@ describe('artwork extraction effects', () => {
     expect(screen.current.primary).toBe(result);
   });
   it('falls back when the image fails and never processes a late image after timeout', async () => {
-    const failed = await palette(`https://art.test/fail-${testId}.jpg`);
+    const failed = await palette(`https://i.scdn.co/fail-${testId}.jpg`);
     await act(async () => images[0].onerror?.());
     expect(failed.current).toEqual(FALLBACK_PALETTE);
-    const timed = await palette(`https://art.test/timeout-${testId}.jpg`);
+    const timed = await palette(`https://i.scdn.co/timeout-${testId}.jpg`);
     await act(async () => vi.advanceTimersByTimeAsync(5001));
     const calls = vi.mocked(HTMLCanvasElement.prototype.getContext).mock.calls.length;
     await act(async () => images[1].onload?.());
@@ -126,13 +126,13 @@ describe('artwork extraction effects', () => {
   });
   it('uses the fallback if canvas readback is blocked by CORS', async () => {
     vi.mocked(HTMLCanvasElement.prototype.getContext).mockImplementation(() => ({ drawImage() { throw new DOMException('Tainted canvas', 'SecurityError'); } }) as unknown as CanvasRenderingContext2D);
-    const screen = await palette(`https://art.test/cors-${testId}.jpg`);
+    const screen = await palette(`https://i.scdn.co/cors-${testId}.jpg`);
     await act(async () => images[0].onload?.());
     expect(screen.current).toEqual(FALLBACK_PALETTE);
   });
   it('ignores late A callbacks after B is current and cancels detached image work', async () => {
-    const screen = await palette(`https://art.test/a-${testId}.jpg`), lateA = images[0].onload!;
-    await screen.setUrl(`https://art.test/b-${testId}.jpg`);
+    const screen = await palette(`https://i.scdn.co/a-${testId}.jpg`), lateA = images[0].onload!;
+    await screen.setUrl(`https://i.scdn.co/b-${testId}.jpg`);
     expect(images[0].onload).toBeNull(); expect(images[0].removeAttribute).toHaveBeenCalledWith('src');
     await act(async () => lateA());
     expect(screen.current).toEqual(FALLBACK_PALETTE);
@@ -141,7 +141,7 @@ describe('artwork extraction effects', () => {
     expect(screen.current.primary).toBe('rgb(36, 69, 178)');
   });
   it('reuses a cached palette across unmount without another image request', async () => {
-    const url = `https://art.test/reopen-${testId}.jpg`, screen = await palette(url);
+    const url = `https://i.scdn.co/reopen-${testId}.jpg`, screen = await palette(url);
     await act(async () => images[0].onload?.());
     await act(async () => screen.root.unmount()); roots = roots.filter((root) => root !== screen.root);
     const reopened = await palette(url);
@@ -149,7 +149,7 @@ describe('artwork extraction effects', () => {
   });
   it('removes the outgoing ambient layer after the chromatic transition', async () => {
     const screen = await createTestRoot();
-    await act(async () => screen.root.render(<AmbientBackground thumbnail={`https://art.test/ambient-${testId}.jpg`} />));
+    await act(async () => screen.root.render(<AmbientBackground thumbnail={`https://i.scdn.co/ambient-${testId}.jpg`} />));
     await act(async () => images[0].onload?.());
     expect(screen.container.querySelector('.is-leaving')).not.toBeNull();
     await act(async () => vi.advanceTimersByTimeAsync(AMBIENT_CROSSFADE_MS + 1));
@@ -157,7 +157,7 @@ describe('artwork extraction effects', () => {
   });
   it('propagates extracted ambient CSS custom properties to the parent element', async () => {
     const screen = await createTestRoot();
-    await act(async () => screen.root.render(<AmbientBackground thumbnail={`https://art.test/ambient-${testId}.jpg`} />));
+    await act(async () => screen.root.render(<AmbientBackground thumbnail={`https://i.scdn.co/ambient-${testId}.jpg`} />));
     pixels = new Uint8ClampedArray([180, 50, 40, 255]);
     await act(async () => images[0].onload?.());
     const primary = screen.container.style.getPropertyValue('--ambient-primary');

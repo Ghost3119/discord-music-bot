@@ -15,17 +15,17 @@ async function fixture(t, control, timeout) {
     config:{enabled:true,host:'127.0.0.1',port:8080,origin:ORIGIN,oauthClientId:USER,oauthClientSecret:'test-only',oauthRedirectUri:ORIGIN+'/auth/discord/callback',allowedUserIds:[USER],databasePath:':memory:',sessionTtlMs:60000,secureCookies:false},
     database,
     ...(timeout===undefined?{}:{musicOperationTimeoutMs:timeout}),
-    bridge:{async assertGuildAccess(){},async listGuilds(){return[];},async getState(){return{guildId:GUILD,status:'idle',current:null,queue:[],currentTime:0,volume:50,repeat:0,voice:null,health:{},incidents:[]};},async control(_u,_g,action,signal){calls.push({action,signal});await control(signal);}},
+    bridge:{async getPermissions(){return {canControl:true,canManageLibrary:true};}, async assertGuildAccess(){},async listGuilds(){return[];},async getState(){return{guildId:GUILD,status:'idle',current:null,queue:[],currentTime:0,volume:50,repeat:0,voice:null,health:{},incidents:[]};},async control(_u,_g,action,signal){calls.push({action,signal});await control(signal);}},
   });
   t.after(async()=>{await app.close();database.close();});
   const url='/api/guilds/'+GUILD+'/playlists/'+playlist.id+'/load';
-  const headers={cookie:'music_session='+session.token,origin:ORIGIN,'x-csrf-token':require('../dist/web/database').csrfTokenFor(session.token)};
+  const headers={cookie:'music_session='+session.token,origin:ORIGIN,'x-csrf-token':session.csrfToken};
   return{app,calls,url,headers};
 }
 test('authenticated slow playlist loading survives the server idle timeout on a real HTTP socket',async t=>{
-  const h=await fixture(t,()=>pause(60));
+  let h;
+  h=await fixture(t,()=>{h.app.server.setTimeout(20);return pause(60);});
   await h.app.listen({host:'127.0.0.1',port:0});
-  h.app.server.setTimeout(20);
   const response=await fetch('http://127.0.0.1:'+h.app.server.address().port+h.url,{method:'POST',headers:h.headers,signal:AbortSignal.timeout(2000)});
   assert.equal(response.status,200);
   assert.equal((await response.json()).loaded,3);

@@ -4,6 +4,8 @@ import type { Modal, View } from '../../types/app';
 
 interface LibraryOptions {
   guildId: string;
+  canManageLibrary?: boolean;
+  canControl?: boolean;
   session: Session | null;
   reportError: (problem: unknown) => void;
   run: (key: string, task: () => Promise<void>) => Promise<void>;
@@ -16,6 +18,8 @@ interface LibraryOptions {
 /** Keeps collection data, its editor and abortable metadata lookup in one feature. */
 export function useLibrary({
   guildId,
+  canManageLibrary = true,
+  canControl = true,
   session,
   reportError,
   run,
@@ -163,6 +167,7 @@ export function useLibrary({
   }
 
   function toggleFavorite(track: Track) {
+    if (!canManageLibrary) return Promise.resolve();
     const saved = favorites.find((item) => item.url === track.url);
     return run('favorite', async () => {
       await mutate(
@@ -176,6 +181,7 @@ export function useLibrary({
   }
 
   function reorderPlaylist(playlist: Playlist, from: number, to: number) {
+    if (!canManageLibrary) return Promise.resolve();
     const ids = playlist.tracks.map((track) => track.id);
     ids.splice(to, 0, ids.splice(from, 1)[0]);
     return run('reorder', async () => {
@@ -185,6 +191,7 @@ export function useLibrary({
   }
 
   function removePlaylistTrack(playlist: Playlist, track: Track) {
+    if (!canManageLibrary) return Promise.resolve();
     return run('remove-track', async () => {
       await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/tracks/${track.id}`, 'DELETE');
       reloadLibrary();
@@ -192,6 +199,7 @@ export function useLibrary({
   }
 
   function loadPlaylist(playlist: Playlist) {
+    if (!canControl) return Promise.resolve();
     return run('load', async () => {
       const response = (await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/load`, 'POST')) as
         | { loaded?: number; total?: number; failed?: number }
@@ -215,7 +223,7 @@ export function useLibrary({
 
   async function submitModal(event: FormEvent) {
     event.preventDefault();
-    if (!modal) return;
+    if (!modal || !canManageLibrary) return;
     await run('save', async () => {
       const base = `/api/guilds/${guildId}/playlists`;
       if (modal.type === 'playlist') {

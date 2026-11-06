@@ -13,7 +13,7 @@ const deferred = () => { let resolve; const promise = new Promise(r => { resolve
 const audioError = { errorCode: 'FFMPEG_EXITED', message: 'ffmpeg exited with code 3436169992' };
 function track(plugin, id = 'original', extra = {}, options = {}) {
   return new Song({ plugin, source: 'youtube', playFromSource: true, id, name: 'Artist Song', duration: 200,
-    url: `https://www.youtube.com/watch?v=${id}`, ...extra }, options);
+    url: `https://www.youtube.com/watch?v=${id.padEnd(11, '_').slice(0, 11)}`, ...extra }, options);
 }
 function quiet(t) {
   t.mock.method(console, 'info', () => {});
@@ -58,14 +58,14 @@ test('alternative discovery rejects the same video under another URL and finds a
   plugin.fetchInfo = async (input, flags) => {
     if (input.startsWith('scsearch')) return { entries: [] };
     if (flags.flatPlaylist) return { entries: [
-      { id: 'original', title: 'Artist Song', url: 'https://youtu.be/original' },
-      { id: 'different', title: 'Artist Song', url: 'https://youtube.com/different' },
+      { id: 'original', title: 'Artist Song', url: 'https://youtu.be/original___' },
+      { id: 'different', title: 'Artist Song', url: 'https://youtube.com/watch?v=different__' },
     ] };
     hydrated.push(input);
     return { id: 'different', title: 'Artist Song audio', duration: 200, webpage_url: input, url: 'https://audio.test/new' };
   };
   assert.equal((await plugin.findAlternative(original)).id, 'different');
-  assert.deepEqual(hydrated, ['https://youtube.com/different']);
+  assert.deepEqual(hydrated, ['https://youtube.com/watch?v=different__']);
 });
 
 for (const [label, changes] of [
@@ -77,7 +77,7 @@ for (const [label, changes] of [
   test(`alternative discovery rejects ${label}`, async () => {
     const plugin = new YtDlpSearchPlugin();
     plugin.fetchInfo = async (input, flags) => flags.flatPlaylist
-      ? { entries: [{ id: 'candidate', title: 'Artist Song', webpage_url: `https://candidate.test/${input.slice(0, 2)}` }] }
+      ? { entries: [{ id: 'candidate', title: 'Artist Song', webpage_url: `https://www.youtube.com/watch?v=${require('node:crypto').createHash('sha256').update(input).digest('hex').slice(0, 11)}` }] }
       : { id: 'candidate', title: 'Artist Song', duration: 200, webpage_url: input, url: 'https://audio.test/new', ...changes };
     assert.equal(await plugin.findAlternative(track(plugin)), null);
   });
@@ -89,7 +89,7 @@ test('metadata recovery checks artist separately even when a long title mostly m
     name: 'One Two Three Four Five Six Seven Eight Nine Ten', uploader: { name: 'Rightartist' } });
   original.stream.song = track(plugin);
   plugin.fetchInfo = async (input, flags) => {
-    if (flags.flatPlaylist) { assert.match(input, /Rightartist/); return { entries: [{ id: 'candidate', title: original.name, webpage_url: 'https://candidate.test/song' }] }; }
+    if (flags.flatPlaylist) { assert.match(input, /Rightartist/); return { entries: [{ id: 'candidate', title: original.name, webpage_url: 'https://www.youtube.com/watch?v=AAAAAAAAAAA' }] }; }
     return { id: 'candidate', title: original.name, uploader: 'Wrongartist', duration: 200,
       webpage_url: input, url: 'https://audio.test/new' };
   };
@@ -101,7 +101,7 @@ test('discovery is bounded to six candidates and honours cancellation', async ()
   let hydrated = 0;
   plugin.fetchInfo = async (input, flags) => {
     if (flags.flatPlaylist) return { entries: Array.from({ length: 5 }, (_, id) => ({
-      id: `${input}:${id}`, title: 'Artist Song', webpage_url: `https://candidate.test/${encodeURIComponent(input)}/${id}`,
+      id: `${input}:${id}`, title: 'Artist Song', webpage_url: `https://www.youtube.com/watch?v=${require('node:crypto').createHash('sha256').update(input+id).digest('hex').slice(0, 11)}`,
     })) };
     hydrated++;
     return { title: 'Artist Song remix', duration: 200, webpage_url: input, url: 'https://audio.test/new' };
@@ -119,7 +119,7 @@ test('a blocked alternative provider falls back without repeatedly querying that
   let blocked = 0;
   plugin.fetchInfo = async (input, flags) => {
     if (input.startsWith('scsearch')) { blocked++; throw new Error('HTTP Error 403: Forbidden'); }
-    if (flags.flatPlaylist) return { entries: [{ id: 'new', title: 'Artist Song', webpage_url: 'https://youtube.com/new' }] };
+    if (flags.flatPlaylist) return { entries: [{ id: 'new', title: 'Artist Song', webpage_url: 'https://youtube.com/watch?v=NEW________' }] };
     return { id: 'new', title: 'Artist Song', duration: 200, webpage_url: input, url: 'https://audio.test/new' };
   };
   assert.equal((await plugin.findAlternative(track(plugin))).source, 'youtube');

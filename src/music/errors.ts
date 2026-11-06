@@ -13,6 +13,10 @@ interface ErrorDescription {
 }
 
 const ERROR_DESCRIPTIONS: Record<string, ErrorDescription> = {
+  INVALID_ACTION: {
+    title: 'Búsqueda o enlace no válido', detail: 'Solo se admiten búsquedas de hasta 500 caracteres y enlaces HTTPS públicos de YouTube, SoundCloud, Spotify o Apple Music.',
+    hint: 'Usa el enlace permanente del proveedor, sin credenciales, puertos ni opciones de extractor.',
+  },
   INVALID_QUEUE_POSITION: {
     title: 'Posición de cola no válida', detail: 'La posición indicada ya no existe o corresponde a la canción actual.',
     hint: 'Abre /queue y usa sus posiciones: la primera canción pendiente es la 1.',

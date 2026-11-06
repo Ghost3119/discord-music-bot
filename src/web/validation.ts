@@ -1,6 +1,7 @@
 import type { MusicAction } from './contracts';
 import { WebError, TrackMetadata } from './database';
-import { youtubeThumbnail } from '../music/artwork';
+import { IMAGE_HOSTS, sanitizeThumbnailUrl, youtubeThumbnail } from '../music/artwork';
+import { playbackQuery, publicPlaybackUrl } from '../music/mediaPolicy';
 
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new WebError(400, 'Expected a JSON object');
@@ -38,24 +39,7 @@ export function publicTrackUrl(value: unknown): { url: string; source: string } 
   if (host === 'music.apple.com' && /^\/[a-z]{2}\/song\/[^/]+\/\d+$/.test(url.pathname)) return { url: `https://music.apple.com${url.pathname}`, source: 'apple_music' };
   throw new WebError(400, 'Use a permanent YouTube, SoundCloud, Spotify track or Apple Music song URL');
 }
-const IMAGE_HOSTS = [
-  'i.ytimg.com', 'img.youtube.com',
-  'i.scdn.co', 'image-cdn-ak.spotifycdn.com', 'image-cdn-fa.spotifycdn.com', 'mosaic.scdn.co',
-  'images.genius.com',
-  'is1-ssl.mzstatic.com', 'is2-ssl.mzstatic.com', 'is3-ssl.mzstatic.com', 'is4-ssl.mzstatic.com', 'is5-ssl.mzstatic.com',
-  'i1.sndcdn.com', 'i2.sndcdn.com', 'i3.sndcdn.com', 'i4.sndcdn.com',
-];
-
-export function sanitizeThumbnailUrl(value: unknown): string | null {
-  if (typeof value !== 'string' || !value.trim() || value.length > 2048) return null;
-  try {
-    const parsed = new URL(value.trim());
-    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || !IMAGE_HOSTS.includes(parsed.hostname)) return null;
-    parsed.search = '';
-    parsed.hash = '';
-    return parsed.toString();
-  } catch { return null; }
-}
+export { sanitizeThumbnailUrl } from '../music/artwork';
 const safeThumbnail = sanitizeThumbnailUrl;
 
 function cleanMetadataText(value: unknown, max: number): string {
@@ -191,20 +175,13 @@ export function playlistImportCommitPayload(value: unknown): {
 }
 export function publicPlayUrl(value: string): string {
   try { return publicTrackUrl(value).url; } catch { /* Albums and playlists are playback inputs, not saved tracks. */ }
-  let url: URL;
-  try { url = new URL(value); } catch { throw new WebError(400, 'Invalid media URL'); }
-  if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash) throw new WebError(400, 'Use a public HTTPS media link');
-  if (['youtube.com', 'www.youtube.com', 'music.youtube.com'].includes(url.hostname) && url.pathname === '/playlist' && /^[\w-]{10,100}$/.test(url.searchParams.get('list') ?? '')) return `https://www.youtube.com/playlist?list=${url.searchParams.get('list')!}`;
-  if (url.hostname === 'open.spotify.com' && /^\/(intl-[a-z]{2}\/)?(album|playlist)\/[A-Za-z0-9]{22}$/.test(url.pathname)) return `${url.origin}${url.pathname}`;
-  if (['soundcloud.com', 'www.soundcloud.com'].includes(url.hostname) && /^\/[\w-]+\/sets\/[\w-]+\/?$/.test(url.pathname)) return `https://soundcloud.com${url.pathname}`;
-  if (url.hostname === 'music.apple.com' && /^\/[a-z]{2}\/(album|playlist)\/[^/]+\/[A-Za-z\d.-]+$/.test(url.pathname)) return `${url.origin}${url.pathname}`;
-  throw new WebError(400, 'Use a public YouTube, SoundCloud, Spotify or Apple Music link');
+  try { return publicPlaybackUrl(value); } catch { throw new WebError(400, 'Use a public YouTube, SoundCloud, Spotify or Apple Music link'); }
 }
 export function musicAction(value: unknown): MusicAction {
   const item = object(value);
   switch (item['action']) {
     case 'play': {
-      const query = text(item['query'], 500, 'query');
+      const query = playbackQuery(item['query']);
       // Search strings are allowed; URLs must target recognized public sources.
       const normalizedQuery = /^[a-z][a-z\d+.-]*:|^\/\//i.test(query) ? publicPlayUrl(query) : query;
       const track = item['track'] !== undefined ? trackMetadata(item['track']) : undefined;

@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import * as schema from './schema';
 import type { Track } from './contracts';
-import { youtubeThumbnail } from '../music/artwork';
+import { sanitizeThumbnailUrl, youtubeThumbnail } from '../music/artwork';
 
 export interface WebUser { id: string; username: string; avatar: string | null }
 export interface WebSession { user: WebUser; tokenHash: string; csrfHash: string; expiresAt: number }
@@ -16,10 +16,9 @@ export class WebError extends Error {
   constructor(public readonly statusCode: number, message: string) { super(message); }
 }
 export function hashToken(token: string): string { return createHash('sha256').update(token).digest('hex'); }
-export function csrfTokenFor(token: string): string { return hashToken(`dashboard-csrf:${token}`); }
 
 function track(row: TrackMetadata & { id: string }): Track {
-  return { id: row.id, url: row.url, title: row.title, artist: row.artist, duration: row.duration, thumbnail: row.thumbnail || youtubeThumbnail(row.source, undefined, row.url) || null, source: row.source };
+  return { id: row.id, url: row.url, title: row.title, artist: row.artist, duration: row.duration, thumbnail: sanitizeThumbnailUrl(row.thumbnail) || youtubeThumbnail(row.source, undefined, row.url) || null, source: row.source };
 }
 
 /** Synchronous, short SQLite transactions never contain network or playback work. */
@@ -29,9 +28,10 @@ export class WebDatabase {
   close(): void { this.sqlite.close(); }
   createSession(user: WebUser, now: number, ttlMs: number): { token: string; csrfToken: string } {
     const token = randomBytes(32).toString('base64url');
-    const csrfToken = csrfTokenFor(token);
+    const csrfToken = randomBytes(32).toString('hex');
     this.orm.transaction(tx => {
       tx.insert(schema.users).values({ ...user, updatedAt: now }).onConflictDoUpdate({ target: schema.users.id, set: { username: user.username, avatar: user.avatar, updatedAt: now } }).run();
+      tx.delete(schema.webSessions).where(eq(schema.webSessions.userId, user.id)).run();
       tx.delete(schema.webSessions).where(lte(schema.webSessions.expiresAt, now)).run();
       tx.insert(schema.webSessions).values({ tokenHash: hashToken(token), csrfHash: hashToken(csrfToken), userId: user.id, createdAt: now, expiresAt: now + ttlMs }).run();
     });
@@ -41,11 +41,16 @@ export class WebDatabase {
     if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
     const row = this.orm.select({ session: schema.webSessions, user: schema.users }).from(schema.webSessions).innerJoin(schema.users, eq(schema.users.id, schema.webSessions.userId)).where(eq(schema.webSessions.tokenHash, hashToken(token))).get();
     if (!row) return null;
+    // Retire sessions issued before independent random CSRF secrets were introduced.
+    if (row.session.csrfHash === hashToken(hashToken(`dashboard-csrf:${token}`))) { this.deleteSession(token); return null; }
     if (row.session.expiresAt <= now) { this.deleteSession(token); return null; }
     return { user: { id: row.user.id, username: row.user.username, avatar: row.user.avatar }, tokenHash: row.session.tokenHash, csrfHash: row.session.csrfHash, expiresAt: row.session.expiresAt };
   }
   deleteSession(token: string | undefined): void {
     if (token) this.orm.delete(schema.webSessions).where(eq(schema.webSessions.tokenHash, hashToken(token))).run();
+  }
+  deleteUserSessions(userId: string): void {
+    this.orm.delete(schema.webSessions).where(eq(schema.webSessions.userId, userId)).run();
   }
   purgeExpired(now: number): void { this.orm.delete(schema.webSessions).where(lte(schema.webSessions.expiresAt, now)).run(); }
   ensureGuild(guildId: string, now: number): void {
@@ -88,12 +93,12 @@ export class WebDatabase {
   }
   renamePlaylist(userId: string, guildId: string, id: string, name: string): SavedPlaylist {
     this.getPlaylist(userId, guildId, id);
-    this.orm.update(schema.playlists).set({ name }).where(eq(schema.playlists.id, id)).run();
+    this.orm.update(schema.playlists).set({ name }).where(and(eq(schema.playlists.id, id), eq(schema.playlists.userId, userId), eq(schema.playlists.guildId, guildId))).run();
     return this.getPlaylist(userId, guildId, id);
   }
   deletePlaylist(userId: string, guildId: string, id: string): void {
     this.getPlaylist(userId, guildId, id);
-    this.orm.delete(schema.playlists).where(eq(schema.playlists.id, id)).run();
+    this.orm.delete(schema.playlists).where(and(eq(schema.playlists.id, id), eq(schema.playlists.userId, userId), eq(schema.playlists.guildId, guildId))).run();
   }
   addPlaylistTrack(userId: string, guildId: string, playlistId: string, metadata: TrackMetadata): Track {
     const playlist = this.getPlaylist(userId, guildId, playlistId);

@@ -1,3 +1,4 @@
+export { sanitizeThumbnailUrl } from '../../../src/music/artwork';
 /** YouTube's missing-image JPEG is 120x90 even for a requested higher-quality image. */
 export function unavailableYouTubeImage(image: HTMLImageElement): boolean {
   if (image.naturalWidth !== 120 || image.naturalHeight !== 90) return false;

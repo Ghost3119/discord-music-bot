@@ -55,6 +55,7 @@ export function useSonoraApp() {
 
   async function mutate(path: string, method: string, data?: unknown): Promise<unknown> {
     if (!session) return undefined;
+    if (/\/(?:playlists|favorites)(?:\/|$)/.test(path) && state?.permissions?.canManageLibrary !== true) throw new Error('No tienes permiso para modificar la biblioteca.');
     return await operationScope.current.run(() =>
       api(
         path,
@@ -67,13 +68,15 @@ export function useSonoraApp() {
     );
   }
 
-  const library = useLibrary({ guildId, session, reportError, run, mutate, setNotice, setView, refresh });
+  const library = useLibrary({ guildId, session, canManageLibrary: state?.permissions?.canManageLibrary === true, canControl: state?.permissions?.canControl === true, reportError, run, mutate, setNotice, setView, refresh });
 
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(''), 4000);
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => { if (view === 'diagnostics' && state?.permissions?.canViewDiagnostics !== true) setView('player'); }, [view, state?.permissions?.canViewDiagnostics]);
 
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
   useEffect(() => {
@@ -103,6 +106,7 @@ export function useSonoraApp() {
   }
 
   function action(command: MusicAction) {
+    if (state?.permissions?.canControl !== true) return Promise.resolve();
     const originGuild = guildId;
     return run(command.action, async () => {
       if (!session) return;
@@ -123,7 +127,7 @@ export function useSonoraApp() {
 
   async function addToQueue(event: FormEvent) {
     event.preventDefault();
-    if (!query.trim()) return;
+    if (!query.trim() || state?.permissions?.canControl !== true) return;
     const text = query.trim();
     await run('play', async () => {
       await mutate(`/api/guilds/${guildId}/actions`, 'POST', { action: 'play', query: text });
@@ -134,6 +138,7 @@ export function useSonoraApp() {
   }
 
   async function enqueueTrack(track: Track) {
+    if (state?.permissions?.canControl !== true) return;
     await run('play', async () => {
       await mutate(`/api/guilds/${guildId}/actions`, 'POST', {
         action: 'play',
@@ -171,7 +176,7 @@ export function useSonoraApp() {
     refresh,
     setNotice,
     current,
-    controlsDisabled: !!busy || loggingOut || !state,
+    controlsDisabled: !!busy || loggingOut || state?.permissions?.canControl !== true,
     playing: state?.status === 'playing',
     volumeDraft,
     setVolumeDraft,

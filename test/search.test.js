@@ -57,7 +57,7 @@ test('an empty YouTube search resolves through Music with metadata and shares it
   }
 });
 
-test('Music fallback preserves special characters and explicit YouTube search prefixes', async () => {
+test('Music fallback preserves special characters and rejects user-supplied extractor prefixes', async () => {
   const plugin = new YtDlpSearchPlugin();
   const text = 'artista & canción #1 + remix';
   plugin.fetchInfo = async (input) => {
@@ -66,7 +66,8 @@ test('Music fallback preserves special characters and explicit YouTube search pr
     return { entries: [track] };
   };
 
-  const song = await plugin.searchSong(`ytsearch1:${text}`, { metadata: { searchSource: 'soundcloud' } });
+  await assert.rejects(plugin.searchSong(`ytsearch1:${text}`, { metadata: { searchSource: 'soundcloud' } }), { errorCode: 'INVALID_ACTION' });
+  const song = await plugin.searchSong(text, { metadata: { searchSource: 'youtube' } });
   assert.equal(song.id, track.id);
 });
 

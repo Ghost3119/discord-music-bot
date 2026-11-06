@@ -30,7 +30,7 @@ El bot puede reproducir musica usando enlaces directos y busquedas por nombre.
 | SoundCloud | Si | Soporta URLs directas y busqueda usando la opcion `fuente: SoundCloud`. |
 | Spotify | Parcial | Lee metadata de canciones, albums y playlists, pero no reproduce audio directo desde Spotify. Busca una version reproducible en YouTube o SoundCloud. |
 | Apple Music | Parcial | Lee informacion del enlace y busca una version reproducible en YouTube o SoundCloud. |
-| Otros sitios | Parcial | URLs compatibles con `yt-dlp` pueden funcionar, dependiendo del sitio. |
+| Otros sitios | No | Solo se admiten enlaces HTTPS públicos de los cuatro proveedores indicados. No se siguen enlaces arbitrarios ni acortadores externos. |
 
 Spotify y Apple Music se usan como entrada de metadata. El audio final viene de una fuente reproducible compatible con `yt-dlp`.
 
@@ -228,7 +228,7 @@ Este comando no vigila los archivos ni recarga cambios: compilar mientras está 
 
 El supervisor funciona mientras `npm run start` siga activo. Para arrancar después de reiniciar la máquina, configura ese comando en el servicio de tu entorno; en una PC, evita la suspensión mientras el bot deba estar disponible.
 
-yt-dlp ya no se descarga al arrancar: evita que una actualización o una descarga fallida bloquee el inicio. Actualízalo durante mantenimiento con `npm run update:ytdlp` y reinicia el bot después de verificarlo.
+yt-dlp ya no se descarga al arrancar: evita que una actualización o una descarga fallida bloquee el inicio. Actualízalo durante mantenimiento con `npm run update:ytdlp -- --version YYYY.MM.DD --sha256 DIGEST_REVISADO`. El script descarga la versión indicada y verifica el SHA-256 antes de reemplazar el binario. Obtén el digest de los checksums firmados oficiales; después reinicia el bot.
 
 ## Activación y vuelta a la versión anterior
 
@@ -279,7 +279,7 @@ El backend verifica membresía y permisos en cada servidor; salir de un servidor
 | `voice` | Añade controles de reproducción y cola cuando cumple los requisitos del canal de voz. |
 | `admin` | Añade acceso a salud, incidentes y configuración; también necesita cumplir los requisitos de voz para controlar música. |
 
-Los administradores se configuran mediante `WEB_ADMIN_USER_IDS`. En modo `allowlist`, si se omite, se conserva la lista de usuarios autorizados como administradores. La [guía del dashboard](docs/DASHBOARD.md) detalla las condiciones de cada rol, OAuth, CSRF y revocación.
+Los administradores se configuran mediante `WEB_ADMIN_USER_IDS`. Si se omite o queda vacía, ningún usuario obtiene permisos de administrador. La [guía del dashboard](docs/DASHBOARD.md) detalla las condiciones de cada rol, OAuth, CSRF y revocación.
 
 ### Frontend modular
 
@@ -351,7 +351,7 @@ Abre `http://127.0.0.1:4175`. El fixture utiliza los puertos locales 4174/4175, 
 | `npm run dev:web` | Inicia Vite local en el puerto 5173. |
 | `npm run start` | Ejecuta la versión compilada con supervisor y reinicio automático. |
 | `npm run start:once` | Ejecuta un solo proceso, para usar con un supervisor externo. |
-| `npm run update:ytdlp` | Actualiza yt-dlp durante mantenimiento, con un límite de 60 segundos. |
+| `npm run update:ytdlp -- --version YYYY.MM.DD --sha256 DIGEST` | Descarga una versión fijada y solo reemplaza yt-dlp si coincide el SHA-256 revisado. |
 | `npm test` | Compila el bot y ejecuta pruebas backend y frontend. |
 | `npm run test:bot` | Compila y ejecuta únicamente las pruebas del bot y backend. |
 | `npm run test:web` | Ejecuta únicamente las pruebas del frontend con Vitest. |

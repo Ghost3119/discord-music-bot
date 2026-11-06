@@ -14,7 +14,8 @@ import { controlError, installQueueControlGuard, musicSessionVersion, withMusicA
 import { requestPlayback } from './playbackRequest';
 import { YtDlpSearchPlugin } from './ytDlpSearchPlugin';
 import { playbackIdentity } from '../web/playback-identity';
-import { youtubeThumbnail } from './artwork';
+import { sanitizeThumbnailUrl, youtubeThumbnail } from './artwork';
+import { playbackQuery } from './mediaPolicy';
 
 export interface MusicBridgeOptions {
   accessMode?: WebAccessMode;
@@ -43,14 +44,9 @@ function registerClientInvalidator(client: Client, invalidate: (guildId?: string
 }
 
 function artwork(input: unknown): string | null {
-  if (typeof input !== 'string' || input.length > 2000) return null;
-  try {
-    const url = new URL(input);
-    const allowed = ['ytimg.com', 'scdn.co', 'spotifycdn.com', 'sndcdn.com', 'mzstatic.com'];
-    if (url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash &&
-      allowed.some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) return url.href;
-  } catch { /* Artwork is optional; signed media URLs are never exposed. */ }
-  return null;
+  if (typeof input !== 'string') return null;
+  try { const url = new URL(input); if (url.search || url.hash) return null; } catch { return null; }
+  return sanitizeThumbnailUrl(input);
 }
 function track(song: Song): Track {
   return { id: /^[\w-]{1,128}$/.test(song.id) ? song.id : '', url: publicMusicUrl(song.url) ?? '',
@@ -83,25 +79,7 @@ function integer(value: unknown, minimum: number, maximum: number): number {
   }
   return value;
 }
-function webQuery(input: string | undefined): string {
-  const query = input?.trim();
-  if (!query || query.length > 1000) throw controlError('INVALID_ACTION', 'Escribe una búsqueda o enlace válido.');
-  if (!/^[a-z][a-z\d+.-]*:/i.test(query)) return query;
-  try {
-    const url = new URL(query), host = url.hostname.toLowerCase();
-    if (url.protocol !== 'https:' || url.username || url.password || url.port) throw new Error('Invalid origin');
-    const supported = ['youtube.com', 'www.youtube.com', 'music.youtube.com'].includes(host)
-      ? url.pathname === '/watch' && /^[\w-]{11}$/.test(url.searchParams.get('v') ?? '') || url.pathname === '/playlist' && /^[\w-]{1,100}$/.test(url.searchParams.get('list') ?? '') || /^\/(?:shorts|live)\/[\w-]{11}$/.test(url.pathname)
-      : host === 'youtu.be' ? /^\/[\w-]{11}$/.test(url.pathname)
-        : ['soundcloud.com', 'www.soundcloud.com'].includes(host) ? /^\/[\w-]+\/(?:[\w-]+|sets\/[\w-]+)\/?$/.test(url.pathname)
-          : host === 'open.spotify.com' ? /^\/(?:intl-[a-z]{2}\/)?(?:track|album|playlist)\/[a-zA-Z0-9]+$/.test(url.pathname)
-            : host === 'music.apple.com' && /^\/[a-z]{2}\/(?:album|song|playlist)\/[\w%./-]+$/.test(url.pathname);
-    if (!supported) throw new Error('Unsupported music link');
-    for (const key of [...url.searchParams.keys()]) if (!['v', 'list', 'i'].includes(key)) url.searchParams.delete(key);
-    url.hash = '';
-    return url.href;
-  } catch { throw controlError('INVALID_ACTION', 'Usa una búsqueda o un enlace público de YouTube, SoundCloud, Spotify o Apple Music.'); }
-}
+const webQuery = playbackQuery;
 
 /** User IDs originate in the server session. Membership and voice permissions always come from Discord. */
 export function createMusicBridge(client: Client, history?: HistoryStore, options?: MusicBridgeOptions): MusicBridge {
@@ -111,12 +89,9 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
   const snapshotEpoch = randomUUID();
   playbackIdentity(distube, undefined);
   const cacheTtlMs = options ? Math.max(0, options.membershipCacheTtlMs ?? 5_000) : 0;
-  const allowedGuilds = options?.allowedGuildIds
-    ? new Set(options.allowedGuildIds)
-    : options?.accessMode === 'guild_members' ? new Set<string>() : null;
-  const adminUsers = options?.adminUserIds
-    ? new Set(options.adminUserIds)
-    : options?.accessMode === 'guild_members' ? new Set<string>() : null;
+  const guildFilter = new Set(options?.allowedGuildIds ?? []);
+  const allowedGuilds = guildFilter.size || options?.accessMode === 'guild_members' ? guildFilter : null;
+  const adminUsers = new Set(options?.adminUserIds ?? []);
   const memberCache = new Map<string, { member: GuildMember; expiresAt: number }>();
   const inFlight = new Map<string, Promise<GuildMember | null>>();
   // Playlist loading shares one cancellation signal across tracks. Preserve its first playback session.
@@ -138,7 +113,7 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
 
   function buildPermissions(userId: string, member: GuildMember, queue?: Queue): GuildPermissions {
     const canControl = canControlVoice(client, member, queue);
-    const isAdmin = adminUsers ? adminUsers.has(userId) : true;
+    const isAdmin = adminUsers.has(userId);
     return {
       role: isAdmin ? 'admin' : canControl ? 'voice' : 'member',
       isMember: true,

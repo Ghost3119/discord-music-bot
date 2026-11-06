@@ -57,7 +57,7 @@ test('an interactive search takes the next global slot ahead of queued playlist 
       if (!pending.delete(finish)) return;
       const title = input.replace(/^(ytsearch|scsearch)\d*:/, '');
       child.stdout.emit('data', JSON.stringify({ entries: [{ id: input, title, extractor: 'youtube',
-        webpage_url: `https://www.youtube.com/watch?v=${encodeURIComponent(input)}` }] }));
+        webpage_url: `https://www.youtube.com/watch?v=${require('node:crypto').createHash('sha256').update(input).digest('hex').slice(0, 11)}` }] }));
       child.emit('close', 0);
     };
     options.signal.addEventListener('abort', () => {
@@ -66,7 +66,7 @@ test('an interactive search takes the next global slot ahead of queued playlist 
     pending.add(finish); spawned.push({ input, finish });
     return child;
   });
-  const blockers = Array.from({ length: 3 }, (_, index) => runYtDlp(`blocker-${index}`));
+  const blockers = Array.from({ length: 3 }, (_, index) => runYtDlp(`ytsearch5:blocker-${index}`));
   const plugin = new YtDlpSearchPlugin();
   const batches = ['A', 'B', 'C'].map(name => plugin.warmSearchCache([`Warm ${name} 1`, `Warm ${name} 2`], {}));
   const interactive = plugin.searchSong('Interactive artist song', {});
@@ -94,7 +94,7 @@ test('prewarming in many guilds cannot consume every global waiting position', a
     const finish = () => {
       if (!pending.delete(finish)) return;
       child.stdout.emit('data', JSON.stringify({ entries: [{ id: input, title: input,
-        extractor: 'youtube', webpage_url: `https://www.youtube.com/watch?v=${encodeURIComponent(input)}` }] }));
+        extractor: 'youtube', webpage_url: `https://www.youtube.com/watch?v=${require('node:crypto').createHash('sha256').update(input).digest('hex').slice(0, 11)}` }] }));
       child.emit('close', 0);
     };
     options.signal.addEventListener('abort', () => {
@@ -103,7 +103,7 @@ test('prewarming in many guilds cannot consume every global waiting position', a
     pending.add(finish); spawned.push({ input, finish });
     return child;
   });
-  const blockers = Array.from({ length: 3 }, (_, index) => runYtDlp(`blocker-${index}`));
+  const blockers = Array.from({ length: 3 }, (_, index) => runYtDlp(`ytsearch5:blocker-${index}`));
   const plugin = new YtDlpSearchPlugin();
   const batches = Array.from({ length: 25 }, (_, guild) => plugin.warmSearchCache([`Guild ${guild} warm1`, `Guild ${guild} warm2`], {}));
   let foregroundError;

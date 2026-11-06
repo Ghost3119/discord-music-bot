@@ -57,7 +57,7 @@ WEB_ADMIN_USER_IDS=tu_id_de_usuario_admin_opcional
 
 `WEB_CLIENT_SECRET` es el **Client Secret** de OAuth2, distinto del token del bot. `WEB_ALLOWED_USER_IDS` contiene IDs de personas autorizadas y `WEB_ALLOWED_GUILD_IDS` contiene IDs de servidores de Discord donde está el bot. Conserva los valores reales únicamente en `.env`.
 
-El flujo usa un cliente confidencial con `client_secret`, el scope `identify` y `state` aleatorio ligado a una cookie de un solo uso. No se guardan access/refresh tokens ni se descargan listas completas de miembros del servidor. Discord documenta este flujo en su [referencia de OAuth2](https://docs.discord.com/developers/topics/oauth2); no se presupone soporte PKCE en el flujo confidencial documentado.
+El flujo usa un cliente confidencial con `client_secret`, el scope `identify` y `state` aleatorio ligado a una cookie de un solo uso. No se guardan access/refresh tokens ni se descargan listas completas de miembros del servidor. Discord documenta este flujo en su [referencia de OAuth2](https://docs.discord.com/developers/topics/oauth2); se añade PKCE S256 con un verificador independiente por state, consumido antes del canje. Discord también documenta el [canje con PKCE para clientes confidenciales](https://docs.discord.com/developers/discord-social-sdk/development-guides/account-linking-on-mobile#authentication-flow-for-confidential-clients).
 
 **Versión compilada, como alternativa:** instala con `npm ci` y `npm run setup:web`, compila con `npm run build`, configura `WEB_ENABLED=true`, `WEB_ORIGIN=http://127.0.0.1:8080` y su callback en `.env`/Discord, e inicia **una sola instancia** con `npm run start`. Fastify sirve `frontend/dist` en el puerto 8080 y aplica migraciones al abrir SQLite. Este modo conserva el supervisor anterior y no ejecuta Vite. El build por sí solo no reinicia el bot.
 
@@ -70,6 +70,7 @@ El flujo usa un cliente confidencial con `client_secret`, el scope `identify` y 
 | `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID` | Configuración existente del bot; solo backend. |
 | `WEB_ENABLED` | `false` para el bot independiente; `npm run dev` lo habilita para su proceso hijo. |
 | `WEB_HOST` | `127.0.0.1`; escucha local. |
+| `WEB_BIND_PUBLIC` | `false`; requiere `true` explícito y origen HTTPS para escuchar fuera de loopback. |
 | `WEB_PORT` | `8080`. |
 | `WEB_DEV_PORT` | `5173`; puerto de Vite con el lanzador único. |
 | `WEB_ORIGIN` | `http://127.0.0.1:8080`; origen público exacto para cookies y CSRF. |
@@ -79,10 +80,10 @@ El flujo usa un cliente confidencial con `client_secret`, el scope `identify` y 
 | `WEB_ACCESS_MODE` | `allowlist` (predeterminado) o `guild_members` (autorización dinámica por membresía en servidores autorizados). |
 | `WEB_ALLOWED_USER_IDS` | IDs de usuario de Discord separados por comas; obligatorio cuando `WEB_ACCESS_MODE=allowlist`. |
 | `WEB_ALLOWED_GUILD_IDS` | IDs de servidores de Discord separados por comas; obligatorio cuando `WEB_ACCESS_MODE=guild_members` (y filtro opcional en `allowlist`). |
-| `WEB_ADMIN_USER_IDS` | IDs de usuarios administradores explícitos con acceso a diagnóstico y configuración. En `allowlist`, si se omite, conserva `WEB_ALLOWED_USER_IDS`. |
+| `WEB_ADMIN_USER_IDS` | IDs de usuarios administradores explícitos con acceso a diagnóstico y configuración. Si se omite o queda vacío, nadie es administrador. |
 | `WEB_MEMBERSHIP_CACHE_TTL_MS` | `5000`; caché breve en memoria (0–60000 ms) de membresía verificada, con invalidación inmediata ante expulsiones/salidas. |
 | `WEB_DATABASE_PATH` | `data/dashboard.sqlite`. |
-| `WEB_SESSION_TTL_HOURS` | `168`; expiración absoluta, máximo 30 días. |
+| `WEB_SESSION_TTL_HOURS` | `24`; expiración absoluta, máximo 30 días. Cada login revoca todas las sesiones anteriores del usuario. |
 
 Fuera de localhost se exige un origen HTTPS y cookies Secure. Si se utiliza un proxy inverso, termina TLS y reenvía al listener local. No se habilita CORS ni se confía en roles o canales enviados por React. Cada consulta de servidor comprueba membresía; cada control comprueba voz y sesión también después de esperar el bloqueo. Los secretos nunca tienen prefijo `VITE_`.
 
@@ -118,7 +119,8 @@ El reordenamiento exige todos los IDs exactamente una vez y cambia posiciones de
 | --- | --- |
 | `GET /auth/discord` | Inicio OAuth (`scope=identify`) y cookie de state. |
 | `GET /auth/discord/callback` | Intercambio del código, verificación de `allowlist` o membresía en `WEB_ALLOWED_GUILD_IDS` y creación de sesión. |
-| `POST /auth/logout` | Revoca la sesión y elimina cookie. |
+| `POST /auth/logout` | Revoca la sesión y elimina sus cookies. |
+| `POST /auth/logout/all` | Revoca todas las sesiones del usuario, cierra SSE y cancela operaciones pendientes. |
 | `GET /api/session` | Perfil, token CSRF, modo de acceso y rol de la sesión. |
 | `GET /api/config` | Configuración no sensible del panel (solo administrador explícito). |
 | `GET /api/guilds` | Servidores autorizados del bot a los que pertenece el usuario. |
@@ -163,7 +165,7 @@ Resultado del 15 de octubre de 2026, Windows y Node.js 24.14.0:
 | `git diff --check` | Sin errores de whitespace. |
 | Bundle React | Sin referencias a `DISCORD_TOKEN`, `WEB_CLIENT_SECRET` ni `SPOTIFY_CLIENT_SECRET`. |
 
-La huella de comandos permanece `3e86b2114dfce87c089fca414acbc597b3b22810bbb4f0273e3d576e927d168f`. Se añadieron pruebas para `WEB_ACCESS_MODE=guild_members` y compatibilidad con `allowlist`, filtrado por `WEB_ALLOWED_GUILD_IDS`, caché breve de membresía con invalidación por eventos y fallos de Discord REST, cierre de SSE al abandonar un servidor, permisos diferenciados entre servidores y separación de roles (`member`, `voice`, `admin`).
+El límite de 500 caracteres de `/play` modifica la definición registrada del comando; actualízala durante un despliegue autorizado. Se añadieron pruebas para `WEB_ACCESS_MODE=guild_members` y compatibilidad con `allowlist`, filtrado por `WEB_ALLOWED_GUILD_IDS`, caché breve de membresía con invalidación por eventos y fallos de Discord REST, cierre de SSE al abandonar un servidor, permisos diferenciados entre servidores y separación de roles (`member`, `voice`, `admin`).
 
 ## Interfaz comprobada
 
@@ -184,3 +186,33 @@ Para repetir la revisión aislada después de compilar, ejecuta `node test/helpe
 ## Archivos y commits
 
 La lista exacta de archivos añadidos/modificados respecto de `main` está en [DASHBOARD_CHANGED_FILES.txt](DASHBOARD_CHANGED_FILES.txt). Los cambios están separados en commits locales: verificación inicial, infraestructura y biblioteca, operaciones musicales compartidas, interfaz y documentación/validación. Ninguno se publicó a un remoto.
+
+## Endurecimiento de seguridad
+
+`npm run dev` no debe exponerse por túnel sin autenticación externa: OAuth protege la API,
+pero no los archivos y módulos que sirve Vite. Usa el build de producción detrás del proxy
+para acceso habitual. Vite tiene un mínimo de 7.3.7 y los lockfiles fijan las versiones revisadas.
+
+Las cookies de sesión y CSRF son HttpOnly y SameSite=Lax; Lax permite el callback OAuth
+como navegación desde Discord. Con HTTPS usan el prefijo __Host-, Secure y Path=/, sin Domain.
+CSRF es aleatorio e independiente, se conserva en una cookie HttpOnly y solo se devuelve
+tras validar la sesión. La API del navegador lo mantiene en memoria. Las sesiones anteriores
+al cambio requieren volver a entrar; no hay migración destructiva de playlists ni favoritos.
+Una configuración existente con WEB_SESSION_TTL_HOURS=168 conserva ese valor explícito;
+cámbialo a 24 si quieres adoptar el nuevo valor predeterminado.
+
+Los límites globales (120/min) y por ruta se aplican por usuario autenticado, con IP como
+fallback; OAuth mantiene límites por IP y no se confía en X-Forwarded-For. Resolver URLs
+(20/min), sesión/logout (30/min), estado y biblioteca (60/min) tienen presupuestos propios.
+Los GET/HEAD de búsqueda, sugerencias, letras y resolución exigen x-csrf-token, igual que
+las mutaciones. También se conserva POST /tracks/resolve con validación de Origin y CSRF.
+
+Las cabeceras de aislamiento, CSP, política de permisos y HSTS se comparten con SSE.
+Los estilos inline se mantienen para los controles y fondos dinámicos. HSTS no fuerza
+includeSubDomains/preload sobre dominios del operador. Los logs de auditoría incluyen
+usuario, servidor, acción/ruta, estado HTTP y fecha, sin cuerpos ni tokens.
+
+El supervisor permite hasta 10 reinicios por 10 minutos y valida parentesco y fecha de
+creación de procesos antes de terminar workers registrados por IPC. La actualización de
+yt-dlp requiere versión y SHA-256 revisados; no ejecuta --update. El postinstall del wrapper
+sigue siendo una dependencia externa y no queda autenticado por esa verificación manual.

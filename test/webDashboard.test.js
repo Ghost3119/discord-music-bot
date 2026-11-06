@@ -22,11 +22,12 @@ function snapshot() { return { guildId: GUILD, status: 'idle', current: null, qu
 async function harness(t, overrides = {}) {
   const state = { time: 1000000, oauthUser: USER, calls: [], permissions: true, snapshots: 0, fetches: 0, control: null };
   const db = overrides.database || openWebDatabase(':memory:');
-  const config = { enabled: true, host: '127.0.0.1', port: 8080, origin: ORIGIN, oauthClientId: '555555555555555555', oauthClientSecret: 'server-only-secret', oauthRedirectUri: `${ORIGIN}/auth/discord/callback`, allowedUserIds: [USER, OTHER], databasePath: ':memory:', sessionTtlMs: 60000, secureCookies: false, ...overrides.config };
+  const config = { enabled: true, host: '127.0.0.1', port: 8080, origin: ORIGIN, oauthClientId: '555555555555555555', oauthClientSecret: 'server-only-secret', oauthRedirectUri: `${ORIGIN}/auth/discord/callback`, allowedUserIds: [USER, OTHER], adminUserIds: [USER, OTHER], databasePath: ':memory:', sessionTtlMs: 60000, secureCookies: false, ...overrides.config };
   const bridge = {
     async assertGuildAccess(_userId, guildId) { if (!state.permissions || guildId !== GUILD) throw denied(); },
     async listGuilds() { return state.permissions ? [{ id: GUILD, name: 'Music server', icon: null }] : []; },
     async getState() { state.snapshots++; return {...snapshot(),autoplay:state.radio ?? false}; },
+    async getPermissions() { return { canControl: true, canManageLibrary: true }; },
     async control(userId, guildId, action, signal) { state.calls.push({ userId, guildId, action, signal }); if (state.control) await state.control(signal);
       if(action.action==='autoplay'){state.radio=action.enabled;return{autoplay:state.radio};}
       if(action.action==='recommend')return{recommendationsAdded:2};
@@ -59,7 +60,7 @@ async function harness(t, overrides = {}) {
     const response = await finishLogin(await startLogin());
     assert.equal(response.statusCode, 302, response.body);
     const token = response.cookies.find(item => item.name === 'music_session').value;
-    const cookie = `music_session=${token}`;
+    const cookie = `music_session=${token}; music_csrf=${response.cookies.find(item => item.name === 'music_csrf').value}`;
     const session = await app.inject({ url: '/api/session', headers: { cookie } });
     return { cookie, token, csrf: session.json().csrfToken };
   }
@@ -134,7 +135,7 @@ test('persistent sessions expire and logout invalidates cookies and sessions; mu
   assert.equal(h.state.calls.length, 1);
   const logout = await h.mutate(auth, 'POST', '/auth/logout');
   assert.equal(logout.statusCode, 200);
-  assert.equal((await h.app.inject({ url: '/api/session', headers: { cookie: auth.cookie } })).statusCode, 401);
+  assert.equal((await h.app.inject({ url: '/api/session', headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf } })).statusCode, 401);
   const next = await h.login();
   h.state.time += 60001;
   assert.equal((await h.app.inject({ url: '/api/session', headers: { cookie: next.cookie } })).statusCode, 401);
@@ -151,11 +152,11 @@ test('every guild operation validates live access and library ownership across u
   assert.equal((await h.mutate(other, 'DELETE', `${BASE}/playlists/${id}`)).statusCode, 404);
   assert.equal((await h.mutate(other, 'POST', `${BASE}/playlists/${id}/tracks`, TRACK)).statusCode, 404);
   const unknownGuild = `/api/guilds/${OTHER_GUILD}`;
-  assert.equal((await h.app.inject({ url: `${unknownGuild}/state`, headers: { cookie: auth.cookie } })).statusCode, 403);
+  assert.equal((await h.app.inject({ url: `${unknownGuild}/state`, headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf } })).statusCode, 403);
   assert.equal((await h.mutate(auth, 'POST', `${unknownGuild}/favorites`, TRACK)).statusCode, 403);
   h.state.permissions = false;
   assert.equal((await h.mutate(auth, 'POST', `${BASE}/actions`, { action: 'skip' })).statusCode, 403);
-  assert.equal((await h.app.inject({ url: `${BASE}/playlists`, headers: { cookie: auth.cookie } })).statusCode, 403);
+  assert.equal((await h.app.inject({ url: `${BASE}/playlists`, headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf } })).statusCode, 403);
 });
 
 test('playlists reorder transactionally, compact after removal, reject streams, and favorites deduplicate', async t => {
@@ -256,6 +257,9 @@ test('SSE synchronizes initial state, updates, revalidates permissions and clean
   await h.app.listen({ host: '127.0.0.1', port: 0 });
   const stream = await liveEvent(h.app, auth.cookie);
   assert.match(stream.first, /event: state\ndata:/);
+  assert.equal(stream.response.headers['x-frame-options'], 'DENY');
+  assert.equal(stream.response.headers['cross-origin-opener-policy'], 'same-origin');
+  assert.match(stream.response.headers['content-security-policy'], /frame-ancestors 'none'/);
   assert.equal(JSON.parse(stream.first.split('data: ')[1]).guildId, GUILD);
   const next = once(stream.response, 'data');
   await next;
@@ -284,7 +288,7 @@ test('SSE sessions expire during a connection and excess connections are rejecte
   await h.app.listen({ host: '127.0.0.1', port: 0 });
   const clients = [];
   for (let i = 0; i < 4; i++) clients.push(await liveEvent(h.app, auth.cookie));
-  const rejected = await h.app.inject({ url: `${BASE}/events`, headers: { cookie: auth.cookie } });
+  const rejected = await h.app.inject({ url: `${BASE}/events`, headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf } });
   assert.equal(rejected.statusCode, 429);
   const ends = clients.map(client => once(client.response, 'end'));
   h.state.time += 60001;
@@ -394,7 +398,7 @@ test('OAuth network failures are sanitized and login endpoints are rate limited'
   const response = await h.finishLogin(await h.startLogin());
   assert.equal(response.statusCode, 500);
   assert.equal(response.body.includes('very-private'), false);
-  for (let i = 0; i < 9; i++) assert.equal((await h.app.inject('/auth/discord')).statusCode, 302);
+  for (let i = 0; i < 4; i++) assert.equal((await h.app.inject('/auth/discord')).statusCode, 302);
   assert.equal((await h.app.inject('/auth/discord')).statusCode, 429);
 });
 
@@ -411,11 +415,22 @@ test('30 day sessions do not overflow operation timers and prototype error codes
   }
 });
 
+test('unknown provider 4xx and internal WebError 5xx never expose private messages', async t => {
+  const { WebError } = require('../dist/web/database');
+  const h = await harness(t), auth = await h.login();
+  for (const error of [Object.assign(new Error('private-provider-detail'), { statusCode: 422 }), new WebError(502, 'private-provider-detail')]) {
+    h.state.control = async () => { throw error; };
+    const response = await h.mutate(auth, 'POST', `${BASE}/actions`, { action: 'pause' });
+    assert.equal(response.statusCode, error.statusCode);
+    assert.doesNotMatch(response.body, /private-provider-detail/);
+  }
+});
+
 test('configuration supports allowlist by default and validates guild_members mode and admin IDs', () => {
   const baseEnv = { WEB_ENABLED: 'true', CLIENT_ID: '555555555555555555', WEB_CLIENT_SECRET: 'secret' };
   const allowlist = readWebConfig({ ...baseEnv, WEB_ALLOWED_USER_IDS: USER });
   assert.equal(allowlist.accessMode, 'allowlist');
-  assert.deepEqual(allowlist.adminUserIds, [USER]);
+  assert.deepEqual(allowlist.adminUserIds, []);
 
   const dynamic = readWebConfig({ ...baseEnv, WEB_ACCESS_MODE: 'guild_members', WEB_ALLOWED_GUILD_IDS: `${GUILD}, ${OTHER_GUILD}`, WEB_ADMIN_USER_IDS: USER });
   assert.equal(dynamic.accessMode, 'guild_members');
@@ -486,7 +501,7 @@ test('guild_members mode authorizes members of allowed guilds, rejects external 
   const memberRes = await attemptLogin(USER);
   assert.equal(memberRes.statusCode, 302);
   const token = memberRes.cookies.find(item => item.name === 'music_session').value;
-  const cookie = `music_session=${token}`;
+  const cookie = `music_session=${token}; music_csrf=${memberRes.cookies.find(item => item.name === 'music_csrf').value}`;
   const sessionRes = await app.inject({ url: '/api/session', headers: { cookie } });
   assert.equal(sessionRes.statusCode, 200);
   assert.equal(sessionRes.json().accessMode, 'guild_members');
@@ -569,7 +584,7 @@ test('two servers with different permissions, voice channel requirement, and rol
     const stateCookie = start.cookies.find(item => item.name === 'music_oauth_state').value;
     const cb = await app.inject({ url: `/auth/discord/callback?code=ok&state=${state}`, headers: { cookie: `music_oauth_state=${stateCookie}` } });
     const token = cb.cookies.find(item => item.name === 'music_session').value;
-    const cookie = `music_session=${token}`;
+    const cookie = `music_session=${token}; music_csrf=${cb.cookies.find(item => item.name === 'music_csrf').value}`;
     const session = (await app.inject({ url: '/api/session', headers: { cookie } })).json();
     return { cookie, csrf: session.csrfToken, session };
   }
@@ -637,7 +652,7 @@ test('Discord REST unavailability denies login and active guild access, and leav
   const ended = once(stream.response, 'end');
   userGuilds.delete(GUILD);
   h.state.permissions = false;
-  assert.equal((await h.app.inject({ url: `${BASE}/state`, headers: { cookie: auth.cookie } })).statusCode, 403);
+  assert.equal((await h.app.inject({ url: `${BASE}/state`, headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf } })).statusCode, 403);
   await ended;
 
   // When Discord REST fails to confirm membership during login, login is denied (fail-closed)
@@ -679,7 +694,7 @@ test('track URL resolution auto-fills metadata for YouTube/Spotify and playlist 
   // 1. Resolve track metadata via GET /api/guilds/:guildId/tracks/resolve
   const ytResolved = await h.app.inject({
     url: `${BASE}/tracks/resolve?url=${encodeURIComponent('https://www.youtube.com/watch?v=dQw4w9WgXcQ')}`,
-    headers: { cookie: auth.cookie },
+    headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
   });
   assert.equal(ytResolved.statusCode, 200);
   assert.equal(ytResolved.json().track.title, 'Blessd - QUEMAROPA (Video Oficial)');
@@ -689,7 +704,7 @@ test('track URL resolution auto-fills metadata for YouTube/Spotify and playlist 
 
   const spResolved = await h.app.inject({
     url: `${BASE}/tracks/resolve?url=${encodeURIComponent('https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC')}`,
-    headers: { cookie: auth.cookie },
+    headers: { cookie: auth.cookie, 'x-csrf-token': auth.csrf },
   });
   assert.equal(spResolved.statusCode, 200);
   assert.equal(spResolved.json().track.title, 'Xapiadora');
@@ -790,7 +805,8 @@ test('playlist load supports 50, 51, 139 and 500 tracks, preserves order and dup
   assert.deepEqual(partialRes.json(), { ok: true, loaded: 137, total: 139, failed: 2 });
 
   // A playlist exceeding 500 tracks in storage is rejected with 400
-  const overLimit = h.db.createPlaylist(USER, GUILD, 'Over 500', h.state.time++);
+  const otherAuth = await h.login(OTHER);
+  const overLimit = h.db.createPlaylist(OTHER, GUILD, 'Over 500', h.state.time++);
   const insertStmt = h.db.sqlite.prepare(
     'INSERT INTO playlist_tracks (id, playlist_id, position, url, title, artist, duration, thumbnail, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
   );
@@ -805,6 +821,8 @@ test('playlist load supports 50, 51, 139 and 500 tracks, preserves order and dup
     remoteAddress: '127.0.0.2',
     headers: { cookie: auth.cookie, origin: ORIGIN, 'x-csrf-token': auth.csrf },
   });
-  assert.equal(overRes.statusCode, 400);
-  assert.match(overRes.json().error, /1–500/);
+  assert.equal(overRes.statusCode, 429, 'Changing IP does not reset the authenticated user budget');
+  const oversized = await h.mutate(otherAuth, 'POST', `${BASE}/playlists/${overLimit.id}/load`);
+  assert.equal(oversized.statusCode, 400);
+  assert.match(oversized.json().error, /1–500/);
 });

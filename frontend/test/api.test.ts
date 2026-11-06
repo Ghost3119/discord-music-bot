@@ -3,6 +3,18 @@ import { api, ApiError, trackMetadata } from '../src/lib/api';
 
 afterEach(() => vi.unstubAllGlobals());
 describe('dashboard API client', () => {
+  it('keeps CSRF in memory for provider GET requests and clears it on logout', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ csrfToken: 'independent-random-fixture' })))
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal('fetch', fetch);
+    await api('/api/session');
+    await api('/api/guilds/1/search?q=Artist');
+    expect(fetch.mock.calls[1][1].headers.get('x-csrf-token')).toBe('independent-random-fixture');
+    await api('/auth/logout', { method: 'POST' });
+    await api('/api/guilds/1/search?q=Artist');
+    expect(fetch.mock.calls[3][1].headers.get('x-csrf-token')).toBeNull();
+  });
   it('sends same-origin credentials and CSRF token for mutations', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }));
     vi.stubGlobal('fetch', fetch);

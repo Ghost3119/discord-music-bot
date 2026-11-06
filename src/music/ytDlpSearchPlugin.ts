@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { runYtDlp, YtDlpFlags, ExtractionPriority } from './ytDlpRunner';
 import { classifyMusicError } from './errors';
 import { youtubeThumbnail } from './artwork';
+import { isPublicPlaybackUrl, playbackQuery, publicPlaybackUrl } from './mediaPolicy';
 
 // The wrapper's types predate yt-dlp's JavaScript runtime option.
 type YtDlpJsonFlags = YtDlpFlags;
@@ -54,7 +55,6 @@ interface PendingRequest<T> {
   settled: boolean;
 }
 
-const URL_PATTERN = /^https?:\/\//i;
 const SEARCH_PREFIXES: Record<SearchSource, string> = {
   youtube: 'ytsearch5:',
   soundcloud: 'scsearch5:',
@@ -134,8 +134,7 @@ function getSearchSource(metadata: unknown): SearchSource {
 }
 
 function toSearchQuery(query: string, source: SearchSource): string {
-  const trimmedQuery = query.trim();
-  return YTDLP_SEARCH_PATTERN.test(trimmedQuery) ? trimmedQuery : `${SEARCH_PREFIXES[source]}${trimmedQuery}`;
+  return `${SEARCH_PREFIXES[source]}${playbackQuery(query)}`;
 }
 
 function normalizeSearchCacheKey(query: string): string {
@@ -167,7 +166,8 @@ function hasEntries(info: YtDlpInfo): info is YtDlpInfo & { entries: YtDlpInfo[]
 }
 
 function getPlayableUrl(info: YtDlpInfo): string | undefined {
-  return info.webpage_url ?? info.original_url ?? info.url;
+  const url = info.webpage_url ?? info.original_url ?? info.url;
+  return isPublicPlaybackUrl(url) ? url : undefined;
 }
 
 function searchTokens(value: string): string[] {
@@ -276,10 +276,11 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
   }
 
   override validate(url: string): boolean {
-    return URL_PATTERN.test(url);
+    return isPublicPlaybackUrl(url);
   }
 
   override async resolve<T>(url: string, options: ResolveOptions<T>): Promise<Song<T> | Playlist<T>> {
+    url = publicPlaybackUrl(url);
     const cacheKey = normalizeUrlCacheKey(url);
     const cached = this.urlInfoCache.get(cacheKey);
     if (cached && !hasEntries(cached)) {
@@ -320,6 +321,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     if (!song.url) {
       throw new Error('Cannot resolve a stream URL for a song without a source URL.');
     }
+    publicPlaybackUrl(song.url);
 
     const cacheKey = normalizeUrlCacheKey(song.url);
     const cachedStreamUrl = this.streamUrlCache.get(cacheKey);
