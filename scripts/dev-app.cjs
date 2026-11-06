@@ -18,13 +18,21 @@ function createDevEnvironment(env) {
   if (backendPort === frontendPort) throw new Error('WEB_PORT y WEB_DEV_PORT deben ser diferentes.');
   const backendUrl = `http://127.0.0.1:${backendPort}`;
   const frontendUrl = `http://127.0.0.1:${frontendPort}`;
-  const redirectUri = `${frontendUrl}/auth/discord/callback`;
-  const backendEnv = { ...env, WEB_ENABLED: 'true', WEB_HOST: '127.0.0.1', WEB_PORT: String(backendPort), WEB_ORIGIN: frontendUrl, WEB_REDIRECT_URI: redirectUri };
+  const publicOrigin = env.WEB_DEV_PUBLIC_ORIGIN?.trim() || frontendUrl;
+  if (publicOrigin !== frontendUrl) {
+    let url;
+    try { url = new URL(publicOrigin); } catch { throw new Error('WEB_DEV_PUBLIC_ORIGIN debe ser un origen HTTPS válido.'); }
+    if (url.protocol !== 'https:' || url.origin !== publicOrigin || url.username || url.password) {
+      throw new Error('WEB_DEV_PUBLIC_ORIGIN debe contener solo https://dominio, sin ruta ni barra final.');
+    }
+  }
+  const redirectUri = `${publicOrigin}/auth/discord/callback`;
+  const backendEnv = { ...env, WEB_ENABLED: 'true', WEB_HOST: '127.0.0.1', WEB_PORT: String(backendPort), WEB_ORIGIN: publicOrigin, WEB_REDIRECT_URI: redirectUri };
   // Vite receives OS necessities and its proxy target, never bot/OAuth credentials.
   const systemKeys = new Set(['PATH', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'HOME', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TERM', 'COLORTERM', 'FORCE_COLOR', 'NO_COLOR']);
   const frontendEnv = Object.fromEntries(Object.entries(env).filter(([key]) => systemKeys.has(key.toUpperCase())));
   Object.assign(frontendEnv, { NODE_ENV: 'development', SONORA_BACKEND_URL: backendUrl });
-  return { backendEnv, frontendEnv, backendUrl, frontendUrl, redirectUri, backendPort, frontendPort };
+  return { backendEnv, frontendEnv, backendUrl, frontendUrl, publicOrigin, redirectUri, backendPort, frontendPort };
 }
 
 function assertPortAvailable(port, host = '127.0.0.1') {
@@ -204,7 +212,7 @@ async function main() {
         cwd: path.join(root, 'frontend'), env: configuration.frontendEnv, stdio: 'inherit', windowsHide: true,
       }),
       waitForFrontend,
-      onReady: () => console.log(`\n[App] Toda la aplicación está lista: ${configuration.frontendUrl}\n[App] Bot + API + vista. Ctrl+C cierra todo.\n`),
+      onReady: () => console.log(`\n[App] Toda la aplicación está lista: ${configuration.publicOrigin}\n[App] Bot + API + vista. Ctrl+C cierra todo.\n`),
     });
     if (preparation.signal.aborted) app.stop();
     process.exitCode = await app.done;

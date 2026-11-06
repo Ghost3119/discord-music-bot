@@ -106,6 +106,23 @@ test('invalid or shared development ports fail before any process can be launche
   assert.throws(() => createDevEnvironment(environment({ WEB_PORT: '5173' })), /WEB_PORT.*WEB_DEV_PORT/);
 });
 
+test('HTTPS tunnel origin drives OAuth without changing local readiness or leaking secrets to Vite', () => {
+  const result = createDevEnvironment(environment({ WEB_DEV_PUBLIC_ORIGIN: 'https://music.ngrok-free.dev' }));
+  assert.equal(result.frontendUrl, 'http://127.0.0.1:5173');
+  assert.equal(result.publicOrigin, 'https://music.ngrok-free.dev');
+  assert.equal(result.backendEnv.WEB_ORIGIN, result.publicOrigin);
+  assert.equal(result.redirectUri, `${result.publicOrigin}/auth/discord/callback`);
+  assert.equal(result.backendEnv.WEB_REDIRECT_URI, result.redirectUri);
+  assert.equal(result.frontendEnv.SONORA_BACKEND_URL, 'http://127.0.0.1:8080');
+  assert.equal(Object.hasOwn(result.frontendEnv, 'WEB_CLIENT_SECRET'), false);
+});
+
+test('tunnel origins reject HTTP, credentials, paths, queries and fragments', () => {
+  for (const origin of ['http://music.example', 'https://u:p@music.example', 'https://music.example/', 'https://music.example/path', 'https://music.example?x=1', 'https://music.example#x', 'invalid']) {
+    assert.throws(() => createDevEnvironment(environment({ WEB_DEV_PUBLIC_ORIGIN: origin })), /WEB_DEV_PUBLIC_ORIGIN/);
+  }
+});
+
 test('missing configuration reports variable names without exposing provided credentials', () => {
   const keys = ['DISCORD_TOKEN', 'CLIENT_ID', 'GUILD_ID', 'WEB_CLIENT_SECRET', 'WEB_ALLOWED_USER_IDS'];
   assert.throws(() => createDevEnvironment({}), error => {

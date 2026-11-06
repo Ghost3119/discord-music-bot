@@ -16,6 +16,8 @@ Ese comando instala las dependencias que falten, compila el backend, inicia el b
 
 Configura una sola vez `.env` con `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, `WEB_CLIENT_SECRET` y la [política de acceso del panel](#panel-web-privado): `allowlist` con `WEB_ALLOWED_USER_IDS`, o `guild_members` con `WEB_ALLOWED_GUILD_IDS`. Los IDs se separan por comas. En Discord OAuth2 registra exactamente `http://127.0.0.1:5173/auth/discord/callback`. El lanzador ajusta el origen y el callback de desarrollo en memoria; no modifica tu `.env` ni expone secretos a Vite.
 
+Para compartir con ngrok, ejecuta `ngrok http http://127.0.0.1:5173 --host-header=rewrite`. Copia el origen HTTPS que indique ngrok a `WEB_DEV_PUBLIC_ORIGIN` en `.env` (sin barra final), registra `https://TU-DOMINIO/auth/discord/callback` en OAuth2 de Discord y reinicia `npm run dev`. Abre y comparte ese enlace HTTPS. Conserva ambos procesos en ejecución. Para volver al acceso local, elimina `WEB_DEV_PUBLIC_ORIGIN` y reinicia la app. Los permisos de Discord siguen aplicando: los usuarios autorizados deben estar en el canal de voz del bot para controlar la música.
+
 Si falta configuración o un puerto está ocupado, el comando muestra el motivo antes de iniciar el bot. Si dejaste Vite abierto por separado, cierra esa terminal primero. Para comprobar sin arrancar ni instalar nada: `npm run dev:check`.
 
 ## Que soporta
