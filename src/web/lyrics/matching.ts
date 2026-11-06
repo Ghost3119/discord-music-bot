@@ -5,7 +5,7 @@ export interface LyricsRecord {
   id: number; trackName: string; artistName: string; albumName: string; duration: number | null;
   instrumental: boolean; plainLyrics: string | null; syncedLyrics: string | null;
 }
-const promotional = /\s*[\[(](?:official(?:\s+(?:music|lyric))?\s+(?:video|audio|lyrics?)|lyrics?(?:\s+video)?|visuali[sz]er|hd|4k)[\])]\s*/gi;
+const promotional = /\s*[([](?:official(?:\s+(?:music|lyric))?\s+(?:video|audio|lyrics?)|lyrics?(?:\s+video)?|visuali[sz]er|hd|4k)[\])]\s*/gi;
 const editions = /\b(remix|cover|live|festival|acoustic|instrumental|nightcore|demo|remaster(?:ed)?|radio\s+edit|sped\s*up|slowed(?:\s*(?:down|and\s+reverb))?)\b/gi;
 export function normalizeLyricsName(text: string): string {
   return text.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/\bfeaturing\b/g, 'feat').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');

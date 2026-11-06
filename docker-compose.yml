@@ -13,18 +13,18 @@ services:
       # En el host solo se publica en loopback (127.0.0.1). Si se expone fuera de loopback,
       # hazlo únicamente detrás de un reverse proxy con HTTPS y WEB_ORIGIN=https://...
       WEB_HOST: 0.0.0.0
-      WEB_BIND_PUBLIC: "true"
+      WEB_BIND_PUBLIC: 'true'
     ports:
-      - "127.0.0.1:${WEB_PORT:-8080}:${WEB_PORT:-8080}"
+      - '127.0.0.1:${WEB_PORT:-8080}:${WEB_PORT:-8080}'
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
     healthcheck:
       test:
         [
-          "CMD",
-          "node",
-          "-e",
+          'CMD',
+          'node',
+          '-e',
           "fetch('http://127.0.0.1:' + (process.env.WEB_PORT || 8080) + '/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
         ]
       interval: 30s

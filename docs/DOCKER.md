@@ -23,7 +23,7 @@ El panel solo es accesible desde la misma máquina en `http://127.0.0.1:8080`:
 - En `docker-compose.yml`:
   ```yaml
   ports:
-    - "127.0.0.1:${WEB_PORT:-8080}:${WEB_PORT:-8080}"
+    - '127.0.0.1:${WEB_PORT:-8080}:${WEB_PORT:-8080}'
   ```
 - En `.env`:
   ```dotenv
@@ -49,6 +49,7 @@ Si deseas acceder al panel fuera de loopback (por ejemplo, mediante Caddy, Nginx
 4. Registra exactamente ese `WEB_REDIRECT_URI` en el portal de desarrolladores de Discord (OAuth2 -> Redirects). Con `https://`, SONORA activa automáticamente cookies `__Host-` con atributo `Secure` y cabecera `Strict-Transport-Security`.
 
 > **Importante (Linux):** el contenedor se ejecuta con el usuario no-root `node` (`UID 1000`, `GID 1000`). Si los directorios `./data` o `./logs` en el host pertenecen a otro usuario en Linux, ajusta sus permisos antes de arrancar:
+>
 > ```bash
 > mkdir -p data logs && chown -R 1000:1000 data logs
 > ```
@@ -124,15 +125,19 @@ docker compose start sonora
 ## 5. Verificación de salud y funcionamiento
 
 1. **Estado del contenedor y healthcheck (`GET /healthz`):**
+
    ```bash
    docker compose ps
    ```
+
    La columna `STATUS` debe mostrar `(healthy)`.
 
 2. **Comprobar el endpoint de salud sin autenticación:**
+
    ```bash
    curl -i http://127.0.0.1:8080/healthz
    ```
+
    Debe responder `HTTP/1.1 200 OK` con `{"status":"ok"}` (sin exponer secretos, datos de usuario ni rutas `/api/*`).
 
 3. **Comprobar el panel web:**

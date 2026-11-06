@@ -7,6 +7,10 @@
     "build": "npm run build:bot && npm run build:web",
     "build:bot": "tsc",
     "build:web": "npm --prefix frontend run build",
+    "lint": "eslint src && npm --prefix frontend run lint",
+    "lint:fix": "eslint --fix src && npm --prefix frontend run lint:fix",
+    "format": "prettier --write . && npm --prefix frontend run format",
+    "format:check": "prettier --check . && npm --prefix frontend run format:check",
     "test": "npm run test:bot && npm run test:web",
     "test:bot": "tsc && node --test \"test/*.test.js\"",
     "test:web": "npm --prefix frontend test",
@@ -42,12 +46,18 @@
     "libsodium-wrappers": "^0.8.4"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.9.0",
+    "eslint": "^10.0.1",
+    "globals": "^17.14.0",
+    "prettier": "^3.9.10",
     "ts-node": "^10.9.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.72.1"
   },
   "overrides": {
+    "minimatch": "^11.0.5",
     "tar": "^7.5.22"
   }
 }
