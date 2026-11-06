@@ -832,3 +832,85 @@ test('playlist load supports 50, 51, 139 and 500 tracks, preserves order and dup
   assert.equal(oversized.statusCode, 400);
   assert.match(oversized.json().error, /1–500/);
 });
+
+test('real server and real MusicBridge integration: simulated OAuth login, GET /api/session, GET /api/guilds/:guildId/state and denied action without canControl', async t => {
+  const { Client, GatewayIntentBits } = require('discord.js');
+  const { DisTube } = require('distube');
+  const { createMusicBridge } = require('../dist/music/webBridge');
+  const { YtDlpSearchPlugin } = require('../dist/music/ytDlpSearchPlugin');
+
+  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+  t.after(() => client.destroy());
+  client.distube = new DisTube(client, { plugins: [new YtDlpSearchPlugin()] });
+
+  const memberWithoutVoice = { id: USER, user: { bot: false }, voice: { channel: null } };
+  client.guilds.cache.set(GUILD, {
+    id: GUILD,
+    name: 'Real Bridge Guild',
+    iconURL: () => null,
+    members: { fetch: async ({ user }) => (user === USER ? memberWithoutVoice : null) },
+  });
+
+  const db = openWebDatabase(':memory:');
+  t.after(() => db.close());
+  const config = readWebConfig({
+    WEB_ENABLED: 'true',
+    CLIENT_ID: '555555555555555555',
+    WEB_CLIENT_SECRET: 'server-only-secret',
+    WEB_ALLOWED_USER_IDS: USER,
+    WEB_DATABASE_PATH: ':memory:',
+  });
+  const bridge = createMusicBridge(client, undefined, {
+    accessMode: config.accessMode,
+    allowedGuildIds: config.allowedGuildIds,
+    adminUserIds: config.adminUserIds,
+  });
+  const oauthFetch = async url => {
+    if (url.endsWith('/token')) {
+      return new Response(JSON.stringify({ access_token: 'integration-token', token_type: 'Bearer' }));
+    }
+    return new Response(JSON.stringify({ id: USER, username: 'IntegrationUser', avatar: null }));
+  };
+
+  const app = await createWebServer({ config, bridge, database: db, oauthFetch, sseIntervalMs: 20 });
+  t.after(() => app.close());
+
+  const startRes = await app.inject('/auth/discord');
+  assert.equal(startRes.statusCode, 302);
+  const stateParam = new URL(startRes.headers.location).searchParams.get('state');
+  const stateCookie = startRes.cookies.find(item => item.name === 'music_oauth_state');
+
+  const callbackRes = await app.inject({
+    url: `/auth/discord/callback?code=integration-code&state=${stateParam}`,
+    headers: { cookie: `music_oauth_state=${stateCookie.value}` },
+  });
+  assert.equal(callbackRes.statusCode, 302);
+  const sessionCookie = callbackRes.cookies.find(item => item.name === 'music_session').value;
+  const csrfCookie = callbackRes.cookies.find(item => item.name === 'music_csrf').value;
+  const cookie = `music_session=${sessionCookie}; music_csrf=${csrfCookie}`;
+
+  const sessionRes = await app.inject({ url: '/api/session', headers: { cookie } });
+  assert.equal(sessionRes.statusCode, 200);
+  const sessionBody = sessionRes.json();
+  assert.equal(sessionBody.user.id, USER);
+  assert.equal(sessionBody.user.username, 'IntegrationUser');
+  assert.equal(sessionBody.csrfToken, csrfCookie);
+
+  const stateRes = await app.inject({ url: `${BASE}/state`, headers: { cookie } });
+  assert.equal(stateRes.statusCode, 200);
+  const stateBody = stateRes.json();
+  assert.equal(stateBody.guildId, GUILD);
+  assert.equal(stateBody.status, 'idle');
+  assert.equal(stateBody.permissions.isMember, true);
+  assert.equal(stateBody.permissions.inVoiceChannel, false);
+  assert.equal(stateBody.permissions.canControl, false);
+
+  const actionRes = await app.inject({
+    method: 'POST',
+    url: `${BASE}/actions`,
+    headers: { cookie, origin: ORIGIN, 'x-csrf-token': sessionBody.csrfToken },
+    payload: { action: 'pause' },
+  });
+  assert.equal(actionRes.statusCode, 403);
+  assert.match(actionRes.json().error, /voice channel/i);
+});

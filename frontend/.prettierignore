@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+package-lock.json
+src/
+test/
+components.json
+index.html
+tsconfig.json
+vite.config.ts
