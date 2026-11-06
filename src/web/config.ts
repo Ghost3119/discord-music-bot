@@ -69,7 +69,7 @@ export function validateWebConfig(config: WebConfig): void {
   const local = ['127.0.0.1', 'localhost', '[::1]'].includes(origin.hostname);
   if (origin.protocol !== 'https:' && !(origin.protocol === 'http:' && local)) throw new Error('WEB_ORIGIN requires HTTPS outside localhost');
   if (origin.protocol === 'https:' && !config.secureCookies) throw new Error('HTTPS dashboard cookies must be Secure');
-  if (origin.protocol === 'http:' && !['127.0.0.1', 'localhost', '::1'].includes(config.host)) throw new Error('HTTP dashboards must bind to localhost; use HTTPS for a public bind');
+  if (origin.protocol === 'http:' && !['127.0.0.1', 'localhost', '::1'].includes(config.host) && !config.bindPublic) throw new Error('HTTP dashboards must bind to localhost; use HTTPS for a public bind');
   if (!['127.0.0.1', 'localhost', '::1'].includes(config.host) && !config.bindPublic) throw new Error('WEB_HOST must bind to localhost unless WEB_BIND_PUBLIC=true');
   if (redirect.origin !== origin.origin || redirect.pathname !== '/auth/discord/callback' || redirect.search || redirect.hash || redirect.username || redirect.password) throw new Error('WEB_REDIRECT_URI must be WEB_ORIGIN/auth/discord/callback');
   if (!isSnowflake(config.oauthClientId) || !config.oauthClientSecret) throw new Error('WEB_CLIENT_ID/CLIENT_ID and WEB_CLIENT_SECRET are required');

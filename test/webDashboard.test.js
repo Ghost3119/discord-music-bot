@@ -82,6 +82,8 @@ test('dashboard is disabled by default; enabled configuration validates OAuth, H
   assert.throws(() => readWebConfig({ ...env, WEB_HOST: '0.0.0.0' }), /localhost/);
   assert.throws(() => readWebConfig({ ...env, WEB_REDIRECT_URI: 'http://evil.example/auth/discord/callback' }), /WEB_REDIRECT_URI/);
   assert.equal(readWebConfig({ ...env, WEB_ORIGIN: 'https://music.example' }).secureCookies, true);
+  assert.equal(readWebConfig({ ...env, WEB_HOST: '0.0.0.0', WEB_BIND_PUBLIC: 'true', WEB_ORIGIN: 'http://127.0.0.1:8080' }).host, '0.0.0.0');
+  assert.throws(() => readWebConfig({ ...env, WEB_HOST: '0.0.0.0', WEB_BIND_PUBLIC: 'true', WEB_ORIGIN: 'http://example.com' }), /HTTPS/);
 });
 
 test('OAuth uses unpredictable cookie-bound one-time state, identify only, hashed persistent sessions', async t => {
@@ -122,6 +124,10 @@ test('OAuth expires states, rejects unauthorized accounts and does not expose up
 
 test('persistent sessions expire and logout invalidates cookies and sessions; mutations require origin and CSRF', async t => {
   const h = await harness(t);
+  const health = await h.app.inject('/healthz');
+  assert.equal(health.statusCode, 200);
+  assert.deepEqual(health.json(), { status: 'ok' });
+  assert.equal(health.headers['cache-control'], 'no-store');
   assert.equal((await h.app.inject('/api/session')).statusCode, 401);
   const auth = await h.login();
   const forbidden = await h.mutate(auth, 'POST', `${BASE}/actions`, { action: 'stop' }, { 'x-csrf-token': 'x'.repeat(64) });

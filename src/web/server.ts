@@ -206,7 +206,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   app.addHook('onRequest', async (request, reply) => {
     for (const [header, value] of Object.entries(securityHeaders)) reply.header(header, value);
     const route = routePath(request);
-    if (route.startsWith('/api/') || route.startsWith('/auth/')) reply.header('Cache-Control', 'no-store');
+    if (route.startsWith('/api/') || route.startsWith('/auth/') || route === '/healthz') reply.header('Cache-Control', 'no-store');
     if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && request.headers.origin !== config.origin) throw new WebError(403, 'Invalid request origin');
     if ((route.startsWith('/api/') || route.startsWith('/auth/logout')) && request.headers.origin && request.headers.origin !== config.origin) throw new WebError(403, 'Invalid request origin');
   });
@@ -261,6 +261,8 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     // Internal provider, database and extractor errors must never leak credentials.
     void reply.code(status).send({ error: status >= 500 ? 'The dashboard could not complete this request' : candidate instanceof WebError ? candidate.message : status === 429 ? 'Too many requests; try again shortly' : 'Invalid dashboard request' });
   });
+
+  app.get('/healthz', async () => ({ status: 'ok' }));
 
   app.get('/auth/discord', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (_request, reply) => {
     for (const [key, expiry] of states) if (expiry.expiresAt <= now()) states.delete(key);
