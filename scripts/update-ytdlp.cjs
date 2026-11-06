@@ -28,7 +28,7 @@ async function updateYtDlp({ version, sha256, directory, filename, fetchImpl = f
 
 module.exports = { updateYtDlp };
 if (require.main === module) {
-  require('dotenv').config();
+  require('dotenv').config({ quiet: true });
   const args = process.argv.slice(2);
   const value = name => args[args.indexOf(name) + 1];
   const version = args.includes('--version') ? value('--version') : undefined;
