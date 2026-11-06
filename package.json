@@ -33,7 +33,7 @@
     "@discordjs/voice": "0.19.2",
     "@distube/spotify": "^2.0.2",
     "@distube/yt-dlp": "^2.0.1",
-    "@fastify/cookie": "^11.1.3",
+    "@fastify/cookie": "^11.1.5",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^10.1.6",
     "better-sqlite3": "^12.11.1",
