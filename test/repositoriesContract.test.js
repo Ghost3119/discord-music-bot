@@ -1,3 +1,4 @@
+const { createSqliteRepositories } = require('../dist/infrastructure/sqlite/repositories');
 const repositoriesContract = require('./contracts/repositories.contract');
 const { openWebDatabase, hashToken } = require('../dist/web/database');
 
@@ -15,6 +16,6 @@ repositoriesContract(async () => {
       return await db.sqlite.prepare('SELECT id, position FROM playlist_tracks WHERE playlist_id = ? ORDER BY position').all(playlistId);
     },
   };
-  const repos = Object.assign(db, { contractFixtures });
-  return { repos, close: async () => await db.close() };
+  const repos = Object.assign(createSqliteRepositories(db), { contractFixtures });
+  return { repos, close: async () => await repos.close() };
 });

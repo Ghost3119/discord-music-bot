@@ -167,7 +167,7 @@ flowchart LR
 | --- | --- | --- |
 | F0 Pruebas de contrato | Hecho (pendiente de PR) | — |
 | F1 Puertos asíncronos y errores de dominio | Hecho (pendiente de PR) | — |
-| F2 Adaptador SQLite + inyección | Pendiente | — |
+| F2 Adaptador SQLite + inyección | Hecho (pendiente de PR) | — |
 | F3 Checkpoints e historial detrás de puertos | Pendiente | — |
 | F4 Migraciones por dialecto | Pendiente | — |
 | F5 Adaptador PostgreSQL | Pendiente | — |

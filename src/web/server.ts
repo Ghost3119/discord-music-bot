@@ -1,4 +1,4 @@
-import { PersistenceError } from '../domain/persistence';
+import { PersistenceError, type Repositories, type WebSession, type SavedPlaylist } from '../domain/persistence';
 import Fastify, { FastifyInstance, FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
@@ -8,7 +8,9 @@ import { existsSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
 import type { GuildPermissions, GuildSummary, MusicBridge, PlaybackSnapshot } from './contracts';
 import { WebConfig, validateWebConfig } from './config';
-import { WebDatabase, WebError, WebSession, type SavedPlaylist, hashToken, openWebDatabase } from './database';
+import { WebDatabase, hashToken, openWebDatabase } from '../infrastructure/sqlite/database';
+import { createSqliteRepositories } from '../infrastructure/sqlite/repositories';
+import { WebError } from './errors';
 import { musicAction, object, playlistImportCommitPayload, playlistName, resolveTrackUrlMetadata, trackMetadata } from './validation';
 import { createPlaylistImportService, type PlaylistImportService } from './playlistImport';
 import { createMusicSearchService, type MusicSearchService } from './musicSearch';
@@ -20,7 +22,9 @@ declare module 'fastify' { interface FastifyRequest { webSession: WebSession | n
 export interface WebServerOptions {
   config: WebConfig;
   bridge: MusicBridge;
-  /** Injected databases remain caller-owned and must be closed by the caller. */
+  /** Injected repositories remain caller-owned. */
+  repositories?: Repositories;
+  /** @deprecated Use repositories. Injected databases remain caller-owned. */
   database?: WebDatabase;
   oauthFetch?: typeof fetch;
   now?: () => number;
@@ -64,7 +68,8 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const SESSION_COOKIE = config.secureCookies ? '__Host-music_session' : 'music_session';
   const CSRF_COOKIE = config.secureCookies ? '__Host-music_csrf' : 'music_csrf';
   validateWebConfig(config);
-  const database = options.database ?? openWebDatabase(config.databasePath);
+  const ownsRepositories = !options.repositories && !options.database;
+  const repositories = options.repositories ?? createSqliteRepositories(options.database ?? openWebDatabase(config.databasePath));
   const now = options.now ?? Date.now;
   const oauthFetch = options.oauthFetch ?? fetch;
   const lyrics = options.lyricsService ?? createLyricsService();
@@ -86,15 +91,16 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   const lyricChoices = new Map<string, { ids: Set<number>; expiresAt: number }>();
   let expiryCleanup: ReturnType<typeof setInterval> | undefined;
   let closing = false;
+  let cleanupTask: Promise<void> | undefined;
   const app = Fastify({ logger: false, bodyLimit: 16_384, requestTimeout: 120_000, connectionTimeout: 15_000, trustProxy: false });
   // Listener errors are isolated from the process hosting the music engine.
   app.server.on('error', () => { console.warn('[Web] Dashboard HTTP listener error; audio remains available.'); });
   try {
   app.decorateRequest('webSession', null);
   await app.register(cookie);
-  const rateKey = (request: FastifyRequest): string => {
+  const rateKey = async (request: FastifyRequest): Promise<string> => {
     if (routePath(request).startsWith('/auth/discord')) return `ip:${request.ip}`;
-    const session = database.getSession(request.cookies[SESSION_COOKIE], now());
+    const session = await repositories.sessions.getSession(request.cookies[SESSION_COOKIE], now());
     return session && (accessMode !== 'allowlist' || allowed.has(session.user.id)) ? `user:${session.user.id}` : `ip:${request.ip}`;
   };
   // Attach explicit budgets to routes that otherwise only inherit the global limit.
@@ -107,7 +113,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     if (max !== undefined && !route.config?.rateLimit) route.config = { ...route.config, rateLimit: { max, timeWindow: '1 minute' } };
   });
   await app.register(rateLimit, { max: 120, timeWindow: '1 minute', hook: 'preHandler', keyGenerator: rateKey });
-  const aggregateLimit = app.createRateLimit({ max: 120, timeWindow: '1 minute', keyGenerator: request => `aggregate:${rateKey(request)}` });
+  const aggregateLimit = app.createRateLimit({ max: 120, timeWindow: '1 minute', keyGenerator: async request => `aggregate:${await rateKey(request)}` });
   app.addHook('preHandler', async request => {
     const result = await aggregateLimit(request);
     if (!result.isAllowed && result.isExceeded) throw new WebError(429, 'Too many requests; try again shortly');
@@ -164,10 +170,17 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       permissions,
     };
   }
-  function authenticate(request: FastifyRequest): WebSession {
-    const session = database.getSession(request.cookies[SESSION_COOKIE], now());
-    if (!session || (accessMode === 'allowlist' && !allowed.has(session.user.id))) throw new WebError(401, 'Sign in with an authorized Discord account');
+  async function authenticate(request: FastifyRequest): Promise<WebSession> {
+    const session = await repositories.sessions.getSession(request.cookies[SESSION_COOKIE], now());
+    if (!session || session.expiresAt <= now() || (accessMode === 'allowlist' && !allowed.has(session.user.id))) throw new WebError(401, 'Sign in with an authorized Discord account');
     return session;
+  }
+  async function assertLibraryAccess(request: FastifyRequest): Promise<void> {
+    const userId = request.webSession!.user.id;
+    const guildId = params(request)['guildId']!;
+    await assertGuildAccess(userId, guildId);
+    if (!(await resolvePermissions(userId, guildId)).canManageLibrary) throw new WebError(403, 'Library access is required');
+    await authenticate(request);
   }
   function beginOperation(request: FastifyRequest, response: ServerResponse, timeoutMs: number): PendingOperation {
     const session = request.webSession!;
@@ -187,9 +200,13 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       deadline.unref();
     };
     scheduleDeadline();
-    const monitor = setInterval(() => {
-      try { authenticate(request); } catch { abort(); }
-    }, Math.max(20, options.sseIntervalMs ?? 2000));
+    let monitoring = false;
+    const monitor = setInterval(() => { void (async () => {
+      if (monitoring) return;
+      monitoring = true;
+      try { await authenticate(request); } catch { abort(); }
+      finally { monitoring = false; }
+    })(); }, Math.max(20, options.sseIntervalMs ?? 2000));
     monitor.unref();
     const operation: PendingOperation = { tokenHash: session.tokenHash, userId: session.user.id, guildId, controller, timedOut: false, done: () => {
       clearTimeout(deadline); clearTimeout(operationDeadline); clearInterval(monitor);
@@ -221,7 +238,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   app.addHook('preHandler', async request => {
     const route = routePath(request);
     if (!(route.startsWith('/api/') || route.startsWith('/auth/logout'))) return;
-    const session = authenticate(request);
+    const session = await authenticate(request);
     request.webSession = session;
     const upstreamRead = /\/(?:search(?:\/suggestions)?|lyrics\/(?:current|search|selection)|tracks\/resolve)$/.test(route);
     if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) || upstreamRead) {
@@ -233,6 +250,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       if (!/^\d{17,20}$/.test(guildId)) throw new WebError(400, 'Invalid Discord guild ID');
       await assertGuildAccess(session.user.id, guildId);
       if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && /\/(?:playlists|favorites)(?:\/|$)/.test(route) && !(await resolvePermissions(session.user.id, guildId)).canManageLibrary) throw new WebError(403, 'Library access is required');
+      await authenticate(request);
     }
   });
   app.addHook('onResponse', async (request, reply) => {
@@ -316,23 +334,23 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     if (typeof profile['username'] !== 'string' || !profile['username'] || profile['username'].length > 100) throw new WebError(502, 'Invalid Discord profile');
     const avatarHash = typeof profile['avatar'] === 'string' && /^[a-zA-Z0-9_]+$/.test(profile['avatar']) ? profile['avatar'] : null;
     const avatar = avatarHash ? `https://cdn.discordapp.com/avatars/${profile['id']}/${avatarHash}.png?size=128` : null;
-    database.deleteSession(request.cookies[SESSION_COOKIE]);
-    const session = database.createSession({ id: profile['id'], username: profile['username'], avatar }, now(), config.sessionTtlMs);
-    request.webSession = database.getSession(session.token, now());
+    await repositories.sessions.deleteSession(request.cookies[SESSION_COOKIE]);
+    const session = await repositories.sessions.createSession({ id: profile['id'], username: profile['username'], avatar }, now(), config.sessionTtlMs);
+    request.webSession = await repositories.sessions.getSession(session.token, now());
     for (const stream of streams) if (stream.userId === profile['id']) stream.close();
     for (const operation of operations) if (operation.userId === profile['id']) operation.controller.abort();
     reply.setCookie(CSRF_COOKIE, session.csrfToken, { ...cookieOptions, maxAge: Math.floor(config.sessionTtlMs / 1000) });
     return reply.setCookie(SESSION_COOKIE, session.token, { ...cookieOptions, maxAge: Math.floor(config.sessionTtlMs / 1000) }).redirect('/');
   });
   app.post('/auth/logout', async (request, reply) => {
-    database.deleteSession(request.cookies[SESSION_COOKIE]);
+    await repositories.sessions.deleteSession(request.cookies[SESSION_COOKIE]);
     for (const stream of streams) if (stream.tokenHash === request.webSession!.tokenHash) stream.close();
     for (const operation of operations) if (operation.tokenHash === request.webSession!.tokenHash) operation.controller.abort();
     return reply.clearCookie(CSRF_COOKIE, cookieOptions).clearCookie(SESSION_COOKIE, cookieOptions).send({ ok: true });
   });
   app.post('/auth/logout/all', async (request, reply) => {
     const userId = request.webSession!.user.id;
-    database.deleteUserSessions(userId);
+    await repositories.sessions.deleteUserSessions(userId);
     for (const stream of streams) if (stream.userId === userId) stream.close();
     for (const operation of operations) if (operation.userId === userId) operation.controller.abort();
     return reply.clearCookie(CSRF_COOKIE, cookieOptions).clearCookie(SESSION_COOKIE, cookieOptions).send({ ok: true });
@@ -343,7 +361,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     if (accessMode === 'guild_members') {
       const guilds = await listAuthorizedGuilds(session.user.id).catch(() => []);
       if (!guilds.length) {
-        database.deleteSession(request.cookies[SESSION_COOKIE]);
+        await repositories.sessions.deleteSession(request.cookies[SESSION_COOKIE]);
         revokeUserAccess(session.user.id);
         throw new WebError(401, 'Sign in with an authorized Discord account');
       }
@@ -358,7 +376,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     if (accessMode === 'guild_members') {
       const guilds = await listAuthorizedGuilds(userId).catch(() => []);
       if (!guilds.length) {
-        database.deleteSession(request.cookies[SESSION_COOKIE]);
+        await repositories.sessions.deleteSession(request.cookies[SESSION_COOKIE]);
         revokeUserAccess(userId);
         throw new WebError(403, 'You do not have access to this Discord server');
       }
@@ -408,7 +426,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       }, signal), signal);
       signal.throwIfAborted();
       // Membership/session revocation during an upstream wait must take effect before returning text.
-      authenticate(request);
+      await authenticate(request);
       await assertGuildAccess(userId, guildId);
       const after = await bridge.getState(userId, guildId);
       signal.throwIfAborted();
@@ -418,7 +436,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       return { ...identity, ...result };
     } catch (error) {
       if (signal.aborted) {
-        authenticate(request);
+        await authenticate(request);
         return { ...identity, status: 'temporary_error', retryAfterMs: 5000, reason: operation.timedOut ? 'timeout' : 'unavailable' };
       }
       throw error;
@@ -457,7 +475,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
         if (!task) return { ...identity, status: 'temporary_error', retryAfterMs: 5000, reason: 'unavailable' };
         const result = await waitForOperation<LyricsResult | LyricsSearchResult>(task, signal);
         signal.throwIfAborted();
-        authenticate(request);
+        await authenticate(request);
         await assertGuildAccess(userId, guildId);
         const after = await bridge.getState(userId, guildId);
         signal.throwIfAborted();
@@ -479,7 +497,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
         return { ...identity, ...result };
       } catch (error) {
         if (signal.aborted) {
-          authenticate(request);
+          await authenticate(request);
           await assertGuildAccess(userId, guildId);
           return { ...identity, status: 'temporary_error', retryAfterMs: 5000, reason: operation.timedOut ? 'timeout' : 'unavailable' };
         }
@@ -510,13 +528,16 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const guildId = params(request)['guildId']!;
     let initial: PlaybackSnapshot;
     pendingStreams.set(session.user.id, pending + 1);
-    try { initial = await projectSnapshot(session.user.id, guildId, await bridge.getState(session.user.id, guildId)); }
+    try {
+      initial = await projectSnapshot(session.user.id, guildId, await bridge.getState(session.user.id, guildId));
+      await assertGuildAccess(session.user.id, guildId);
+      await authenticate(request);
+      if (closing) throw new WebError(503, 'Dashboard is shutting down');
+    }
     finally {
       const remaining = (pendingStreams.get(session.user.id) ?? 1) - 1;
       if (remaining) pendingStreams.set(session.user.id, remaining); else pendingStreams.delete(session.user.id);
     }
-    if (closing) throw new WebError(503, 'Dashboard is shutting down');
-    authenticate(request);
     reply.hijack();
     const response = reply.raw;
     response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', ...securityHeaders, 'Access-Control-Allow-Origin': config.origin });
@@ -551,7 +572,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       if (blockedAt !== null) { if (now() - blockedAt > 10_000) close(); return; }
       busy = true;
       try {
-        const currentSession = authenticate(request);
+        const currentSession = await authenticate(request);
         await assertGuildAccess(currentSession.user.id, guildId);
         const snapshot = await projectSnapshot(currentSession.user.id, guildId, await bridge.getState(currentSession.user.id, guildId));
         if (!closed) send(snapshot);
@@ -569,7 +590,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     try {
       const suggestions = await waitForOperation(musicSearcher.suggest?.(q, operation.controller.signal) ?? Promise.resolve([]), operation.controller.signal);
       operation.controller.signal.throwIfAborted();
-      authenticate(request);
+      await authenticate(request);
       await assertGuildAccess(request.webSession!.user.id, params(request)['guildId']!);
       return { query: typeof q === 'string' ? q.trim() : '', suggestions };
     } finally {
@@ -595,7 +616,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     try {
       const response = await waitForOperation(musicSearcher.search(input, signal), signal);
       if (signal.aborted) throw new WebError(409, 'La búsqueda fue cancelada.');
-      authenticate(request);
+      await authenticate(request);
       await assertGuildAccess(userId, guildId);
       return response;
     } catch (error) {
@@ -616,8 +637,8 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   app.post('/api/guilds/:guildId/tracks/resolve', async request => ({
     track: await resolveTrackUrlMetadata(object(request.body)['url'], oauthFetch),
   }));
-  app.get('/api/guilds/:guildId/playlists', async request => ({ playlists: database.listPlaylists(request.webSession!.user.id, params(request)['guildId']!) }));
-  app.post('/api/guilds/:guildId/playlists', async request => ({ playlist: database.createPlaylist(request.webSession!.user.id, params(request)['guildId']!, playlistName(request.body), now()) }));
+  app.get('/api/guilds/:guildId/playlists', async request => ({ playlists: await repositories.playlists.listPlaylists(request.webSession!.user.id, params(request)['guildId']!) }));
+  app.post('/api/guilds/:guildId/playlists', async request => ({ playlist: await repositories.playlists.createPlaylist(request.webSession!.user.id, params(request)['guildId']!, playlistName(request.body), now()) }));
   app.post('/api/guilds/:guildId/playlists/import/preview', { config: { rateLimit: { max: 12, timeWindow: '1 minute' } } }, async (request, reply) => {
     const userId = request.webSession!.user.id;
     const guildId = params(request)['guildId']!;
@@ -628,7 +649,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     try {
       const preview = await waitForOperation(playlistImporter.previewPlaylist(url, signal), signal);
       if (signal.aborted) throw new WebError(409, 'La consulta de la playlist fue cancelada.');
-      authenticate(request);
+      await authenticate(request);
       await assertGuildAccess(userId, guildId);
       return { preview };
     } catch (error) {
@@ -658,7 +679,10 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     }
     activeImports.add(lockKey);
     try {
-      const playlist = database.createPlaylistWithTracks(userId, guildId, name, tracks, currentNow);
+      // The import reservation remains held across asynchronous authorization and storage.
+      await assertLibraryAccess(request);
+      const playlist = await repositories.playlists.createPlaylistWithTracks(userId, guildId, name, tracks, currentNow);
+      await assertLibraryAccess(request);
       if (idempotencyKey) {
         while (completedImports.size >= 256) completedImports.delete(completedImports.keys().next().value!);
         completedImports.set(idempotencyKey, { playlist, expiresAt: currentNow + 300_000 });
@@ -668,9 +692,9 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       activeImports.delete(lockKey);
     }
   });
-  app.patch('/api/guilds/:guildId/playlists/:playlistId', async request => ({ playlist: database.renamePlaylist(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, playlistName(request.body)) }));
+  app.patch('/api/guilds/:guildId/playlists/:playlistId', async request => ({ playlist: await repositories.playlists.renamePlaylist(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, playlistName(request.body)) }));
   app.delete('/api/guilds/:guildId/playlists/:playlistId', async request => {
-    database.deletePlaylist(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!); return { ok: true };
+    await repositories.playlists.deletePlaylist(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!); return { ok: true };
   });
   app.post('/api/guilds/:guildId/playlists/:playlistId/tracks', async request => {
     const raw = object(request.body);
@@ -685,20 +709,22 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       thumbnail: raw['thumbnail'] ?? resolved.thumbnail,
       source: raw['source'] ?? resolved.source,
     } : raw;
-    return { track: database.addPlaylistTrack(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, trackMetadata(candidate)) };
+    if (needsResolve) await assertLibraryAccess(request);
+    return { track: await repositories.playlists.addPlaylistTrack(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, trackMetadata(candidate)) };
   });
   app.delete('/api/guilds/:guildId/playlists/:playlistId/tracks/:trackId', async request => {
-    database.deletePlaylistTrack(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, params(request)['trackId']!); return { ok: true };
+    await repositories.playlists.deletePlaylistTrack(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, params(request)['trackId']!); return { ok: true };
   });
   app.put('/api/guilds/:guildId/playlists/:playlistId/tracks/order', async request => {
     const trackIds = object(request.body)['trackIds'];
     if (!Array.isArray(trackIds) || trackIds.length > 500 || trackIds.some(id => typeof id !== 'string')) throw new WebError(400, 'Invalid trackIds');
-    return { playlist: database.reorderPlaylist(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, trackIds as string[]) };
+    return { playlist: await repositories.playlists.reorderPlaylist(request.webSession!.user.id, params(request)['guildId']!, params(request)['playlistId']!, trackIds as string[]) };
   });
   app.post('/api/guilds/:guildId/playlists/:playlistId/load', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const userId = request.webSession!.user.id;
     const guildId = params(request)['guildId']!;
-    const playlist = database.getPlaylist(userId, guildId, params(request)['playlistId']!);
+    const playlist = await repositories.playlists.getPlaylist(userId, guildId, params(request)['playlistId']!);
+    await assertLibraryAccess(request);
     if (!playlist.tracks.length || playlist.tracks.length > 500) throw new WebError(400, 'Load playlists with 1–500 tracks');
     const key = `${guildId}:${userId}`;
     if (loads.has(key)) throw new WebError(409, 'A playlist is already loading');
@@ -724,8 +750,9 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
           await new Promise<void>(resolve => setImmediate(resolve));
           if (controller.signal.aborted) throw new WebError(409, 'Playlist load cancelled');
         }
-        authenticate(request);
-        await assertGuildAccess(userId, guildId);
+        await authenticate(request);
+        await assertLibraryAccess(request);
+        if (controller.signal.aborted) throw new WebError(409, 'Playlist load cancelled');
         try {
           await waitForOperation(bridge.control(userId, guildId, { action: 'play', query: item.url, track: item }, controller.signal), controller.signal);
           loaded++;
@@ -751,15 +778,19 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       throw error;
     } finally { loads.delete(key); operation.done(); }
   });
-  app.get('/api/guilds/:guildId/favorites', async request => ({ favorites: database.listFavorites(request.webSession!.user.id, params(request)['guildId']!) }));
-  app.post('/api/guilds/:guildId/favorites', async request => ({ track: database.addFavorite(request.webSession!.user.id, params(request)['guildId']!, trackMetadata(request.body), now()) }));
+  app.get('/api/guilds/:guildId/favorites', async request => ({ favorites: await repositories.favorites.listFavorites(request.webSession!.user.id, params(request)['guildId']!) }));
+  app.post('/api/guilds/:guildId/favorites', async request => ({ track: await repositories.favorites.addFavorite(request.webSession!.user.id, params(request)['guildId']!, trackMetadata(request.body), now()) }));
   app.delete('/api/guilds/:guildId/favorites/:trackId', async request => {
-    database.deleteFavorite(request.webSession!.user.id, params(request)['guildId']!, params(request)['trackId']!); return { ok: true };
+    await repositories.favorites.deleteFavorite(request.webSession!.user.id, params(request)['guildId']!, params(request)['trackId']!); return { ok: true };
   });
 
   expiryCleanup = setInterval(() => {
-    try { database.purgeExpired(now()); }
-    catch { console.warn('[Web] Dashboard expired-session cleanup failed.'); }
+    if (closing || cleanupTask) return;
+    cleanupTask = (async () => {
+      try { await repositories.sessions.purgeExpired(now()); }
+      catch { console.warn('[Web] Dashboard expired-session cleanup failed.'); }
+      finally { cleanupTask = undefined; }
+    })();
   }, 60_000);
   expiryCleanup.unref();
   app.addHook('preClose', async () => {
@@ -771,7 +802,10 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     states.clear();
     if (!options.lyricsService) lyrics.close();
   });
-  app.addHook('onClose', async () => { if (!options.database && database.sqlite.open) database.close(); });
+  app.addHook('onClose', async () => {
+    await cleanupTask;
+    if (ownsRepositories) await repositories.close();
+  });
   if (config.staticRoot && existsSync(config.staticRoot)) {
     await app.register(serveStatic, { root: config.staticRoot, index: ['index.html'], dotfiles: 'deny' });
     app.setNotFoundHandler(async (request, reply) => {
@@ -788,7 +822,8 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     for (const stream of streams) stream.close();
     for (const operation of operations) { operation.controller.abort(); operation.done(); }
     await app.close().catch(() => undefined);
-    if (!options.database && database.sqlite.open) database.close();
+    await cleanupTask;
+    if (ownsRepositories) await repositories.close();
     throw error;
   }
 }

@@ -27,7 +27,7 @@ export interface FavoriteRepository {
 }
 
 /**
- * Async ports for the future adapter. WebDatabase stays synchronous until F2.
+ * Async ports; the SQLite facade wraps synchronous WebDatabase operations.
  * ensureGuild is deliberately omitted: WebDatabase.ensureGuild has no production
  * callers, and playlist/favorite writes already ensure their guild internally.
  */
