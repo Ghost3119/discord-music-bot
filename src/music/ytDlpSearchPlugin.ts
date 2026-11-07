@@ -452,8 +452,12 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     if (!song.name || song.isLive) return null;
     const reference = song.stream.playFromSource ? song : song.stream.song ?? song;
     if (reference.isLive) return null;
-    const query = recoveryQuery(`${song.name} ${!song.stream.playFromSource ? song.uploader?.name ?? '' : ''}`);
-    if (!query) return null;
+    const needsArtist = searchTokens(recoveryQuery(song.name)).length < 2;
+    const artist = song.uploader?.name?.trim();
+    if (needsArtist && !artist) return null;
+    const query = recoveryQuery(`${song.name} ${needsArtist || !song.stream.playFromSource ? artist ?? '' : ''}`);
+    // A single meaningful word is too ambiguous to identify the requested recording.
+    if (searchTokens(query).length < 2) return null;
     const budget = AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]);
     const preferred: SearchSource = reference.source.toLowerCase().includes('soundcloud') ? 'youtube' : 'soundcloud';
     let hydrated = 0;
@@ -479,6 +483,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
             if (!canonical || canonical === reference.url || hasEntries(result) || !result.url || result.url === canonical) continue;
             if (String(result.id) === reference.id && sameSource) continue;
             if (!compatibleAlternative(query, song, reference, result)) continue;
+            if (needsArtist && artist && !matchesSearchQuery(artist, result)) continue;
             const candidate = this.createSong({ ...result, extractor: result.extractor ?? attempt.source }, {
               metadata: song.metadata, ...(song.member ? { member: song.member } : {}),
             });
