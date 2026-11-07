@@ -7,7 +7,7 @@ const track = (n = 0, extra = {}) => ({ url: `https://example.com/${n}`, title: 
 const ids = p => p.tracks.map(t => t.id);
 async function fails(action, statusCode, message) {
   await assert.rejects(async () => await action(), e => {
-    assert.equal(e.statusCode, statusCode);
+    assert.equal(e.kind, { 404: 'not_found', 409: 'conflict', 400: 'invalid' }[statusCode]);
     assert.equal(e.message, message);
     return true;
   });

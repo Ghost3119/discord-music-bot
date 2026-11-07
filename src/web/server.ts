@@ -1,3 +1,4 @@
+import { PersistenceError } from '../domain/persistence';
 import Fastify, { FastifyInstance, FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
@@ -244,6 +245,11 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     }
   });
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof PersistenceError) {
+      const status = { not_found: 404, conflict: 409, invalid: 400 }[error.kind];
+      void reply.code(status).send({ error: error.message });
+      return;
+    }
     const candidate = error as Error & { statusCode?: number; errorCode?: string };
     const bridgeErrors: Record<string, [number, string]> = {
       GUILD_ACCESS_DENIED: [403, 'You do not have access to this Discord server'],

@@ -8,10 +8,9 @@ import * as schema from './schema';
 import type { Track } from './contracts';
 import { sanitizeThumbnailUrl, youtubeThumbnail } from '../music/artwork';
 
-export interface WebUser { id: string; username: string; avatar: string | null }
-export interface WebSession { user: WebUser; tokenHash: string; csrfHash: string; expiresAt: number }
-export interface SavedPlaylist { id: string; name: string; tracks: Track[] }
-export type TrackMetadata = Omit<Track, 'id'>;
+import type { WebUser, WebSession, SavedPlaylist, TrackMetadata } from '../domain/persistence';
+import { PersistenceError } from '../domain/persistence';
+export type { WebUser, WebSession, SavedPlaylist, TrackMetadata } from '../domain/persistence';
 export class WebError extends Error {
   constructor(public readonly statusCode: number, message: string) { super(message); }
 }
@@ -64,11 +63,11 @@ export class WebDatabase {
   }
   getPlaylist(userId: string, guildId: string, playlistId: string): SavedPlaylist {
     const row = this.orm.select().from(schema.playlists).where(and(eq(schema.playlists.id, playlistId), eq(schema.playlists.userId, userId), eq(schema.playlists.guildId, guildId))).get();
-    if (!row) throw new WebError(404, 'Playlist not found');
+    if (!row) throw new PersistenceError('not_found', 'Playlist not found');
     return { id: row.id, name: row.name, tracks: this.playlistTracks(playlistId) };
   }
   createPlaylist(userId: string, guildId: string, name: string, now: number): SavedPlaylist {
-    if (this.listPlaylists(userId, guildId).length >= 100) throw new WebError(409, 'Playlist limit reached');
+    if (this.listPlaylists(userId, guildId).length >= 100) throw new PersistenceError('conflict', 'Playlist limit reached');
     const id = randomUUID();
     this.orm.transaction(tx => {
       tx.insert(schema.guildSettings).values({ guildId, updatedAt: now }).onConflictDoNothing().run();
@@ -77,8 +76,8 @@ export class WebDatabase {
     return { id, name, tracks: [] };
   }
   createPlaylistWithTracks(userId: string, guildId: string, name: string, items: TrackMetadata[], now: number): SavedPlaylist {
-    if (!items.length || items.length > 500) throw new WebError(400, 'Playlists must contain between 1 and 500 tracks');
-    if (this.listPlaylists(userId, guildId).length >= 100) throw new WebError(409, 'Playlist limit reached');
+    if (!items.length || items.length > 500) throw new PersistenceError('invalid', 'Playlists must contain between 1 and 500 tracks');
+    if (this.listPlaylists(userId, guildId).length >= 100) throw new PersistenceError('conflict', 'Playlist limit reached');
     const playlistId = randomUUID();
     const rows = items.map((metadata, position) => ({ ...metadata, id: randomUUID(), playlistId, position }));
     this.orm.transaction(tx => {
@@ -102,14 +101,14 @@ export class WebDatabase {
   }
   addPlaylistTrack(userId: string, guildId: string, playlistId: string, metadata: TrackMetadata): Track {
     const playlist = this.getPlaylist(userId, guildId, playlistId);
-    if (playlist.tracks.length >= 500) throw new WebError(409, 'Playlist track limit reached');
+    if (playlist.tracks.length >= 500) throw new PersistenceError('conflict', 'Playlist track limit reached');
     const row = { ...metadata, id: randomUUID(), playlistId, position: playlist.tracks.length };
     this.orm.insert(schema.playlistTracks).values(row).run();
     return track(row);
   }
   deletePlaylistTrack(userId: string, guildId: string, playlistId: string, trackId: string): void {
     const playlist = this.getPlaylist(userId, guildId, playlistId);
-    if (!playlist.tracks.some(item => item.id === trackId)) throw new WebError(404, 'Track not found');
+    if (!playlist.tracks.some(item => item.id === trackId)) throw new PersistenceError('not_found', 'Track not found');
     this.orm.transaction(() => {
       this.orm.delete(schema.playlistTracks).where(and(eq(schema.playlistTracks.playlistId, playlistId), eq(schema.playlistTracks.id, trackId))).run();
       this.writeOrder(playlistId, playlist.tracks.filter(item => item.id !== trackId).map(item => item.id));
@@ -118,7 +117,7 @@ export class WebDatabase {
   reorderPlaylist(userId: string, guildId: string, playlistId: string, trackIds: string[]): SavedPlaylist {
     const playlist = this.getPlaylist(userId, guildId, playlistId);
     const existing = new Set(playlist.tracks.map(item => item.id));
-    if (existing.size !== trackIds.length || new Set(trackIds).size !== trackIds.length || trackIds.some(id => !existing.has(id))) throw new WebError(400, 'trackIds must contain every playlist track exactly once');
+    if (existing.size !== trackIds.length || new Set(trackIds).size !== trackIds.length || trackIds.some(id => !existing.has(id))) throw new PersistenceError('invalid', 'trackIds must contain every playlist track exactly once');
     this.orm.transaction(() => this.writeOrder(playlistId, trackIds));
     return this.getPlaylist(userId, guildId, playlistId);
   }
@@ -134,7 +133,7 @@ export class WebDatabase {
     const existing = this.listFavorites(userId, guildId);
     const duplicate = existing.find(item => item.url === metadata.url);
     if (duplicate) return duplicate;
-    if (existing.length >= 1000) throw new WebError(409, 'Favorite limit reached');
+    if (existing.length >= 1000) throw new PersistenceError('conflict', 'Favorite limit reached');
     const row = { ...metadata, id: randomUUID(), userId, guildId, createdAt: now };
     this.orm.transaction(tx => {
       tx.insert(schema.guildSettings).values({ guildId, updatedAt: now }).onConflictDoNothing().run();
@@ -144,7 +143,7 @@ export class WebDatabase {
   }
   deleteFavorite(userId: string, guildId: string, id: string): void {
     const result = this.orm.delete(schema.favorites).where(and(eq(schema.favorites.id, id), eq(schema.favorites.userId, userId), eq(schema.favorites.guildId, guildId))).run();
-    if (!result.changes) throw new WebError(404, 'Favorite not found');
+    if (!result.changes) throw new PersistenceError('not_found', 'Favorite not found');
   }
 }
 
