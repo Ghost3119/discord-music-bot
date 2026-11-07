@@ -92,6 +92,7 @@ export default function App() {
             guildId={app.guildId}
             guildsLoading={app.guildsLoading}
             busy={app.busy}
+            loggingOut={app.loggingOut}
             state={app.state}
             onGuildChange={(id) => {
               app.setGuildId(id);
@@ -132,6 +133,7 @@ export default function App() {
             <>
               {app.view === 'player' && (
                 <PlayerView
+                  guildId={app.guildId}
                   playback={playback}
                   connection={app.connection}
                   query={app.query}

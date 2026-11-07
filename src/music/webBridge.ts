@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Client, Guild, GuildMember, VoiceBasedChannel } from 'discord.js';
+import { Client, Guild, GuildMember, PermissionFlagsBits, VoiceBasedChannel } from 'discord.js';
 import { Queue, Song } from 'distube';
 import type { GuildPermissions, MusicAction, MusicBridge, MusicControlResult, PlaybackSnapshot, Track, WebAccessMode } from '../web/contracts';
 import { recommendForQueue, updateRadio } from './recommendations';
@@ -114,15 +114,21 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
   function buildPermissions(userId: string, member: GuildMember, queue?: Queue): GuildPermissions {
     const canControl = canControlVoice(client, member, queue);
     const isAdmin = adminUsers.has(userId);
+    const memberPerms = member.permissions as { has?: (flag: bigint) => boolean } | undefined;
+    const isGuildAdmin =
+      (Boolean(member.guild?.ownerId) && member.guild.ownerId === userId) ||
+      (typeof memberPerms?.has === 'function' &&
+        (memberPerms.has(PermissionFlagsBits.Administrator) || memberPerms.has(PermissionFlagsBits.ManageGuild)));
+    const canViewDiagnostics = isAdmin || isGuildAdmin;
     return {
-      role: isAdmin ? 'admin' : canControl ? 'voice' : 'member',
+      role: canViewDiagnostics ? 'admin' : canControl ? 'voice' : 'member',
       isMember: true,
       inVoiceChannel: canControl,
       canControl,
       isAdmin,
       canRead: true,
       canManageLibrary: true,
-      canViewDiagnostics: isAdmin,
+      canViewDiagnostics,
       canManageConfig: isAdmin,
     };
   }
@@ -202,12 +208,13 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
         currentTime: queue && Number.isFinite(queue.currentTime) ? Math.max(0, queue.currentTime) : 0,
         volume: queue?.volume ?? 50, repeat: queue?.repeatMode ?? 0, autoplay: queue && !queue.stopped ? queue.autoplay : false,
         voice: queue?.voiceChannel ? { id: queue.voiceChannel.id, name: boundedText(queue.voiceChannel.name, 100), members: queue.voiceChannel.members.size } : null,
-        health: includeDiagnostics ? { connected: client.isReady(), ping: Math.max(0, Math.round(client.ws.ping)),
+        health: includeDiagnostics ? { connected: client.isReady(), ping: Number.isFinite(client.ws.ping) ? Math.max(0, Math.round(client.ws.ping)) : 0,
           voiceConnected: Boolean(queue?.voiceChannel && !queue.voice.isDisconnected), mode: state?.mode ?? 'idle',
           attempts: state?.attempt ?? 0, recentFailures: state?.failures.filter(time => now - time < 300_000).length ?? 0,
           lastProgressAt: state?.lastProgress ? new Date(state.lastProgress).toISOString() : null,
           monitor: health?.monitor ?? false, breaker: health?.breaker ?? false,
-          ...(getAudioPreloader(distube) ? { preload: getAudioPreloader(distube)!.metrics } : {}) } : {},
+          // Gateway status (connected, ping) and static engine flags (monitor, breaker) carry no cross-guild activity; preload counters/slots are global-admin only.
+          ...(userPermissions.isAdmin && getAudioPreloader(distube) ? { preload: getAudioPreloader(distube)!.metrics } : {}) } : {},
         incidents: includeDiagnostics ? incidents.slice(0, 10) : [],
         permissions: userPermissions };
     },

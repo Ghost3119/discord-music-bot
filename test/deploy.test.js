@@ -55,3 +55,37 @@ test('an incomplete registration response fails instead of authorizing activatio
     assert.equal(error.code, 1); assert.match(error.stderr, /registro distinto del esperado/); return true;
   });
 });
+
+test('GUILD_IDS registers slash commands across multiple servers without requiring singular GUILD_ID', async t => {
+  const f = fixture(
+    t,
+    `async function(route, options) {
+      console.log('ROUTE:' + route);
+      return options.body.map(command => ({ name: command.name }));
+    }`,
+  );
+  delete f.options.env.GUILD_ID;
+  f.options.env.GUILD_IDS = '333333333333333333, 444444444444444444, 333333333333333333';
+  const result = await run(process.execPath, ['--require', f.preload, entry], f.options);
+  assert.match(result.stdout, /ROUTE:\/applications\/111111111111111111\/guilds\/333333333333333333\/commands/);
+  assert.match(result.stdout, /ROUTE:\/applications\/111111111111111111\/guilds\/444444444444444444\/commands/);
+  assert.match(result.stdout, /2 servidores/);
+  assert.match(result.stdout, /Comandos registrados correctamente/);
+  assert.equal(result.stderr, '');
+});
+
+test('--global registers application commands without requiring GUILD_ID or GUILD_IDS', async t => {
+  const f = fixture(
+    t,
+    `async function(route, options) {
+      console.log('ROUTE:' + route);
+      return options.body.map(command => ({ name: command.name }));
+    }`,
+  );
+  delete f.options.env.GUILD_ID;
+  delete f.options.env.GUILD_IDS;
+  const result = await run(process.execPath, ['--require', f.preload, entry, '--global'], f.options);
+  assert.match(result.stdout, /ROUTE:\/applications\/111111111111111111\/commands/);
+  assert.match(result.stdout, /Comandos registrados correctamente/);
+  assert.equal(result.stderr, '');
+});

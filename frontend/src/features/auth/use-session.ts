@@ -6,6 +6,28 @@ interface SessionOptions {
   onExpire: () => void;
 }
 
+const LAST_GUILD_PREFIX = 'sonora:last-guild:';
+
+function readStoredGuild(userId: string): string {
+  if (!userId) return '';
+  try {
+    return typeof window !== 'undefined' ? window.localStorage?.getItem(`${LAST_GUILD_PREFIX}${userId}`) || '' : '';
+  } catch {
+    return '';
+  }
+}
+
+function writeStoredGuild(userId: string, guildId: string): void {
+  if (!userId || !guildId) return;
+  try {
+    if (typeof window !== 'undefined') {
+      window.localStorage?.setItem(`${LAST_GUILD_PREFIX}${userId}`, guildId);
+    }
+  } catch {
+    // Ignore storage quota or privacy-mode errors
+  }
+}
+
 /** Owns authentication and the guilds visible to the current Discord member. */
 export function useSession({ onError, onExpire }: SessionOptions) {
   const [session, setSession] = useState<Session | null>(null);
@@ -57,7 +79,16 @@ export function useSession({ onError, onExpire }: SessionOptions) {
       .then(({ guilds: next }) => {
         if (abort.signal.aborted) return;
         setGuilds(next);
-        setGuildId(next[0]?.id || '');
+        setGuildId((current) => {
+          if (current && next.some((item) => item.id === current)) {
+            writeStoredGuild(session.user.id, current);
+            return current;
+          }
+          const stored = readStoredGuild(session.user.id);
+          const chosen = (stored && next.find((item) => item.id === stored)?.id) || next[0]?.id || '';
+          if (chosen) writeStoredGuild(session.user.id, chosen);
+          return chosen;
+        });
       })
       .catch((problem) => {
         if (!abort.signal.aborted) reportError(problem);
@@ -67,6 +98,12 @@ export function useSession({ onError, onExpire }: SessionOptions) {
       });
     return () => abort.abort();
   }, [session, reportError]);
+
+  useEffect(() => {
+    if (session?.user.id && guildId && guilds.some((item) => item.id === guildId)) {
+      writeStoredGuild(session.user.id, guildId);
+    }
+  }, [session?.user.id, guildId, guilds]);
 
   const retryAuth = useCallback(() => setAuthAttempt((value) => value + 1), []);
   const completeLogout = useCallback(() => {

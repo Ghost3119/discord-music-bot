@@ -142,6 +142,8 @@ test('missing configuration reports variable names without exposing provided cre
   const guildMode = createDevEnvironment(environment({ WEB_ACCESS_MODE: 'guild_members', WEB_ALLOWED_USER_IDS: '', WEB_ALLOWED_GUILD_IDS: '333333333333333333' }));
   assert.equal(guildMode.backendEnv.WEB_ACCESS_MODE, 'guild_members');
   assert.equal(guildMode.backendEnv.WEB_ALLOWED_GUILD_IDS, '333333333333333333');
+  const multiGuildMode = createDevEnvironment(environment({ GUILD_ID: '', GUILD_IDS: '333333333333333333,444444444444444444' }));
+  assert.equal(multiGuildMode.backendEnv.GUILD_IDS, '333333333333333333,444444444444444444');
 });
 
 test('port preflight refuses an occupied port without closing the existing server', async t => {

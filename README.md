@@ -49,6 +49,8 @@ Crea un archivo `.env` en la raiz del proyecto:
 DISCORD_TOKEN=token_del_bot
 CLIENT_ID=id_de_la_aplicacion
 GUILD_ID=id_del_servidor
+# Opcional para varios servidores (IDs separados por comas):
+# GUILD_IDS=id_servidor_1,id_servidor_2
 ```
 
 Spotify admite credenciales opcionales, distintas de las de Discord:
@@ -83,7 +85,7 @@ npm run build
 
 Para reinstalar las versiones guardadas en `package-lock.json`, usa `npm ci`. El proyecto conserva un override de `tar` a `^7.5.22` porque el instalador nativo de Opus todavía declara la rama 6; esta versión incluye las correcciones de los [avisos de seguridad de node-tar](https://github.com/isaacs/node-tar/security/advisories). Después de cambiar dependencias, ejecuta `npm audit`, `npm test` y `npm run deploy:check`.
 
-Registra los comandos slash en tu servidor:
+Registra los comandos slash en tu servidor (o en todos los definidos en `GUILD_IDS`, con `--guild <id>` puntual o `--global`):
 
 ```powershell
 npm run deploy

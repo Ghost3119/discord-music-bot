@@ -21,22 +21,35 @@ export function useSonoraApp() {
   const runningOperation = useRef(0);
   const runningKey = useRef('');
   const musicRequest = useRef<AbortController | null>(null);
+  const mutationRequest = useRef<AbortController | null>(null);
 
   const invalidateOperations = useCallback(() => {
     operationScope.current.invalidate();
     musicRequest.current?.abort();
+    mutationRequest.current?.abort();
     runningKey.current = '';
     runningOperation.current++;
     setBusy('');
   }, []);
+
   const auth = useSession({ onError: setError, onExpire: invalidateOperations });
   const { session, guildId, setGuildId, reportError } = auth;
   selectedGuildRef.current = guildId;
   const { state, connection, refresh } = usePlayback(session ? guildId : '', reportError);
+  const activeScope = useRef({ guildId, userId: session?.user.id });
+
   useEffect(() => {
-    setNotice('');
-    return () => { musicRequest.current?.abort(); };
-  }, [guildId, session?.user.id]);
+    if (activeScope.current.guildId !== guildId || activeScope.current.userId !== session?.user.id) {
+      activeScope.current = { guildId, userId: session?.user.id };
+      invalidateOperations();
+      setNotice('');
+      setError('');
+    }
+    return () => {
+      musicRequest.current?.abort();
+      mutationRequest.current?.abort();
+    };
+  }, [guildId, session?.user.id, invalidateOperations]);
 
   async function run(key: string, task: () => Promise<void>) {
     if (runningKey.current || busy || loggingOut) return;
@@ -49,26 +62,52 @@ export function useSonoraApp() {
     } catch (problem) {
       if (!(problem instanceof AbandonedOperation)) reportError(problem);
     } finally {
-      if (operation === runningOperation.current) { runningKey.current = ''; setBusy(''); }
+      if (operation === runningOperation.current) {
+        runningKey.current = '';
+        setBusy('');
+      }
     }
   }
 
   async function mutate(path: string, method: string, data?: unknown): Promise<unknown> {
     if (!session) return undefined;
-    if (/\/(?:playlists|favorites)(?:\/|$)/.test(path) && state?.permissions?.canManageLibrary !== true) throw new Error('No tienes permiso para modificar la biblioteca.');
-    return await operationScope.current.run(() =>
-      api(
-        path,
-        {
-          method,
-          ...(data === undefined ? {} : { body: JSON.stringify(data) }),
-        },
-        session.csrfToken,
-      ),
-    );
+    if (/\/(?:playlists|favorites)(?:\/|$)/.test(path) && state?.permissions?.canManageLibrary !== true) {
+      throw new Error('No tienes permiso para modificar la biblioteca.');
+    }
+    const controller = new AbortController();
+    mutationRequest.current = controller;
+    try {
+      return await operationScope.current.run(() =>
+        api(
+          path,
+          {
+            method,
+            signal: controller.signal,
+            ...(data === undefined ? {} : { body: JSON.stringify(data) }),
+          },
+          session.csrfToken,
+        ),
+      );
+    } catch (problem) {
+      if (controller.signal.aborted) throw new AbandonedOperation();
+      throw problem;
+    } finally {
+      if (mutationRequest.current === controller) mutationRequest.current = null;
+    }
   }
 
-  const library = useLibrary({ guildId, session, canManageLibrary: state?.permissions?.canManageLibrary === true, canControl: state?.permissions?.canControl === true, reportError, run, mutate, setNotice, setView, refresh });
+  const library = useLibrary({
+    guildId,
+    session,
+    canManageLibrary: state?.permissions?.canManageLibrary === true,
+    canControl: state?.permissions?.canControl === true,
+    reportError,
+    run,
+    mutate,
+    setNotice,
+    setView,
+    refresh,
+  });
 
   useEffect(() => {
     if (!notice) return;
@@ -76,7 +115,9 @@ export function useSonoraApp() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  useEffect(() => { if (view === 'diagnostics' && state?.permissions?.canViewDiagnostics !== true) setView('player'); }, [view, state?.permissions?.canViewDiagnostics]);
+  useEffect(() => {
+    if (view === 'diagnostics' && state?.permissions?.canViewDiagnostics !== true) setView('player');
+  }, [view, state?.permissions?.canViewDiagnostics]);
 
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
   useEffect(() => {
@@ -110,18 +151,33 @@ export function useSonoraApp() {
     const originGuild = guildId;
     return run(command.action, async () => {
       if (!session) return;
-      const controller = new AbortController(); musicRequest.current = controller;
+      const controller = new AbortController();
+      musicRequest.current = controller;
       try {
-        const result = await api<MusicControlResult>(`/api/guilds/${originGuild}/actions`, { method: 'POST', body: JSON.stringify(command), signal: controller.signal }, session.csrfToken);
+        const result = await api<MusicControlResult>(
+          `/api/guilds/${originGuild}/actions`,
+          { method: 'POST', body: JSON.stringify(command), signal: controller.signal },
+          session.csrfToken,
+        );
         if (controller.signal.aborted || originGuild !== selectedGuildRef.current) throw new AbandonedOperation();
         await refresh();
         if (controller.signal.aborted || originGuild !== selectedGuildRef.current) throw new AbandonedOperation();
-        if (command.action === 'autoplay' && typeof result.autoplay === 'boolean') setNotice(result.autoplay ? 'Radio activada.' : 'Radio desactivada.');
-        if (command.action === 'recommend' && typeof result.recommendationsAdded === 'number') setNotice(result.recommendationsAdded ? `Añadidas ${result.recommendationsAdded} recomendaciones a la cola.` : 'No encontramos recomendaciones nuevas para esta cola.');
-      } catch (error) {
+        if (command.action === 'autoplay' && typeof result.autoplay === 'boolean') {
+          setNotice(result.autoplay ? 'Radio activada.' : 'Radio desactivada.');
+        }
+        if (command.action === 'recommend' && typeof result.recommendationsAdded === 'number') {
+          setNotice(
+            result.recommendationsAdded
+              ? `Añadidas ${result.recommendationsAdded} recomendaciones a la cola.`
+              : 'No encontramos recomendaciones nuevas para esta cola.',
+          );
+        }
+      } catch (problem) {
         if (controller.signal.aborted) throw new AbandonedOperation();
-        throw error;
-      } finally { if (musicRequest.current === controller) musicRequest.current = null; }
+        throw problem;
+      } finally {
+        if (musicRequest.current === controller) musicRequest.current = null;
+      }
     });
   }
 
@@ -129,24 +185,30 @@ export function useSonoraApp() {
     event.preventDefault();
     if (!query.trim() || state?.permissions?.canControl !== true) return;
     const text = query.trim();
+    const originGuild = guildId;
     await run('play', async () => {
-      await mutate(`/api/guilds/${guildId}/actions`, 'POST', { action: 'play', query: text });
+      await mutate(`/api/guilds/${originGuild}/actions`, 'POST', { action: 'play', query: text });
+      if (originGuild !== selectedGuildRef.current) throw new AbandonedOperation();
       setQuery('');
       setNotice('Canción enviada a la cola.');
       await refresh();
+      if (originGuild !== selectedGuildRef.current) throw new AbandonedOperation();
     });
   }
 
   async function enqueueTrack(track: Track) {
     if (state?.permissions?.canControl !== true) return;
+    const originGuild = guildId;
     await run('play', async () => {
-      await mutate(`/api/guilds/${guildId}/actions`, 'POST', {
+      await mutate(`/api/guilds/${originGuild}/actions`, 'POST', {
         action: 'play',
         query: track.url,
         track: trackMetadata(track),
       });
+      if (originGuild !== selectedGuildRef.current) throw new AbandonedOperation();
       setNotice(`«${track.title}» añadida a la cola.`);
       await refresh();
+      if (originGuild !== selectedGuildRef.current) throw new AbandonedOperation();
     });
   }
 

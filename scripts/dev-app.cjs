@@ -8,7 +8,8 @@ const { setTimeout: delay } = require('node:timers/promises');
 
 function createDevEnvironment(env) {
   const accessKey = env.WEB_ACCESS_MODE?.trim() === 'guild_members' ? 'WEB_ALLOWED_GUILD_IDS' : 'WEB_ALLOWED_USER_IDS';
-  const required = ['DISCORD_TOKEN', 'CLIENT_ID', 'GUILD_ID', 'WEB_CLIENT_SECRET', accessKey];
+  const hasGuildScope = Boolean(env.GUILD_ID?.trim() || env.GUILD_IDS?.trim() || env.WEB_ALLOWED_GUILD_IDS?.trim());
+  const required = ['DISCORD_TOKEN', 'CLIENT_ID', ...(hasGuildScope ? [] : ['GUILD_ID']), 'WEB_CLIENT_SECRET', accessKey];
   const missingKeys = required.filter(key => !env[key]?.trim());
   if (missingKeys.length) throw Object.assign(new Error(`Completa estas variables en .env: ${missingKeys.join(', ')}`), { code: 'CONFIG_REQUIRED', missingKeys });
   const backendPort = Number(env.WEB_PORT || '8080');
