@@ -407,3 +407,18 @@ test('yt-dlp User-Agent header propagates to FFmpeg input args in fallback playb
   const injectedUrl = await f.plugin.getStreamURL(f.q.songs[0]);
   assert.equal(f.plugin.getStreamUserAgent(injectedUrl, f.q.songs[0].url), undefined);
 });
+
+test('YtDlpSearchPlugin excludes ad-poisoned YouTube TV clients via extractorArgs by default', async t => {
+  const runner = require('../dist/music/ytDlpRunner');
+  let capturedFlags;
+  t.mock.method(runner, 'runYtDlp', async (_input, flags) => {
+    capturedFlags = flags;
+    return { id: 'ehIm7sCUAVg', title: 'El Drip', webpage_url: 'https://www.youtube.com/watch?v=ehIm7sCUAVg', url: 'https://audio.test/visionos' };
+  });
+  const pluginPath = require.resolve('../dist/music/ytDlpSearchPlugin');
+  delete require.cache[pluginPath];
+  const { YtDlpSearchPlugin: FreshPlugin } = require(pluginPath);
+  const plugin = new FreshPlugin();
+  await plugin.resolve('https://www.youtube.com/watch?v=ehIm7sCUAVg', {});
+  assert.equal(capturedFlags.extractorArgs, 'youtube:player_client=default,-tv_samsung,-tv');
+});

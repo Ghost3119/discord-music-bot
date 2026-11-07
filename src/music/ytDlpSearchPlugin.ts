@@ -704,6 +704,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
       skipDownload: true,
       simulate: true,
       jsRuntimes: `node:${process.execPath}`,
+      extractorArgs: 'youtube:player_client=default,-tv_samsung,-tv',
       ...extraFlags,
     };
 
