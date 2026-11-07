@@ -18,7 +18,7 @@ Configura una sola vez `.env` con `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, `WEB
 
 Para compartir con ngrok, ejecuta `ngrok http http://127.0.0.1:5173 --host-header=rewrite`. Copia el origen HTTPS que indique ngrok a `WEB_DEV_PUBLIC_ORIGIN` en `.env` (sin barra final), registra `https://TU-DOMINIO/auth/discord/callback` en OAuth2 de Discord y reinicia `npm run dev`. Abre y comparte ese enlace HTTPS. Conserva ambos procesos en ejecución. Para volver al acceso local, elimina `WEB_DEV_PUBLIC_ORIGIN` y reinicia la app. Los permisos de Discord siguen aplicando: los usuarios autorizados deben estar en el canal de voz del bot para controlar la música.
 
-Si falta configuración o un puerto está ocupado, el comando muestra el motivo antes de iniciar el bot. Si dejaste Vite abierto por separado, cierra esa terminal primero. Para comprobar sin arrancar ni instalar nada: `npm run dev:check`.
+Si falta configuración o un puerto está ocupado, el comando muestra el motivo antes de iniciar el bot. Si dejaste Vite abierto por separado, cierra esa terminal primero. Para comprobar sin arrancar ni instalar nada: `npm run dev:check`. Para ejecutarlo en contenedor de producción local, consulta [Inicio con Docker](#inicio-con-docker).
 
 ## Que soporta
 
@@ -112,6 +112,33 @@ npm run dev
 ```
 
 `npm run dev:bot` conserva el arranque anterior de solo el bot. `npm run start` conserva el supervisor de la versión compilada; el panel estático requiere `WEB_ENABLED=true` y la configuración del puerto 8080 descrita en la guía del dashboard.
+
+## Inicio con Docker
+
+Para ejecutar el bot y el panel **SONORA** en producción local con Docker Compose (imagen multi-stage Node 22 slim, usuario sin privilegios y persistencia en `./data` y `./logs`):
+
+1. Configura tu archivo `.env` en la raíz a partir de `.env.example` (si habilitas el panel local en `http://127.0.0.1:8080`, define `WEB_ENABLED=true`, `WEB_PORT=8080`, `WEB_ORIGIN=http://127.0.0.1:8080` y registra `http://127.0.0.1:8080/auth/discord/callback` en Discord OAuth2).
+2. Si es la primera vez o cambiaron definiciones de comandos slash, regístralos con `npm run deploy`.
+3. Construye y levanta el contenedor en segundo plano:
+
+```powershell
+docker compose up -d --build
+```
+
+Comandos habituales de operación:
+
+```powershell
+# Ver registros en tiempo real
+docker compose logs -f sonora
+
+# Verificar el endpoint de salud local
+curl http://127.0.0.1:8080/healthz
+
+# Detener el contenedor (conserva playlists, sesiones, colas y logs en ./data y ./logs)
+docker compose down
+```
+
+`docker-compose.yml` publica el puerto únicamente en loopback del host (`127.0.0.1:8080:8080`) y arranca con el supervisor de producción (`node scripts/supervise.cjs`). Para exponer el panel detrás de un reverse proxy con HTTPS, ajustar permisos de volúmenes en Linux (`UID 1000`), actualizar la imagen o hacer copias de seguridad, consulta la guía completa en [docs/DOCKER.md](docs/DOCKER.md).
 
 ## Comandos
 
