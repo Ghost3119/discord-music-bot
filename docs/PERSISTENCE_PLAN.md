@@ -166,7 +166,7 @@ flowchart LR
 | Fase | Estado | PR |
 | --- | --- | --- |
 | F0 Pruebas de contrato | Hecho (pendiente de PR) | — |
-| F1 Puertos asíncronos y errores de dominio | Pendiente | — |
+| F1 Puertos asíncronos y errores de dominio | Hecho (pendiente de PR) | — |
 | F2 Adaptador SQLite + inyección | Pendiente | — |
 | F3 Checkpoints e historial detrás de puertos | Pendiente | — |
 | F4 Migraciones por dialecto | Pendiente | — |
