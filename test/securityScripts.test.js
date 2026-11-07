@@ -65,7 +65,7 @@ test('yt-dlp CLI honors destination settings loaded from dotenv', async () => {
   const data = Buffer.from('verified fixture'), writes = [];
   const moduleMock = { exports: {} }, environment = {};
   const requireMock = name => name === 'node:path' ? path : name === 'node:crypto' ? require(name)
-    : name === 'dotenv' ? { config: () => { environment.YTDLP_DIR = path.join(os.tmpdir(), 'custom-ytdlp-fixture'); environment.YTDLP_FILENAME = 'yt-dlp.exe'; } }
+    : name === 'dotenv' ? { config: options => { assert.equal(options.quiet, true); environment.YTDLP_DIR = path.join(os.tmpdir(), 'custom-ytdlp-fixture'); environment.YTDLP_FILENAME = 'yt-dlp.exe'; } }
       : { writeFile: async target => writes.push(target), rename: async (_from, target) => writes.push(target), rm: async () => {} };
   requireMock.main = moduleMock;
   vm.runInNewContext(fs.readFileSync(require.resolve('../scripts/update-ytdlp.cjs'), 'utf8'), {
