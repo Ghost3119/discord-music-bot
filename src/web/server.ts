@@ -148,11 +148,17 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
       canManageConfig: admin,
     };
   }
+  function projectHealth(health: Record<string, unknown>, permissions: GuildPermissions): Record<string, unknown> {
+    if (!permissions.canViewDiagnostics) return {};
+    if (permissions.isAdmin || !Object.hasOwn(health, 'preload')) return health;
+    const { preload: _preload, ...guildScopedHealth } = health;
+    return guildScopedHealth;
+  }
   async function projectSnapshot(userId: string, guildId: string, snapshot: PlaybackSnapshot): Promise<PlaybackSnapshot> {
     const permissions = await resolvePermissions(userId, guildId, snapshot);
     return {
       ...snapshot,
-      health: permissions.canViewDiagnostics ? snapshot.health : {},
+      health: projectHealth(snapshot.health, permissions),
       incidents: permissions.canViewDiagnostics ? snapshot.incidents : [],
       permissions,
     };
@@ -371,7 +377,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const snapshot = await bridge.getState(userId, guildId);
     const permissions = await resolvePermissions(userId, guildId, snapshot);
     if (!permissions.canViewDiagnostics) throw new WebError(403, 'Administrator access is required');
-    return { guildId: snapshot.guildId, health: snapshot.health, incidents: snapshot.incidents };
+    return { guildId: snapshot.guildId, health: projectHealth(snapshot.health, permissions), incidents: snapshot.incidents };
   });
   app.get('/api/guilds/:guildId/state', async request => {
     const userId = request.webSession!.user.id;

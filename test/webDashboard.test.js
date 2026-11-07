@@ -925,18 +925,22 @@ test('two-guild isolation: members of one server cannot view or control queues, 
   const { DisTube, Song } = require('distube');
   const { createMusicBridge } = require('../dist/music/webBridge');
   const { registerDisTubeEvents } = require('../dist/music/events');
+  const { getAudioPreloader } = require('../dist/music/audioPreloader');
   const { HistoryStore } = require('../dist/music/history');
   const { YtDlpSearchPlugin } = require('../dist/music/ytDlpSearchPlugin');
 
   const USER_A = '111111111111111118';
   const USER_B = '222222222222222228';
   const SHARED_USER = '333333333333333338';
+  const GLOBAL_ADMIN = '444444444444444448';
   const BOT_ID = '999999999999999998';
 
   const historyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sonora-multi-guild-hist-'));
-  t.after(() => fs.rmSync(historyDir, { recursive: true, force: true }));
   const history = new HistoryStore(path.join(historyDir, 'history.json'));
-  t.after(() => history.close());
+  t.after(async () => {
+    await history.close();
+    fs.rmSync(historyDir, { recursive: true, force: true });
+  });
 
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
   client.user = { id: BOT_ID };
@@ -1021,6 +1025,15 @@ test('two-guild isolation: members of one server cannot view or control queues, 
         permissions: new PermissionsBitField([PermissionsBitField.Flags.ManageGuild]),
       },
     ],
+    [
+      GLOBAL_ADMIN,
+      {
+        id: GLOBAL_ADMIN,
+        user: { bot: false },
+        inVoice: false,
+        permissions: new PermissionsBitField(),
+      },
+    ],
   ]);
   const guild2Members = new Map([
     [
@@ -1070,6 +1083,9 @@ test('two-guild isolation: members of one server cannot view or control queues, 
 
   history.finish(q1, song1, 'failed', 'ERR_G1', '0001');
   history.finish(q2, song2, 'failed', 'ERR_G2', '0002');
+  const preloader = getAudioPreloader(distube);
+  preloader.watch(q1);
+  preloader.started(q2, {}, 'buffer');
 
   const db = openWebDatabase(':memory:');
   t.after(() => db.close());
@@ -1079,6 +1095,7 @@ test('two-guild isolation: members of one server cannot view or control queues, 
     WEB_CLIENT_SECRET: 'server-only-secret',
     WEB_ACCESS_MODE: 'guild_members',
     WEB_ALLOWED_GUILD_IDS: `${GUILD},${OTHER_GUILD}`,
+    WEB_ADMIN_USER_IDS: GLOBAL_ADMIN,
     WEB_DATABASE_PATH: ':memory:',
   });
   const bridge = createMusicBridge(client, history, {
@@ -1117,6 +1134,7 @@ test('two-guild isolation: members of one server cannot view or control queues, 
   const authA = await login(USER_A);
   const authB = await login(USER_B);
   const authShared = await login(SHARED_USER);
+  const authGlobalAdmin = await login(GLOBAL_ADMIN);
 
   // 1. Guild visibility is strictly isolated per member
   assert.deepEqual(
@@ -1178,15 +1196,73 @@ test('two-guild isolation: members of one server cannot view or control queues, 
     1,
   );
 
-  // 4. USER_A controls and inspects diagnostics in GUILD without touching OTHER_GUILD or global /api/config
+  // 4. USER_A controls and inspects diagnostics in GUILD without touching OTHER_GUILD, global /api/config or shared health.preload
   const stateA1 = (await app.inject({ url: `/api/guilds/${GUILD}/state`, headers: { cookie: authA.cookie } })).json();
   assert.equal(stateA1.current.title, 'Himno Uno');
   assert.equal(stateA1.permissions.canControl, true);
   assert.equal(stateA1.permissions.canViewDiagnostics, true);
+  assert.equal(stateA1.permissions.isAdmin, false);
   assert.equal(stateA1.permissions.canManageConfig, false);
+  assert.equal(Object.hasOwn(stateA1.health, 'preload'), false);
+  assert.equal(typeof stateA1.health.connected, 'boolean');
+  assert.equal(typeof stateA1.health.ping, 'number');
+  assert.equal(typeof stateA1.health.monitor, 'boolean');
+  assert.equal(typeof stateA1.health.breaker, 'boolean');
   assert.deepEqual(stateA1.incidents.map(i => i.code), ['ERR_G1']);
-  assert.equal((await app.inject({ url: `/api/guilds/${GUILD}/diagnostics`, headers: { cookie: authA.cookie } })).statusCode, 200);
+  const diagA1Res = await app.inject({ url: `/api/guilds/${GUILD}/diagnostics`, headers: { cookie: authA.cookie } });
+  assert.equal(diagA1Res.statusCode, 200);
+  assert.equal(Object.hasOwn(diagA1Res.json().health, 'preload'), false);
   assert.equal((await app.inject({ url: '/api/config', headers: { cookie: authA.cookie } })).statusCode, 403);
+
+  // Global admin (WEB_ADMIN_USER_IDS) DOES receive shared health.preload across state, diagnostics and SSE, while guild admin never receives it on SSE either
+  const stateGlobal = (await app.inject({ url: `/api/guilds/${GUILD}/state`, headers: { cookie: authGlobalAdmin.cookie } })).json();
+  assert.equal(stateGlobal.permissions.isAdmin, true);
+  assert.equal(stateGlobal.permissions.canViewDiagnostics, true);
+  assert.equal(stateGlobal.permissions.canManageConfig, true);
+  assert.equal(stateGlobal.health.preload.tracked, 2);
+  assert.equal(stateGlobal.health.preload.reusedBuffer, 1);
+  const diagGlobalRes = await app.inject({ url: `/api/guilds/${GUILD}/diagnostics`, headers: { cookie: authGlobalAdmin.cookie } });
+  assert.equal(diagGlobalRes.statusCode, 200);
+  assert.equal(diagGlobalRes.json().health.preload.tracked, 2);
+  assert.equal(diagGlobalRes.json().health.preload.reusedBuffer, 1);
+  assert.equal((await app.inject({ url: '/api/config', headers: { cookie: authGlobalAdmin.cookie } })).statusCode, 200);
+
+  await app.listen({ host: '127.0.0.1', port: 0 });
+  async function readSseSnapshots(cookie, count = 2) {
+    const address = app.server.address();
+    const req = http.get({ host: '127.0.0.1', port: address.port, path: `/api/guilds/${GUILD}/events`, headers: { cookie } });
+    t.after(() => req.destroy());
+    const [res] = await once(req, 'response');
+    assert.equal(res.statusCode, 200);
+    res.setEncoding('utf8');
+    let buffer = '';
+    const frames = [];
+    for await (const chunk of res) {
+      buffer += chunk;
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() ?? '';
+      for (const part of parts) {
+        const line = part.split('\n').find(item => item.startsWith('data: '));
+        if (line) frames.push(JSON.parse(line.slice(6)));
+      }
+      if (frames.length >= count) break;
+    }
+    req.destroy();
+    return frames;
+  }
+
+  const sseGuildAdmin = await readSseSnapshots(authA.cookie, 2);
+  assert.equal(sseGuildAdmin.length, 2);
+  assert.equal(Object.hasOwn(sseGuildAdmin[0].health, 'preload'), false);
+  assert.equal(Object.hasOwn(sseGuildAdmin[1].health, 'preload'), false);
+  assert.equal(typeof sseGuildAdmin[0].health.ping, 'number');
+
+  const sseGlobalAdmin = await readSseSnapshots(authGlobalAdmin.cookie, 2);
+  assert.equal(sseGlobalAdmin.length, 2);
+  assert.equal(sseGlobalAdmin[0].health.preload.tracked, 2);
+  assert.equal(sseGlobalAdmin[0].health.preload.reusedBuffer, 1);
+  assert.equal(sseGlobalAdmin[1].health.preload.tracked, 2);
+  assert.equal(sseGlobalAdmin[1].health.preload.reusedBuffer, 1);
 
   const pauseG1 = await app.inject({
     method: 'POST',
