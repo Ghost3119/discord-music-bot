@@ -253,11 +253,14 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
       if (!queue || !queue.songs[0]) throw controlError('NO_QUEUE', 'No hay música reproduciéndose.');
       const wasBlocked = Boolean(getPlaybackState(queue)?.blocked);
       installQueueControlGuard(queue);
-      const check = async () => {
+      const check = async (lockedQueue?: Queue) => {
         if (distube.getQueue(guildId) !== queue || queue.stopped || getPlaybackState(queue)?.closing && action.action !== 'stop') throw controlError('SESSION_CHANGED', 'La sesión terminó mientras esperaba.');
         await authorize();
         if (distube.getQueue(guildId) !== queue || queue.stopped || getPlaybackState(queue)?.closing && action.action !== 'stop') throw controlError('SESSION_CHANGED', 'La sesión terminó mientras esperaba.');
         if (getPlaybackState(queue)?.blocked && (action.action === 'skip' || action.action === 'resume' && !wasBlocked)) throw controlError('QUEUE_BLOCKED', 'La cola está pausada por fallos. Usa Reintentar o Detener.');
+        if (lockedQueue && (action.action === 'pause' || action.action === 'resume') && ['recovering', 'alternative'].includes(getPlaybackState(queue)?.mode ?? '')) {
+          throw controlError('QUEUE_BLOCKED', 'La recuperación de audio sigue en curso.');
+        }
       };
       let outcome: MusicControlResult | undefined;
       await withMusicAccess(distube, check, async () => {
@@ -274,8 +277,12 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
             outcome = { recommendationsAdded: await recommendForQueue(distube, queue, plugin, member, action.amount ?? 5, signal, check, true) };
             break;
           }
-          case 'pause': await queue.pause(); break;
-          case 'resume': await queue.resume(); break;
+          case 'pause':
+            try { await queue.pause(); } catch (error) { if ((error as { errorCode?: string })?.errorCode !== 'PAUSED') throw error; }
+            break;
+          case 'resume':
+            try { await queue.resume(); } catch (error) { if ((error as { errorCode?: string })?.errorCode !== 'RESUMED') throw error; }
+            break;
           case 'skip': await queue.skip(); break;
           case 'stop': await queue.stop(); break;
           case 'shuffle': await editQueue(distube, queue, { type: 'shuffle' }); break;

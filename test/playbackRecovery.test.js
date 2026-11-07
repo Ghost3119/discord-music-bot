@@ -51,6 +51,27 @@ test('alternative discovery prefers another source and preserves request metadat
   assert.equal(calls.length, 2, 'Playback uses the freshly extracted URL');
 });
 
+test('alternative discovery rejects an ambiguous title instead of substituting an unrelated song', async () => {
+  const plugin = new YtDlpSearchPlugin();
+  const original = track(plugin, 'original', { name: 'El Drip' });
+  let searches = 0;
+  plugin.fetchInfo = async () => { searches++; return { entries: [] }; };
+  assert.equal(await plugin.findAlternative(original), null);
+  assert.equal(searches, 0);
+});
+
+test('short titles require the original artist in a recovered alternative', async () => {
+  const original = track(null, 'original', { name: 'El Drip', duration: 143, uploader: { name: 'Natanael Cano' } });
+  for (const [artist, accepted] of [['Codigo Avanzado', false], ['Natanael Cano', true]]) {
+    const plugin = new YtDlpSearchPlugin();
+    plugin.fetchInfo = async (input, flags) => flags.flatPlaylist
+      ? { entries: [{ id: 'alternative', title: 'El Drip', webpage_url: 'https://soundcloud.com/example/drip' }] }
+      : { id: 'alternative', title: 'El Drip', uploader: artist, duration: 164,
+          webpage_url: input, url: 'https://audio.test/valid' };
+    assert.equal(Boolean(await plugin.findAlternative(original)), accepted);
+  }
+});
+
 test('alternative discovery rejects the same video under another URL and finds a different upload', async () => {
   const plugin = new YtDlpSearchPlugin();
   const original = track(plugin);

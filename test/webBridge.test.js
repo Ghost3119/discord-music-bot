@@ -631,3 +631,84 @@ test('139-track playlist load seeds metadata without stream resolution, preserve
   assert.equal(streamResolutions, 0, 'playlist enqueue must not resolve audio streams upfront');
   assert.ok(fetchesSpent <= 5, `expected grouped load to coalesce Discord REST membership checks, got ${fetchesSpent}`);
 });
+
+test('pause and resume evaluate paused and recovery state inside the queue lock under concurrency and stay idempotent', async t => {
+  const f = await fixture(t);
+  const state = getPlaybackState(f.queue);
+
+  await f.bridge.control(userId, guildId, { action: 'resume' });
+  assert.equal(f.queue.paused, false);
+  await f.bridge.control(userId, guildId, { action: 'pause' });
+  assert.equal(f.queue.paused, true);
+  await f.bridge.control(userId, guildId, { action: 'pause' });
+  assert.equal(f.queue.paused, true);
+  await f.bridge.control(userId, guildId, { action: 'resume' });
+  assert.equal(f.queue.paused, false);
+
+  for (const mode of ['recovering', 'alternative']) {
+    state.mode = mode;
+    await assert.rejects(f.bridge.control(userId, guildId, { action: 'resume' }), { errorCode: 'QUEUE_BLOCKED' });
+    await assert.rejects(f.bridge.control(userId, guildId, { action: 'pause' }), { errorCode: 'QUEUE_BLOCKED' });
+    assert.equal(f.queue._taskQueue.remaining, 0);
+  }
+  state.mode = 'playing';
+
+  // Concurrency 1: queue starts paused, another holder resumes it while pause waits on _taskQueue -> pause still applies
+  f.queue.paused = true;
+  await f.queue._taskQueue.queuing();
+  const pendingPause = f.bridge.control(userId, guildId, { action: 'pause' });
+  await tick();
+  f.queue.paused = false;
+  f.queue._taskQueue.resolve();
+  await pendingPause;
+  assert.equal(f.queue.paused, true);
+  assert.equal(f.queue._taskQueue.remaining, 0);
+
+  // Concurrency 2: queue starts playing, another holder pauses it while resume waits on _taskQueue -> resume still applies
+  f.queue.paused = false;
+  await f.queue._taskQueue.queuing();
+  const pendingResume = f.bridge.control(userId, guildId, { action: 'resume' });
+  await tick();
+  f.queue.paused = true;
+  f.queue._taskQueue.resolve();
+  await pendingResume;
+  assert.equal(f.queue.paused, false);
+  assert.equal(f.queue._taskQueue.remaining, 0);
+
+  // Concurrency 3: queue enters recovery while pause/resume wait on _taskQueue -> rejects with QUEUE_BLOCKED inside lock
+  for (const mode of ['recovering', 'alternative']) {
+    state.mode = 'playing';
+    f.queue.paused = false;
+    await f.queue._taskQueue.queuing();
+    const pauseDuringNewRecovery = f.bridge.control(userId, guildId, { action: 'pause' });
+    await tick();
+    state.mode = mode;
+    f.queue._taskQueue.resolve();
+    await assert.rejects(pauseDuringNewRecovery, { errorCode: 'QUEUE_BLOCKED' });
+    assert.equal(f.queue.paused, false);
+    assert.equal(f.queue._taskQueue.remaining, 0);
+
+    state.mode = 'paused';
+    f.queue.paused = true;
+    await f.queue._taskQueue.queuing();
+    const resumeDuringNewRecovery = f.bridge.control(userId, guildId, { action: 'resume' });
+    await tick();
+    state.mode = mode;
+    f.queue._taskQueue.resolve();
+    await assert.rejects(resumeDuringNewRecovery, { errorCode: 'QUEUE_BLOCKED' });
+    assert.equal(f.queue.paused, true);
+    assert.equal(f.queue._taskQueue.remaining, 0);
+  }
+
+  // Concurrency 4: queue starts in recovery while holding lock, recovery finishes before pause acquires lock -> pause succeeds
+  state.mode = 'recovering';
+  f.queue.paused = false;
+  await f.queue._taskQueue.queuing();
+  const pauseAfterRecoveryCompletes = f.bridge.control(userId, guildId, { action: 'pause' });
+  await tick();
+  state.mode = 'playing';
+  f.queue._taskQueue.resolve();
+  await pauseAfterRecoveryCompletes;
+  assert.equal(f.queue.paused, true);
+  assert.equal(f.queue._taskQueue.remaining, 0);
+});

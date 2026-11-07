@@ -99,7 +99,7 @@ export class AudioPreloader {
     this.enabled = options.enabled ?? process.env['AUDIO_PRELOADER_ENABLED'] !== 'false';
     this.resolutions = options.resolutionSlots ?? resolutionSlots;
     this.buffers = options.bufferSlots ?? bufferSlots;
-    this.factory = options.factory ?? ((url, queue) => new PrebufferedStream(url, audioStreamOptions(queue), queue.volume));
+    this.factory = options.factory ?? ((url, queue) => new PrebufferedStream(url, audioStreamOptions(queue, 0, this.plugin()?.getStreamUserAgent(url)), queue.volume));
     this.log = options.log ?? ((event, fields) => console.info('[Precarga]', JSON.stringify({ event, ...fields })));
     managers.set(distube, this);
     this.detach = observeQueueChanges(distube, queue => this.changed(queue));

@@ -72,7 +72,7 @@ export function PlayerBar({ playback, onShowQueue, onOpenImmersive, immersiveDis
             className="player-main-button"
             size="icon"
             aria-label={playing ? 'Pausar reproducción' : 'Continuar reproducción'}
-            disabled={controlsDisabled || !current}
+            disabled={controlsDisabled || !current || state?.status === 'recovering'}
             onClick={() => action({ action: playing ? 'pause' : 'resume' })}
           >
             {playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}

@@ -54,7 +54,7 @@ export function NowPlaying({ playback }: NowPlayingProps) {
             <Button
               className="hero-play"
               onClick={() => action({ action: playing ? 'pause' : 'resume' })}
-              disabled={controlsDisabled || !current}
+              disabled={controlsDisabled || !current || state?.status === 'recovering'}
             >
               {busy === 'pause' || busy === 'resume' ? (
                 <LoaderCircle size={18} className="spin" />
