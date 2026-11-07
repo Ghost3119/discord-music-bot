@@ -27,7 +27,8 @@ export default tseslint.config(
     rules: {
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
-      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      // Feature modules intentionally co-export pure helpers/constants used by tests.
+      'react-refresh/only-export-components': 'off',
       'no-empty': ['warn', { allowEmptyCatch: true }],
       'no-useless-assignment': 'warn',
       'prefer-const': 'warn',
@@ -40,18 +41,6 @@ export default tseslint.config(
           caughtErrorsIgnorePattern: '^_',
         },
       ],
-    },
-  },
-  {
-    // Legacy hasReactDispatcher() guards for direct function-call unit tests and test harnesses
-    files: [
-      'src/features/dashboard/PlayerView.tsx',
-      'src/features/library/LibraryView.tsx',
-      'src/features/search/SearchView.tsx',
-      'test/**/*.{ts,tsx}',
-    ],
-    rules: {
-      'react-hooks/rules-of-hooks': 'warn',
     },
   },
 );

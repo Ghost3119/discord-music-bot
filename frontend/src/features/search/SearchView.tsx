@@ -99,16 +99,7 @@ export interface SearchViewProps {
 
 type SearchStatus = 'idle' | 'loading' | 'results' | 'empty' | 'error';
 
-export function SearchView({
-  guildId,
-  session,
-  state,
-  busy,
-  trackActions,
-  onEnqueueTrack,
-  initialQuery,
-  onInitialQueryConsumed,
-}: SearchViewProps) {
+export function SearchView(props: SearchViewProps) {
   if (!hasReactDispatcher()) {
     return (
       <section className="search-view" aria-labelledby="music-search-heading">
@@ -121,7 +112,19 @@ export function SearchView({
       </section>
     );
   }
+  return <SearchViewLive {...props} />;
+}
 
+function SearchViewLive({
+  guildId,
+  session,
+  state,
+  busy,
+  trackActions,
+  onEnqueueTrack,
+  initialQuery,
+  onInitialQueryConsumed,
+}: SearchViewProps) {
   const [query, setQuery] = React.useState(initialQuery ?? '');
   const [submittedQuery, setSubmittedQuery] = React.useState('');
   const [platform, setPlatform] = React.useState<MusicSearchPlatform>('all');
@@ -267,7 +270,7 @@ export function SearchView({
         }
       }
     },
-    [guildId, session, cancelInFlight],
+    [guildId, session, cancelInFlight, cancelSuggestions],
   );
 
   React.useEffect(() => {

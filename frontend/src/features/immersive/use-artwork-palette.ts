@@ -139,7 +139,7 @@ export function useArtworkPalette(url?: string | null): ArtworkPalette {
     if (cached) { setResult({ url, palette: cached }); return; }
     let live = true;
     let completed = false;
-    let timer: ReturnType<typeof setTimeout>;
+
     const image = new Image();
     const source = sampleableArtworkUrl(url);
     image.crossOrigin = 'anonymous';
@@ -166,8 +166,9 @@ export function useArtworkPalette(url?: string | null): ArtworkPalette {
       } catch { finish(FALLBACK_PALETTE); }
     };
     image.onerror = () => finish(FALLBACK_PALETTE);
+    const timer = setTimeout(() => finish(FALLBACK_PALETTE), 5000);
     image.src = source;
-    timer = setTimeout(() => finish(FALLBACK_PALETTE), 5000);
+
     return () => {
       live = false; clearTimeout(timer);
       image.onload = null; image.onerror = null;

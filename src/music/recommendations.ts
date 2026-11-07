@@ -39,7 +39,7 @@ export async function recommendForQueue(distube: DisTube, queue: Queue, plugin: 
     let completedLookups = 0;
     for (const seed of seeds) {
       try { candidates.push(...await plugin.getRecommendations(seed, signal)); completedLookups++; }
-      catch (error) { signal?.throwIfAborted(); console.warn('No se pudo consultar YouTube Mix para una semilla de la cola.'); }
+      catch { signal?.throwIfAborted(); console.warn('No se pudo consultar YouTube Mix para una semilla de la cola.'); }
       await check();
       if (selectRecommendations(candidates, [...queue.songs, ...queue.previousSongs], amount).length >= amount) break;
     }

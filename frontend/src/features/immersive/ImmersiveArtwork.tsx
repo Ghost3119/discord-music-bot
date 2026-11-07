@@ -14,7 +14,7 @@ export const ImmersiveArtwork = memo(function ImmersiveArtwork({ track }: { trac
     setPrevious(displayed.url ? displayed : null);
     setDisplayed({ key, url: thumbnail || '' });
     // The outgoing artwork alone fades; titles and lyrics always use the current identity.
-  }, [key, displayed, track?.thumbnail]);
+  }, [key, displayed, thumbnail]);
   useEffect(() => {
     if (!previous) return;
     const timer = setTimeout(() => setPrevious(null), 260);

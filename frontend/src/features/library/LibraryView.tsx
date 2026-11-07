@@ -59,8 +59,8 @@ function hasReactDispatcher(): boolean {
   return Boolean(internals && internals.H);
 }
 
-function useCatalogState(library: LibraryViewBindings) {
-  if (!hasReactDispatcher()) {
+function staticCatalogState(library: LibraryViewBindings) {
+
     return {
       searchQuery: library.searchQuery ?? '',
       setSearchQuery: (next: string) => library.onSearchQueryChange?.(next),
@@ -77,6 +77,7 @@ function useCatalogState(library: LibraryViewBindings) {
     };
   }
 
+function useCatalogState(library: LibraryViewBindings) {
   const [localSearch, setLocalSearch] = React.useState('');
   const [prevGuildId, setPrevGuildId] = React.useState(library.guildId);
   if (library.guildId !== prevGuildId) {
@@ -121,7 +122,20 @@ function useCatalogState(library: LibraryViewBindings) {
   };
 }
 
-export function LibraryView({ library, trackActions }: LibraryViewProps) {
+export function LibraryView(props: LibraryViewProps) {
+  if (!hasReactDispatcher()) return renderLibraryView(props, staticCatalogState(props.library));
+  return <LibraryViewLive {...props} />;
+}
+
+function LibraryViewLive(props: LibraryViewProps) {
+  const catalog = useCatalogState(props.library);
+  return renderLibraryView(props, catalog);
+}
+
+function renderLibraryView(
+  { library, trackActions }: LibraryViewProps,
+  catalog: ReturnType<typeof staticCatalogState>,
+) {
   const {
     playlist,
     playlists,
@@ -144,7 +158,7 @@ export function LibraryView({ library, trackActions }: LibraryViewProps) {
     setSortOrder,
     layoutMode,
     setLayoutMode,
-  } = useCatalogState(library);
+  } = catalog;
 
   const entries = filterAndSortPlaylists(playlists, searchQuery, sortOrder);
   const selectedIndex = playlist ? Math.max(0, playlists.findIndex((item) => item.id === playlist.id)) : 0;

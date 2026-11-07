@@ -1,5 +1,6 @@
 import type { Client } from 'discord.js';
 import type { HistoryStore } from '../music/history';
+import { classifyMusicError } from '../music/errors';
 
 interface Closeable { close(): Promise<unknown> }
 interface LifecycleOptions {
@@ -41,7 +42,7 @@ export function createWebDashboard(client: Client, history: HistoryStore): Retur
   return createWebLifecycle({
     enabled: () => process.env['WEB_ENABLED'] === 'true',
     report: error => {
-      const { classifyMusicError } = require('../music/errors') as typeof import('../music/errors');
+
       console.error('[Web] Código de fallo de arranque:', classifyMusicError(error));
       console.error('[Web] Panel no disponible. Revisa la configuración WEB_* y la disponibilidad del puerto; el audio continúa.');
       if (process.connected) process.send?.({ type: 'webStartupFailed' }, () => {});
