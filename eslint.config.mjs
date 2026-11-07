@@ -18,7 +18,8 @@ export default tseslint.config(
       },
     },
     rules: {
-      'no-control-regex': 'warn',
+      // Security sanitizers intentionally match ASCII control characters (\x00-\x1f, \x7f).
+      'no-control-regex': 'off',
       'no-empty': ['warn', { allowEmptyCatch: true }],
       'prefer-const': 'warn',
       '@typescript-eslint/no-explicit-any': 'warn',

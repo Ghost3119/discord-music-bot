@@ -28,6 +28,7 @@ function commandHarness(state = snapshot()) {
   vi.mocked(useSession).mockReturnValue({ session, guildId: 'guild-a', guilds: [{ id: 'guild-a', name: 'Comunidad', icon: null }], authLoading: false, authError: '', guildsLoading: false, retryAuth: vi.fn(), setGuildId, reportError, completeLogout });
   vi.mocked(usePlayback).mockReturnValue({ state, connection: 'live', refresh });
   vi.mocked(useLibrary).mockReturnValue({ clearLibrary: () => { clearLibrary(); } } as ReturnType<typeof useLibrary>);
+  // eslint-disable-next-line react-hooks/rules-of-hooks -- isolated command harness with mocked React primitives
   return { app: useSonoraApp(), reportError, setGuildId, completeLogout, clearLibrary, refresh };
 }
 

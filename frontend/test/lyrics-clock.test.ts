@@ -49,13 +49,13 @@ describe('monotonic presentation playback clock', () => {
   it('resets when the same song is replayed, a different song shares its title, or the guild changes', () => {
     const clock = new PlaybackClock();
     clock.accept(snapshot(), 'live', 0, 0);
-    let discontinuity = clock.read(0).discontinuity;
+    const initial = clock.read(0).discontinuity;
     clock.accept(snapshot({ playbackId: 'replay-a', sequence: 2, currentTime: 0 }), 'live', 1000, 1000);
-    expect(clock.read(1000)).toMatchObject({ positionSeconds: 0, discontinuity: ++discontinuity });
+    expect(clock.read(1000)).toMatchObject({ positionSeconds: 0, discontinuity: initial + 1 });
     clock.accept(snapshot({ playbackId: 'playback-b', sequence: 3, currentTime: 0, current: { ...snapshot().current!, id: 'track-b' } }), 'live', 2000, 2000);
-    expect(clock.read(2000).discontinuity).toBe(++discontinuity);
+    expect(clock.read(2000).discontinuity).toBe(initial + 2);
     clock.accept(snapshot({ guildId: 'guild-b', sequence: 1 }), 'live', 3000, 3000);
-    expect(clock.read(3000)).toMatchObject({ positionSeconds: 10, discontinuity: ++discontinuity });
+    expect(clock.read(3000)).toMatchObject({ positionSeconds: 10, discontinuity: initial + 3 });
   });
 
   it('freezes on SSE loss and requires a new snapshot after connection opens', () => {

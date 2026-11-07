@@ -1,4 +1,5 @@
 interface Logger { flush(timeout?: number): Promise<void>; close(): Promise<void>; restore(): void; }
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- CommonJS logger lives outside TypeScript rootDir
 const { installConsole } = require('../../scripts/logger.cjs') as { installConsole(options: { name: string; maxBytes: number; backups: number }): Logger };
 export function installLogs(name: 'bot' | 'deploy' = 'bot'): Logger {
   const number = (key: string, fallback: number, maximum: number) => {

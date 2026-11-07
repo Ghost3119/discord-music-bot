@@ -58,9 +58,9 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
       try { queue.voice.stop(); } finally { queue.remove(); }
     }
   }
-  let health: PlaybackHealth;
+
   const recovery = new PlaybackRecovery((status) => { health.recovery(status); void notices.update(status); });
-  health = new PlaybackHealth(distube, history, queue => {
+  const health = new PlaybackHealth(distube, history, queue => {
     void panels.refresh(queue); checkpointQueue(distube, queue);
   }, queue => failSong(queue, stallError()), options);
   const preloader = new AudioPreloader(distube, recovery, { interval: options?.interval === 0 ? 0 : 1000, clock: health.now, ...preloaderOptions });

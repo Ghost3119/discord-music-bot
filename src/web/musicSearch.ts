@@ -695,11 +695,11 @@ export function createMusicSearchService(
 
       await Promise.all(
         selectedProviders.map(async (provider, idx) => {
-          let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+
           const timeoutController = new AbortController();
           const onParentAbort = () => timeoutController.abort(signal.reason);
           signal.addEventListener('abort', onParentAbort, { once: true });
-          timeoutTimer = setTimeout(() => {
+          const timeoutTimer = setTimeout(() => {
             const timeoutError = new Error('Search provider timed out');
             timeoutError.name = 'TimeoutError';
             timeoutController.abort(timeoutError);

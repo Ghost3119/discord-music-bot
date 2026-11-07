@@ -71,21 +71,26 @@ function isDirectUrl(text: string): boolean {
 
 type LiveSearchStatus = 'idle' | 'loading' | 'results' | 'empty' | 'error';
 
-export function PlayerView({
-  guildId: explicitGuildId,
+export function PlayerView(props: PlayerViewProps) {
+  if (!hasReactDispatcher()) return renderStaticPlayerView(props);
+  return <PlayerViewLive {...props} />;
+}
+
+function renderStaticPlayerView({
+  guildId: _explicitGuildId,
   playback,
   connection,
   query,
   onQueryChange,
   onAddToQueue,
   onDiagnostics,
-  onEnqueueTrack,
+  onEnqueueTrack: _onEnqueueTrack,
   trackActions,
 }: PlayerViewProps) {
   const { state, busy, controlsDisabled, action } = playback;
   const labels = playbackLabels;
 
-  if (!hasReactDispatcher()) {
+
     return (
       <>
         <form className="search-bar" onSubmit={onAddToQueue}>
@@ -173,6 +178,19 @@ export function PlayerView({
     );
   }
 
+function PlayerViewLive({
+  guildId: explicitGuildId,
+  playback,
+  connection,
+  query,
+  onQueryChange,
+  onAddToQueue,
+  onDiagnostics,
+  onEnqueueTrack,
+  trackActions,
+}: PlayerViewProps) {
+  const { state, busy, controlsDisabled, action } = playback;
+  const labels = playbackLabels;
   const guildId = explicitGuildId ?? state?.guildId ?? '';
   const [platform, setPlatform] = React.useState<MusicSearchPlatform>('all');
   const [searchStatus, setSearchStatus] = React.useState<LiveSearchStatus>('idle');

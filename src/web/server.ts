@@ -176,7 +176,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const previousSocketTimeout = socket?.timeout;
     // Slow authenticated handlers use an explicit deadline instead of the global 15s idle reset.
     socket?.setTimeout?.(timeoutMs + 1000);
-    let operationDeadline: ReturnType<typeof setTimeout>;
+
     const abort = (): void => { controller.abort(); };
     let deadline: ReturnType<typeof setTimeout>;
     const scheduleDeadline = (): void => {
@@ -198,7 +198,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     } };
     response.on('close', abort); request.raw.on('aborted', abort);
     operations.add(operation);
-    operationDeadline = setTimeout(() => { operation.timedOut = true; abort(); }, timeoutMs);
+    const operationDeadline = setTimeout(() => { operation.timedOut = true; abort(); }, timeoutMs);
     operationDeadline.unref();
     if (closing) abort();
     return operation;
@@ -518,7 +518,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     let closed = false;
     let busy = false;
     let blockedAt: number | null = null;
-    let timer: ReturnType<typeof setInterval>;
+
     const close = (): void => {
       if (closed) return;
       closed = true;
@@ -540,7 +540,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     response.on('close', close);
     response.on('error', close);
     response.on('drain', drain);
-    timer = setInterval(() => { void (async () => {
+    const timer = setInterval(() => { void (async () => {
       if (closed || busy) return;
       if (blockedAt !== null) { if (now() - blockedAt > 10_000) close(); return; }
       busy = true;

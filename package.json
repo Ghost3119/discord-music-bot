@@ -7,7 +7,7 @@
     "build": "npm run build:bot && npm run build:web",
     "build:bot": "tsc",
     "build:web": "npm --prefix frontend run build",
-    "lint": "eslint src && npm --prefix frontend run lint",
+    "lint": "eslint --max-warnings 0 src && npm --prefix frontend run lint",
     "lint:fix": "eslint --fix src && npm --prefix frontend run lint:fix",
     "format": "prettier --write . && npm --prefix frontend run format",
     "format:check": "prettier --check . && npm --prefix frontend run format:check",
