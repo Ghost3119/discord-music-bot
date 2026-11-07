@@ -48,8 +48,9 @@ export function createWebDashboard(client: Client, history: HistoryStore): Retur
       if (process.connected) process.send?.({ type: 'webStartupFailed' }, () => {});
     },
     open: async () => {
-      const [{ readWebConfig }, { createWebServer }, { createMusicBridge }] = await Promise.all([
+      const [{ readWebConfig }, { createWebServer }, { createMusicBridge }, { openWebDatabase }, { createSqliteRepositories }] = await Promise.all([
         import('../web/config'), import('../web/server'), import('../music/webBridge'),
+        import('../infrastructure/sqlite/database'), import('../infrastructure/sqlite/repositories'),
       ]);
       const config = readWebConfig();
       const bridge = createMusicBridge(client, history, {
@@ -58,14 +59,21 @@ export function createWebDashboard(client: Client, history: HistoryStore): Retur
         ...(config.adminUserIds ? { adminUserIds: config.adminUserIds } : {}),
         ...(config.membershipCacheTtlMs !== undefined ? { membershipCacheTtlMs: config.membershipCacheTtlMs } : {}),
       });
-      const app = await createWebServer({ config, bridge });
+      const repositories = createSqliteRepositories(openWebDatabase(config.databasePath));
+      let app: Awaited<ReturnType<typeof createWebServer>> | undefined;
       try {
+        app = await createWebServer({ config, bridge, repositories });
         await app.listen({ host: config.host, port: config.port });
         console.log(`[Web] Panel disponible en ${config.origin}`);
         if (process.connected) process.send?.({ type: 'webReady' }, () => {});
-        return app;
+        const server = app;
+        return { async close(): Promise<void> {
+          try { await server.close(); }
+          finally { await repositories.close(); }
+        } };
       } catch (error) {
-        await app.close();
+        try { await app?.close(); }
+        finally { await repositories.close(); }
         throw error;
       }
     },
