@@ -914,3 +914,336 @@ test('real server and real MusicBridge integration: simulated OAuth login, GET /
   assert.equal(actionRes.statusCode, 403);
   assert.match(actionRes.json().error, /voice channel/i);
 });
+
+test('two-guild isolation: members of one server cannot view or control queues, playlists, favorites or diagnostics of another server', async t => {
+  t.mock.method(console, 'info', () => {});
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { EventEmitter } = require('node:events');
+  const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js');
+  const { DisTube, Song } = require('distube');
+  const { createMusicBridge } = require('../dist/music/webBridge');
+  const { registerDisTubeEvents } = require('../dist/music/events');
+  const { HistoryStore } = require('../dist/music/history');
+  const { YtDlpSearchPlugin } = require('../dist/music/ytDlpSearchPlugin');
+
+  const USER_A = '111111111111111118';
+  const USER_B = '222222222222222228';
+  const SHARED_USER = '333333333333333338';
+  const BOT_ID = '999999999999999998';
+
+  const historyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sonora-multi-guild-hist-'));
+  t.after(() => fs.rmSync(historyDir, { recursive: true, force: true }));
+  const history = new HistoryStore(path.join(historyDir, 'history.json'));
+  t.after(() => history.close());
+
+  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+  client.user = { id: BOT_ID };
+  t.after(() => client.destroy());
+
+  const plugin = new YtDlpSearchPlugin();
+  const distube = new DisTube(client, { plugins: [plugin], ffmpeg: { path: require('ffmpeg-static') } });
+  distube.setMaxListeners(10);
+  client.distube = distube;
+  t.after(registerDisTubeEvents(distube, history, { interval: 0 }));
+
+  const voices = new Map();
+  distube.voices.create = channel => voices.get(channel.guildId);
+
+  function setupMockGuild(id, name, membersMap, activeSongId, activeSongTitle) {
+    const guild = {
+      id,
+      name,
+      ownerId: '888888888888888888',
+      iconURL: () => null,
+      members: {
+        me: null,
+        cache: membersMap,
+        fetch: async ({ user }) => membersMap.get(user) ?? null,
+      },
+    };
+    const channel = {
+      id: `${id.slice(0, 15)}999`,
+      guildId: id,
+      guild,
+      name: `Voz ${name}`,
+      members: new Map(),
+      permissionsFor: () => ({ has: () => true }),
+    };
+    guild.members.me = { voice: { channel } };
+    for (const [uid, member] of membersMap) {
+      member.guild = guild;
+      if (member.inVoice) {
+        member.voice = { channel };
+        channel.members.set(uid, member);
+      } else {
+        member.voice = { channel: null };
+      }
+    }
+    const voice = new EventEmitter();
+    Object.assign(voice, {
+      id,
+      channel,
+      volume: 50,
+      emittedError: false,
+      playbackTime: 5000,
+      isDisconnected: false,
+      join: async () => voice,
+      pause() {},
+      unpause() {},
+      stop() {},
+      play: async stream => {
+        voice.stream = stream;
+      },
+    });
+    voices.set(id, voice);
+    client.guilds.cache.set(id, guild);
+    return { guild, channel, activeSongId, activeSongTitle };
+  }
+
+  const guild1Members = new Map([
+    [
+      USER_A,
+      {
+        id: USER_A,
+        user: { bot: false },
+        inVoice: true,
+        permissions: new PermissionsBitField([PermissionsBitField.Flags.ManageGuild]),
+      },
+    ],
+    [
+      SHARED_USER,
+      {
+        id: SHARED_USER,
+        user: { bot: false },
+        inVoice: true,
+        permissions: new PermissionsBitField([PermissionsBitField.Flags.ManageGuild]),
+      },
+    ],
+  ]);
+  const guild2Members = new Map([
+    [
+      USER_B,
+      {
+        id: USER_B,
+        user: { bot: false },
+        inVoice: true,
+        permissions: new PermissionsBitField(),
+      },
+    ],
+    [
+      SHARED_USER,
+      {
+        id: SHARED_USER,
+        user: { bot: false },
+        inVoice: false,
+        permissions: new PermissionsBitField(),
+      },
+    ],
+  ]);
+
+  const g1 = setupMockGuild(GUILD, 'Servidor Uno', guild1Members, 'AAAAAAAAAAA', 'Himno Uno');
+  const g2 = setupMockGuild(OTHER_GUILD, 'Servidor Dos', guild2Members, 'BBBBBBBBBBB', 'Himno Dos');
+
+  const q1 = await distube.queues.create(g1.channel);
+  const q2 = await distube.queues.create(g2.channel);
+  t.after(() => {
+    for (const q of distube.queues.collection.values()) if (!q.stopped) q.remove();
+  });
+
+  const makeSong = (id, title) =>
+    new Song({
+      plugin,
+      source: 'youtube',
+      id,
+      name: title,
+      uploader: { name: 'Artista' },
+      duration: 180,
+      playFromSource: true,
+      url: `https://www.youtube.com/watch?v=${id}`,
+    });
+  const song1 = makeSong('AAAAAAAAAAA', 'Himno Uno');
+  const song2 = makeSong('BBBBBBBBBBB', 'Himno Dos');
+  q1.songs = [song1];
+  q2.songs = [song2];
+
+  history.finish(q1, song1, 'failed', 'ERR_G1', '0001');
+  history.finish(q2, song2, 'failed', 'ERR_G2', '0002');
+
+  const db = openWebDatabase(':memory:');
+  t.after(() => db.close());
+  const config = readWebConfig({
+    WEB_ENABLED: 'true',
+    CLIENT_ID: '555555555555555555',
+    WEB_CLIENT_SECRET: 'server-only-secret',
+    WEB_ACCESS_MODE: 'guild_members',
+    WEB_ALLOWED_GUILD_IDS: `${GUILD},${OTHER_GUILD}`,
+    WEB_DATABASE_PATH: ':memory:',
+  });
+  const bridge = createMusicBridge(client, history, {
+    accessMode: config.accessMode,
+    allowedGuildIds: config.allowedGuildIds,
+    adminUserIds: config.adminUserIds,
+    membershipCacheTtlMs: 0,
+  });
+
+  let activeOAuthUser = USER_A;
+  const oauthFetch = async url => {
+    if (url.endsWith('/token')) {
+      return new Response(JSON.stringify({ access_token: 'tok', token_type: 'Bearer' }));
+    }
+    return new Response(JSON.stringify({ id: activeOAuthUser, username: `User-${activeOAuthUser.slice(-2)}`, avatar: null }));
+  };
+
+  const app = await createWebServer({ config, bridge, database: db, oauthFetch, sseIntervalMs: 20 });
+  t.after(() => app.close());
+
+  async function login(userId) {
+    activeOAuthUser = userId;
+    const start = await app.inject('/auth/discord');
+    const state = new URL(start.headers.location).searchParams.get('state');
+    const stateCookie = start.cookies.find(item => item.name === 'music_oauth_state').value;
+    const cb = await app.inject({
+      url: `/auth/discord/callback?code=ok&state=${state}`,
+      headers: { cookie: `music_oauth_state=${stateCookie}` },
+    });
+    assert.equal(cb.statusCode, 302);
+    const sessionToken = cb.cookies.find(item => item.name === 'music_session').value;
+    const csrf = cb.cookies.find(item => item.name === 'music_csrf').value;
+    return { cookie: `music_session=${sessionToken}; music_csrf=${csrf}`, csrf };
+  }
+
+  const authA = await login(USER_A);
+  const authB = await login(USER_B);
+  const authShared = await login(SHARED_USER);
+
+  // 1. Guild visibility is strictly isolated per member
+  assert.deepEqual(
+    (await app.inject({ url: '/api/guilds', headers: { cookie: authA.cookie } })).json().guilds.map(g => g.id),
+    [GUILD],
+  );
+  assert.deepEqual(
+    (await app.inject({ url: '/api/guilds', headers: { cookie: authB.cookie } })).json().guilds.map(g => g.id),
+    [OTHER_GUILD],
+  );
+  assert.deepEqual(
+    (await app.inject({ url: '/api/guilds', headers: { cookie: authShared.cookie } })).json().guilds.map(g => g.id),
+    [GUILD, OTHER_GUILD],
+  );
+
+  // 2. USER_B creates a playlist and favorite in OTHER_GUILD
+  const plBRes = await app.inject({
+    method: 'POST',
+    url: `/api/guilds/${OTHER_GUILD}/playlists`,
+    headers: { cookie: authB.cookie, origin: ORIGIN, 'x-csrf-token': authB.csrf },
+    payload: { name: 'Privada Servidor Dos' },
+  });
+  assert.equal(plBRes.statusCode, 200);
+  const plBId = plBRes.json().playlist.id;
+
+  const favBRes = await app.inject({
+    method: 'POST',
+    url: `/api/guilds/${OTHER_GUILD}/favorites`,
+    headers: { cookie: authB.cookie, origin: ORIGIN, 'x-csrf-token': authB.csrf },
+    payload: TRACK,
+  });
+  assert.equal(favBRes.statusCode, 200);
+
+  // 3. USER_A (Guild 1 admin + voice) cannot read or mutate anything in OTHER_GUILD
+  for (const request of [
+    { method: 'GET', url: `/api/guilds/${OTHER_GUILD}/state`, headers: { cookie: authA.cookie } },
+    { method: 'GET', url: `/api/guilds/${OTHER_GUILD}/events`, headers: { cookie: authA.cookie } },
+    { method: 'GET', url: `/api/guilds/${OTHER_GUILD}/diagnostics`, headers: { cookie: authA.cookie } },
+    { method: 'GET', url: `/api/guilds/${OTHER_GUILD}/playlists`, headers: { cookie: authA.cookie } },
+    { method: 'GET', url: `/api/guilds/${OTHER_GUILD}/favorites`, headers: { cookie: authA.cookie } },
+    {
+      method: 'POST',
+      url: `/api/guilds/${OTHER_GUILD}/actions`,
+      headers: { cookie: authA.cookie, origin: ORIGIN, 'x-csrf-token': authA.csrf },
+      payload: { action: 'pause' },
+    },
+    {
+      method: 'DELETE',
+      url: `/api/guilds/${OTHER_GUILD}/playlists/${plBId}`,
+      headers: { cookie: authA.cookie, origin: ORIGIN, 'x-csrf-token': authA.csrf },
+    },
+  ]) {
+    const res = await app.inject(request);
+    assert.equal(res.statusCode, 403, `Expected 403 for ${request.method} ${request.url}`);
+  }
+  assert.equal(q2.paused, false);
+  assert.equal(
+    (await app.inject({ url: `/api/guilds/${OTHER_GUILD}/playlists`, headers: { cookie: authB.cookie } })).json().playlists.length,
+    1,
+  );
+
+  // 4. USER_A controls and inspects diagnostics in GUILD without touching OTHER_GUILD or global /api/config
+  const stateA1 = (await app.inject({ url: `/api/guilds/${GUILD}/state`, headers: { cookie: authA.cookie } })).json();
+  assert.equal(stateA1.current.title, 'Himno Uno');
+  assert.equal(stateA1.permissions.canControl, true);
+  assert.equal(stateA1.permissions.canViewDiagnostics, true);
+  assert.equal(stateA1.permissions.canManageConfig, false);
+  assert.deepEqual(stateA1.incidents.map(i => i.code), ['ERR_G1']);
+  assert.equal((await app.inject({ url: `/api/guilds/${GUILD}/diagnostics`, headers: { cookie: authA.cookie } })).statusCode, 200);
+  assert.equal((await app.inject({ url: '/api/config', headers: { cookie: authA.cookie } })).statusCode, 403);
+
+  const pauseG1 = await app.inject({
+    method: 'POST',
+    url: `/api/guilds/${GUILD}/actions`,
+    headers: { cookie: authA.cookie, origin: ORIGIN, 'x-csrf-token': authA.csrf },
+    payload: { action: 'pause' },
+  });
+  assert.equal(pauseG1.statusCode, 200);
+  assert.equal(q1.paused, true);
+  assert.equal(q2.paused, false);
+
+  // 5. SHARED_USER has isolated playlists/favorites, voice control and per-guild diagnostics across GUILD vs OTHER_GUILD
+  await app.inject({
+    method: 'POST',
+    url: `/api/guilds/${GUILD}/playlists`,
+    headers: { cookie: authShared.cookie, origin: ORIGIN, 'x-csrf-token': authShared.csrf },
+    payload: { name: 'Coleccion Guild 1' },
+  });
+  await app.inject({
+    method: 'POST',
+    url: `/api/guilds/${GUILD}/favorites`,
+    headers: { cookie: authShared.cookie, origin: ORIGIN, 'x-csrf-token': authShared.csrf },
+    payload: TRACK,
+  });
+
+  assert.equal(
+    (await app.inject({ url: `/api/guilds/${GUILD}/playlists`, headers: { cookie: authShared.cookie } })).json().playlists.length,
+    1,
+  );
+  assert.equal(
+    (await app.inject({ url: `/api/guilds/${OTHER_GUILD}/playlists`, headers: { cookie: authShared.cookie } })).json().playlists.length,
+    0,
+  );
+  assert.equal(
+    (await app.inject({ url: `/api/guilds/${OTHER_GUILD}/favorites`, headers: { cookie: authShared.cookie } })).json().favorites.length,
+    0,
+  );
+
+  const sharedG1 = (await app.inject({ url: `/api/guilds/${GUILD}/state`, headers: { cookie: authShared.cookie } })).json();
+  const sharedG2 = (await app.inject({ url: `/api/guilds/${OTHER_GUILD}/state`, headers: { cookie: authShared.cookie } })).json();
+  assert.equal(sharedG1.current.title, 'Himno Uno');
+  assert.equal(sharedG1.permissions.canControl, true);
+  assert.equal(sharedG1.permissions.canViewDiagnostics, true);
+  assert.equal(sharedG2.current.title, 'Himno Dos');
+  assert.equal(sharedG2.permissions.canControl, false);
+  assert.equal(sharedG2.permissions.canViewDiagnostics, false);
+  assert.deepEqual(sharedG2.incidents, []);
+  assert.equal((await app.inject({ url: `/api/guilds/${OTHER_GUILD}/diagnostics`, headers: { cookie: authShared.cookie } })).statusCode, 403);
+  assert.equal(
+    (
+      await app.inject({
+        method: 'POST',
+        url: `/api/guilds/${OTHER_GUILD}/actions`,
+        headers: { cookie: authShared.cookie, origin: ORIGIN, 'x-csrf-token': authShared.csrf },
+        payload: { action: 'pause' },
+      })
+    ).statusCode,
+    403,
+  );
+});

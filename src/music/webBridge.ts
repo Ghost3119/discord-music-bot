@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Client, Guild, GuildMember, VoiceBasedChannel } from 'discord.js';
+import { Client, Guild, GuildMember, PermissionFlagsBits, VoiceBasedChannel } from 'discord.js';
 import { Queue, Song } from 'distube';
 import type { GuildPermissions, MusicAction, MusicBridge, MusicControlResult, PlaybackSnapshot, Track, WebAccessMode } from '../web/contracts';
 import { recommendForQueue, updateRadio } from './recommendations';
@@ -114,15 +114,21 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
   function buildPermissions(userId: string, member: GuildMember, queue?: Queue): GuildPermissions {
     const canControl = canControlVoice(client, member, queue);
     const isAdmin = adminUsers.has(userId);
+    const memberPerms = member.permissions as { has?: (flag: bigint) => boolean } | undefined;
+    const isGuildAdmin =
+      (Boolean(member.guild?.ownerId) && member.guild.ownerId === userId) ||
+      (typeof memberPerms?.has === 'function' &&
+        (memberPerms.has(PermissionFlagsBits.Administrator) || memberPerms.has(PermissionFlagsBits.ManageGuild)));
+    const canViewDiagnostics = isAdmin || isGuildAdmin;
     return {
-      role: isAdmin ? 'admin' : canControl ? 'voice' : 'member',
+      role: canViewDiagnostics ? 'admin' : canControl ? 'voice' : 'member',
       isMember: true,
       inVoiceChannel: canControl,
       canControl,
       isAdmin,
       canRead: true,
       canManageLibrary: true,
-      canViewDiagnostics: isAdmin,
+      canViewDiagnostics,
       canManageConfig: isAdmin,
     };
   }

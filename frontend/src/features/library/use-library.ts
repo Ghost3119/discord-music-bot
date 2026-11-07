@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, trackMetadata, type Playlist, type Session, type Track } from '../../lib/api';
+import { AbandonedOperation } from '../../lib/operation-scope';
 import type { Modal, View } from '../../types/app';
 
 interface LibraryOptions {
@@ -46,6 +47,8 @@ export function useLibrary({
   const [titleTouched, setTitleTouched] = useState(false);
   const [artistTouched, setArtistTouched] = useState(false);
   const [libraryRevision, setLibraryRevision] = useState(0);
+  const activeGuildRef = useRef(guildId);
+  activeGuildRef.current = guildId;
 
   const inputUrl = trackUrl.trim();
   // A result belongs to one URL and one opening of the editor. Filtering during
@@ -169,12 +172,14 @@ export function useLibrary({
   function toggleFavorite(track: Track) {
     if (!canManageLibrary) return Promise.resolve();
     const saved = favorites.find((item) => item.url === track.url);
+    const originGuild = guildId;
     return run('favorite', async () => {
       await mutate(
-        `/api/guilds/${guildId}/favorites${saved ? `/${saved.id}` : ''}`,
+        `/api/guilds/${originGuild}/favorites${saved ? `/${saved.id}` : ''}`,
         saved ? 'DELETE' : 'POST',
         saved ? undefined : trackMetadata(track),
       );
+      if (activeGuildRef.current !== originGuild) throw new AbandonedOperation();
       reloadLibrary();
       setNotice(saved ? 'Canción retirada de favoritos.' : 'Guardada en tus favoritos.');
     });
@@ -184,26 +189,32 @@ export function useLibrary({
     if (!canManageLibrary) return Promise.resolve();
     const ids = playlist.tracks.map((track) => track.id);
     ids.splice(to, 0, ids.splice(from, 1)[0]);
+    const originGuild = guildId;
     return run('reorder', async () => {
-      await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/tracks/order`, 'PUT', { trackIds: ids });
+      await mutate(`/api/guilds/${originGuild}/playlists/${playlist.id}/tracks/order`, 'PUT', { trackIds: ids });
+      if (activeGuildRef.current !== originGuild) throw new AbandonedOperation();
       reloadLibrary();
     });
   }
 
   function removePlaylistTrack(playlist: Playlist, track: Track) {
     if (!canManageLibrary) return Promise.resolve();
+    const originGuild = guildId;
     return run('remove-track', async () => {
-      await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/tracks/${track.id}`, 'DELETE');
+      await mutate(`/api/guilds/${originGuild}/playlists/${playlist.id}/tracks/${track.id}`, 'DELETE');
+      if (activeGuildRef.current !== originGuild) throw new AbandonedOperation();
       reloadLibrary();
     });
   }
 
   function loadPlaylist(playlist: Playlist) {
     if (!canControl) return Promise.resolve();
+    const originGuild = guildId;
     return run('load', async () => {
-      const response = (await mutate(`/api/guilds/${guildId}/playlists/${playlist.id}/load`, 'POST')) as
+      const response = (await mutate(`/api/guilds/${originGuild}/playlists/${playlist.id}/load`, 'POST')) as
         | { loaded?: number; total?: number; failed?: number }
         | undefined;
+      if (activeGuildRef.current !== originGuild) throw new AbandonedOperation();
       const totalCount = playlist.tracks.length;
       const loadedCount = typeof response?.loaded === 'number' ? response.loaded : totalCount;
       const omittedCount = Math.max(0, totalCount - loadedCount);
@@ -218,14 +229,16 @@ export function useLibrary({
       }
       setView('player');
       await refresh();
+      if (activeGuildRef.current !== originGuild) throw new AbandonedOperation();
     });
   }
 
   async function submitModal(event: FormEvent) {
     event.preventDefault();
     if (!modal || !canManageLibrary) return;
+    const originGuild = guildId;
     await run('save', async () => {
-      const base = `/api/guilds/${guildId}/playlists`;
+      const base = `/api/guilds/${originGuild}/playlists`;
       if (modal.type === 'playlist') {
         await mutate(
           `${base}${modal.playlist ? `/${modal.playlist.id}` : ''}`,
@@ -235,10 +248,11 @@ export function useLibrary({
       }
       if (modal.type === 'delete') {
         await mutate(`${base}/${modal.playlist.id}`, 'DELETE');
-        if (selectedPlaylist === modal.playlist.id) setSelectedPlaylist('');
+        if (activeGuildRef.current === originGuild && selectedPlaylist === modal.playlist.id) setSelectedPlaylist('');
       }
-      if (modal.type === 'save')
+      if (modal.type === 'save') {
         await mutate(`${base}/${targetPlaylist}/tracks`, 'POST', trackMetadata(modal.track));
+      }
       if (modal.type === 'add') {
         await mutate(`${base}/${modal.playlist.id}/tracks`, 'POST', {
           url: trackUrl.trim(),
@@ -249,6 +263,7 @@ export function useLibrary({
           source: resolvedTrack?.source || 'youtube',
         });
       }
+      if (activeGuildRef.current !== originGuild) throw new AbandonedOperation();
       reloadLibrary();
       setModal(null);
       setNotice('Biblioteca actualizada.');

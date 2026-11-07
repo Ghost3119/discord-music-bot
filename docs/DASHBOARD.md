@@ -67,7 +67,7 @@ El flujo usa un cliente confidencial con `client_secret`, el scope `identify` y 
 
 | Variable | Predeterminado / propósito |
 | --- | --- |
-| `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID` | Configuración existente del bot; solo backend. |
+| `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID` / `GUILD_IDS` | Configuración del bot y servidores para slash commands (solo backend). `GUILD_IDS` acepta varios IDs separados por comas; `npm run deploy -- --global` permite registro global sin `GUILD_ID`. |
 | `WEB_ENABLED` | `false` para el bot independiente; `npm run dev` lo habilita para su proceso hijo. |
 | `WEB_HOST` | `127.0.0.1`; escucha local. |
 | `WEB_BIND_PUBLIC` | `false`; requiere `true` explícito y origen HTTPS para escuchar fuera de loopback. |
@@ -95,7 +95,15 @@ La autorización se aplica íntegramente en el backend (`server.ts` y `webBridge
 | --- | --- | --- |
 | **Miembro (`member`)** | Pertenece a un servidor autorizado donde está el bot (y pasa la política `allowlist` o `guild_members`). | Iniciar/cerrar sesión, listar únicamente los servidores autorizados a los que pertenece, leer el estado y la cola de reproducción (`GET /state` y SSE `/events` sin datos internos de diagnóstico) y gestionar su biblioteca personal (playlists y favoritos propios) en ese servidor. |
 | **Usuario en canal de voz (`voice`)** | Es miembro del servidor autorizado y está conectado al mismo canal de voz que el bot (o a un canal de voz con permisos `ViewChannel`, `Connect` y `Speak` si el bot está inactivo). | Todos los permisos de **Miembro**, más controles de reproducción y cola (`play`, `pause`, `resume`, `skip`, `stop`, `volume`, `repeat`, `shuffle`, `remove`, `move` y carga de playlists en la cola), revalidados antes y después del bloqueo nativo. |
-| **Administrador explícito (`admin`)** | Su Discord User ID figura en `WEB_ADMIN_USER_IDS` (y es miembro del servidor consultado). | Todos los permisos de **Miembro** (y de **voz** cuando está en el canal de voz del bot), más acceso a métricas de salud e incidentes de diagnóstico (`health`, `incidents`, `GET /api/guilds/:guildId/diagnostics`) y consulta de configuración (`GET /api/config`). |
+| **Administrador de servidor (`admin`)** | Es propietario del servidor o tiene `Administrator` / `ManageGuild` en ese servidor de Discord. | Todos los permisos de **Miembro** (y de **voz** en el canal del bot), más métricas de salud e incidentes de diagnóstico de **ese** servidor (`health`, `incidents`, `GET /api/guilds/:guildId/diagnostics`), sin acceso a `GET /api/config`. |
+| **Administrador global (`admin`)** | Su Discord User ID figura en `WEB_ADMIN_USER_IDS` (y es miembro del servidor consultado). | Diagnóstico en los servidores autorizados a los que pertenezca más consulta de configuración global (`GET /api/config`). |
+
+### Cómo añadir un segundo servidor
+
+1. Invita la misma aplicación del bot al segundo servidor de Discord con ámbitos `bot` y `applications.commands`.
+2. En `.env`, añade el nuevo ID a `GUILD_IDS=id_servidor_1,id_servidor_2` (puedes conservar `GUILD_ID=id_servidor_1`) y, si usas el panel con filtro de servidores (`guild_members` o `allowlist` restringido), inclúyelo también en `WEB_ALLOWED_GUILD_IDS=id_servidor_1,id_servidor_2`.
+3. Ejecuta `npm run deploy` para registrar los comandos slash en todos los servidores listados (o `npm run deploy -- --guild id_servidor_2` solo para el nuevo; opcionalmente `npm run deploy -- --global`).
+4. Reinicia el contenedor o proceso si cambiaste `WEB_ALLOWED_GUILD_IDS`. En el panel, el selector **Escuchando en** mostrará únicamente los servidores autorizados donde cada usuario sea miembro, aislando colas, historial, playlists, favoritos y conexiones SSE por `guildId`.
 
 ## Persistencia
 

@@ -9,7 +9,8 @@ export interface PageHeadingProps {
   guilds: GuildSummary[];
   guildId: string;
   guildsLoading: boolean;
-  busy: string;
+  busy?: string;
+  loggingOut?: boolean;
   state: PlaybackSnapshot | null;
   onGuildChange: (guildId: string) => void;
 }
@@ -20,7 +21,7 @@ export function PageHeading({
   guilds,
   guildId,
   guildsLoading,
-  busy,
+  loggingOut = false,
   state,
   onGuildChange,
 }: PageHeadingProps) {
@@ -44,7 +45,7 @@ export function PageHeading({
         variant="guild"
         label="ESCUCHANDO EN"
         value={guildId}
-        disabled={guildsLoading || !guilds.length || !!busy}
+        disabled={guildsLoading || !guilds.length || loggingOut}
         placeholder={guildsLoading ? 'Buscando servidores…' : 'Sin servidores'}
         leadingIcon={
           guild?.icon ? (

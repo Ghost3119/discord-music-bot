@@ -40,6 +40,7 @@ import {
 } from '../search/SearchView';
 
 export interface PlayerViewProps {
+  guildId?: string;
   playback: PlaybackBindings;
   connection: string;
   query: string;
@@ -71,6 +72,7 @@ function isDirectUrl(text: string): boolean {
 type LiveSearchStatus = 'idle' | 'loading' | 'results' | 'empty' | 'error';
 
 export function PlayerView({
+  guildId: explicitGuildId,
   playback,
   connection,
   query,
@@ -171,7 +173,7 @@ export function PlayerView({
     );
   }
 
-  const guildId = state?.guildId ?? '';
+  const guildId = explicitGuildId ?? state?.guildId ?? '';
   const [platform, setPlatform] = React.useState<MusicSearchPlatform>('all');
   const [searchStatus, setSearchStatus] = React.useState<LiveSearchStatus>('idle');
   const [submittedQuery, setSubmittedQuery] = React.useState('');

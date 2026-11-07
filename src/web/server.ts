@@ -135,15 +135,16 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
     const base = snapshot?.permissions ?? (await bridge.getPermissions?.(userId, guildId));
     const canControl = base?.canControl ?? false;
     const inVoiceChannel = base ? base.inVoiceChannel : Boolean(snapshot?.voice);
+    const canViewDiagnostics = admin || Boolean(base?.canViewDiagnostics);
     return {
-      role: admin ? 'admin' : canControl ? 'voice' : 'member',
+      role: canViewDiagnostics ? 'admin' : canControl ? 'voice' : 'member',
       isMember: true,
       inVoiceChannel,
       canControl,
       isAdmin: admin,
       canRead: true,
       canManageLibrary: base?.canManageLibrary ?? false,
-      canViewDiagnostics: admin,
+      canViewDiagnostics,
       canManageConfig: admin,
     };
   }
@@ -350,7 +351,7 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
         throw new WebError(403, 'You do not have access to this Discord server');
       }
     }
-    if (!isAdmin(userId)) throw new WebError(403, 'Administrator access is required');
+    if (!params(request)['guildId'] && !isAdmin(userId)) throw new WebError(403, 'Administrator access is required');
     return {
       accessMode,
       allowedGuildIds: [...(allowedGuilds ?? [])],
@@ -365,8 +366,11 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   }));
   app.get('/api/guilds/:guildId/diagnostics', async request => {
     const userId = request.webSession!.user.id;
-    if (!isAdmin(userId)) throw new WebError(403, 'Administrator access is required');
-    const snapshot = await bridge.getState(userId, params(request)['guildId']!);
+    if (!params(request)['guildId'] && !isAdmin(userId)) throw new WebError(403, 'Administrator access is required');
+    const guildId = params(request)['guildId']!;
+    const snapshot = await bridge.getState(userId, guildId);
+    const permissions = await resolvePermissions(userId, guildId, snapshot);
+    if (!permissions.canViewDiagnostics) throw new WebError(403, 'Administrator access is required');
     return { guildId: snapshot.guildId, health: snapshot.health, incidents: snapshot.incidents };
   });
   app.get('/api/guilds/:guildId/state', async request => {
@@ -486,6 +490,9 @@ export async function createWebServer(options: WebServerOptions): Promise<Fastif
   });
   app.get('/api/guilds/:guildId/events', async (request, reply) => {
     const session = request.webSession!;
+    for (const active of streams) {
+      if (active.response.destroyed || active.response.writableEnded) active.close();
+    }
     const pending = pendingStreams.get(session.user.id) ?? 0;
     if (closing || streams.size + [...pendingStreams.values()].reduce((sum, count) => sum + count, 0) >= 128 || [...streams].filter(item => item.userId === session.user.id).length + pending >= 4) throw new WebError(429, 'Too many live dashboard connections');
     const guildId = params(request)['guildId']!;
