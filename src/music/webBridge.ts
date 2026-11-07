@@ -253,11 +253,14 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
       if (!queue || !queue.songs[0]) throw controlError('NO_QUEUE', 'No hay música reproduciéndose.');
       const wasBlocked = Boolean(getPlaybackState(queue)?.blocked);
       installQueueControlGuard(queue);
-      const check = async () => {
+      const check = async (lockedQueue?: Queue) => {
         if (distube.getQueue(guildId) !== queue || queue.stopped || getPlaybackState(queue)?.closing && action.action !== 'stop') throw controlError('SESSION_CHANGED', 'La sesión terminó mientras esperaba.');
         await authorize();
         if (distube.getQueue(guildId) !== queue || queue.stopped || getPlaybackState(queue)?.closing && action.action !== 'stop') throw controlError('SESSION_CHANGED', 'La sesión terminó mientras esperaba.');
         if (getPlaybackState(queue)?.blocked && (action.action === 'skip' || action.action === 'resume' && !wasBlocked)) throw controlError('QUEUE_BLOCKED', 'La cola está pausada por fallos. Usa Reintentar o Detener.');
+        if (lockedQueue && (action.action === 'pause' || action.action === 'resume') && ['recovering', 'alternative'].includes(getPlaybackState(queue)?.mode ?? '')) {
+          throw controlError('QUEUE_BLOCKED', 'La recuperación de audio sigue en curso.');
+        }
       };
       let outcome: MusicControlResult | undefined;
       await withMusicAccess(distube, check, async () => {
@@ -275,23 +278,10 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
             break;
           }
           case 'pause':
-            if (['recovering', 'alternative'].includes(getPlaybackState(queue)?.mode ?? '')) {
-              await queue._taskQueue.queuing(); queue._taskQueue.resolve();
-              throw controlError('QUEUE_BLOCKED', 'La recuperación de audio sigue en curso.');
-            }
-            if (!queue.paused) {
-              try { await queue.pause(); } catch (error) { if ((error as { errorCode?: string })?.errorCode !== 'PAUSED') throw error; }
-            } else { await queue._taskQueue.queuing(); queue._taskQueue.resolve(); }
+            try { await queue.pause(); } catch (error) { if ((error as { errorCode?: string })?.errorCode !== 'PAUSED') throw error; }
             break;
           case 'resume':
-            if (getPlaybackState(queue)?.blocked) { await queue.resume(); break; }
-            if (['recovering', 'alternative'].includes(getPlaybackState(queue)?.mode ?? '')) {
-              await queue._taskQueue.queuing(); queue._taskQueue.resolve();
-              throw controlError('QUEUE_BLOCKED', 'La recuperación de audio sigue en curso.');
-            }
-            if (queue.paused) {
-              try { await queue.resume(); } catch (error) { if ((error as { errorCode?: string })?.errorCode !== 'RESUMED') throw error; }
-            } else { await queue._taskQueue.queuing(); queue._taskQueue.resolve(); }
+            try { await queue.resume(); } catch (error) { if ((error as { errorCode?: string })?.errorCode !== 'RESUMED') throw error; }
             break;
           case 'skip': await queue.skip(); break;
           case 'stop': await queue.stop(); break;
