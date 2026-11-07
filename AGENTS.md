@@ -37,7 +37,7 @@ React 19, Vite, Tailwind, SQLite (better-sqlite3 + Drizzle), REST/SSE, FFmpeg y 
 | Backend web / REST / SSE | `src/web/server.ts`, `src/web/contracts.ts`, `src/runtime/webDashboard.ts`, `frontend/src/lib/api.ts`, `frontend/src/lib/playback-stream.ts` |
 | Motor musical / recuperación | `src/music/distube.ts`, `src/music/events.ts`, `src/music/playbackRequest.ts`, `src/music/queueActions.ts`, `src/music/playbackRecovery.ts`, `src/music/queueRecovery.ts` |
 | Smart Audio Preloader | `src/music/audioPreloader.ts`, `src/music/prebufferedStream.ts`; `test/audioPreloader.test.js`, `test/preloaderSupervisor.test.js` |
-| Persistencia | `src/web/database.ts`, `src/web/schema.ts`, `migrations/`, `src/music/queueRecovery.ts` (checkpoints), `src/music/history.ts` |
+| Persistencia | `src/web/database.ts`, `src/web/schema.ts`, `migrations/`, `src/music/queueRecovery.ts` (checkpoints), `src/music/history.ts`; plan de desacoplo/PostgreSQL en `docs/PERSISTENCE_PLAN.md` |
 | Composición y estado del cliente | `frontend/src/App.tsx`, `frontend/src/hooks/use-sonora-app.ts`, `frontend/src/hooks/use-playback.ts` |
 | Pruebas | `test/` (Node, backend), `frontend/test/` (Vitest/React y contratos typecheck) |
 
