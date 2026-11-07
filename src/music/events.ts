@@ -102,8 +102,10 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
       if (signal?.aborted || !owns() || getPlaybackState(queue)?.blocked) return;
       const playable = song.stream.playFromSource ? song : song.stream.song;
       if (!playable?.stream.playFromSource || !playable.stream.url) throw Object.assign(new Error('No stream URL attached'), { errorCode: 'NO_STREAM_URL' });
+      const userAgent = (playable.plugin instanceof YtDlpSearchPlugin ? playable.plugin : findSearchPlugin(distube))
+        ?.getStreamUserAgent(playable.stream.url, playable.url);
       stream ??= new DisTubeStream(playable.stream.url, {
-        ffmpeg: { path: distube.options.ffmpeg.path, args: { global: { ...queue.ffmpegArgs.global }, input: { ...queue.ffmpegArgs.input, protocol_whitelist: 'http,https,tcp,tls,crypto' },
+        ffmpeg: { path: distube.options.ffmpeg.path, args: { global: { ...queue.ffmpegArgs.global }, input: { ...queue.ffmpegArgs.input, ...(userAgent ? { user_agent: userAgent } : {}), protocol_whitelist: 'http,https,tcp,tls,crypto' },
           output: { ...queue.ffmpegArgs.output, ...queue.filters.ffmpegArgs } } }, ...(playable.duration ? { seek: queue._beginTime } : {}),
       });
       queue._beginTime = 0;

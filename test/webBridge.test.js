@@ -631,3 +631,23 @@ test('139-track playlist load seeds metadata without stream resolution, preserve
   assert.equal(streamResolutions, 0, 'playlist enqueue must not resolve audio streams upfront');
   assert.ok(fetchesSpent <= 5, `expected grouped load to coalesce Discord REST membership checks, got ${fetchesSpent}`);
 });
+
+test('pause and resume reject cleanly with QUEUE_BLOCKED during recovery and stay idempotent without throwing 500', async t => {
+  const f = await fixture(t);
+  const state = getPlaybackState(f.queue);
+
+  await f.bridge.control(userId, guildId, { action: 'resume' });
+  assert.equal(f.queue.paused, false);
+  await f.bridge.control(userId, guildId, { action: 'pause' });
+  assert.equal(f.queue.paused, true);
+  await f.bridge.control(userId, guildId, { action: 'pause' });
+  assert.equal(f.queue.paused, true);
+  await f.bridge.control(userId, guildId, { action: 'resume' });
+  assert.equal(f.queue.paused, false);
+
+  for (const mode of ['recovering', 'alternative']) {
+    state.mode = mode;
+    await assert.rejects(f.bridge.control(userId, guildId, { action: 'resume' }), { errorCode: 'QUEUE_BLOCKED' });
+    await assert.rejects(f.bridge.control(userId, guildId, { action: 'pause' }), { errorCode: 'QUEUE_BLOCKED' });
+  }
+});

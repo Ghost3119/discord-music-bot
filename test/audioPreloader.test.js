@@ -365,3 +365,45 @@ test('disabled preloading performs no speculative work or transition bookkeeping
   await f.prepare(); assert.equal(f.calls.length, 0); assert.equal(f.p.metrics.tracked, 0);
   assert.equal(f.p.metrics.fallback, 0); assert.equal(await f.p.take(q, q.songs[1]), undefined);
 });
+
+test('yt-dlp User-Agent header propagates to FFmpeg input args in fallback playback and prebuffer while sanitizing control chars', async t => {
+  const { audioStreamOptions } = require('../dist/music/prebufferedStream');
+  const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/150.0.0.0 Safari/537.36';
+  let spawnDebug = '';
+  const f = await nativeFixture(t, {
+    setup: ctx => {
+      ctx.plugin.fetchInfo = async (input, flags, signal, priority) => {
+        ctx.calls.push({ input, flags, signal, priority });
+        return {
+          url: `https://audio.test/${ctx.calls.length}?sig=1`,
+          http_headers: { 'User-Agent': ua, Cookie: 'SID=secret' },
+        };
+      };
+    },
+  });
+  const firstStreamUrl = f.q.songs[0].stream.url;
+  assert.equal(f.plugin.getStreamUserAgent(firstStreamUrl, f.q.songs[0].url), ua);
+  const prebufferOpts = audioStreamOptions(f.q, 0, f.plugin.getStreamUserAgent(firstStreamUrl));
+  assert.equal(prebufferOpts.ffmpeg.args.input.user_agent, ua);
+
+  f.p.cancel(f.q, 'test_fallback');
+  f.q.songs.shift();
+  const prevPlay = f.voice.play;
+  f.voice.play = async stream => {
+    stream.on('debug', msg => { if (msg.startsWith('[process] spawn:')) spawnDebug = msg; });
+    stream.spawn();
+    stream.kill();
+    return prevPlay(stream);
+  };
+  await f.q.play();
+  assert.match(spawnDebug, /-user_agent Mozilla\/5\.0 .* -protocol_whitelist http,https,tcp,tls,crypto -i https:\/\/audio\.test\//);
+  assert.doesNotMatch(spawnDebug, /SID=secret/);
+
+  const activeStreamUrl = f.q.songs[0].stream.url;
+  assert.equal(f.plugin.getStreamUserAgent(activeStreamUrl, f.q.songs[0].url), ua);
+  f.plugin.invalidateStream(f.q.songs[0], 0);
+  assert.equal(f.plugin.getStreamUserAgent(activeStreamUrl, f.q.songs[0].url), undefined);
+  f.plugin.fetchInfo = async () => ({ url: 'https://audio.test/injected', http_headers: { 'user-agent': 'Bad\r\nHeader: 1' } });
+  const injectedUrl = await f.plugin.getStreamURL(f.q.songs[0]);
+  assert.equal(f.plugin.getStreamUserAgent(injectedUrl, f.q.songs[0].url), undefined);
+});

@@ -46,6 +46,7 @@ interface YtDlpInfo {
   repost_count?: number;
   age_limit?: number;
   entries?: YtDlpInfo[];
+  http_headers?: Record<string, string>;
 }
 
 interface PendingRequest<T> {
@@ -235,10 +236,20 @@ async function runWithConcurrency<T>(
   await Promise.all(workers);
 }
 
+function sanitizeUserAgent(headers: Record<string, string> | undefined): string | undefined {
+  if (!headers || typeof headers !== 'object') return undefined;
+  const raw = Object.entries(headers).find(([key]) => key.toLowerCase() === 'user-agent')?.[1];
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 512 || /[\u0000-\u001f\u007f]/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
 export class YtDlpSearchPlugin extends ExtractorPlugin {
   private readonly searchCache = new TtlCache<YtDlpInfo>(SEARCH_CACHE_MAX_ITEMS, SEARCH_CACHE_TTL_MS);
   private readonly urlInfoCache = new TtlCache<YtDlpInfo>(SEARCH_CACHE_MAX_ITEMS, SEARCH_CACHE_TTL_MS);
   private readonly streamUrlCache = new TtlCache<string>(STREAM_CACHE_MAX_ITEMS, STREAM_CACHE_TTL_MS);
+  private readonly streamUserAgents = new TtlCache<string>(STREAM_CACHE_MAX_ITEMS * 2, STREAM_CACHE_TTL_MS);
   private readonly mixCache = new TtlCache<YtDlpInfo[]>(MIX_CACHE_MAX_ITEMS, MIX_CACHE_TTL_MS);
   private readonly pendingSearches = new Map<string, PendingRequest<YtDlpInfo | null>>();
   private readonly pendingStreamUrls = new Map<string, PendingRequest<string>>();
@@ -298,6 +309,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
     if (canonical) this.urlInfoCache.set(normalizeUrlCacheKey(canonical), info);
     if (info.url && info.url !== (canonical ?? url)) {
       this.streamUrlCache.set(normalizeUrlCacheKey(canonical ?? url), info.url);
+      this.rememberStreamUserAgent(info, info.url, canonical ?? url);
     }
 
     return this.createSong(info, options);
@@ -390,9 +402,28 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
   invalidateStream(song: Song, retryDelayMs = 500): void {
     const playable = song.stream.playFromSource ? song : song.stream.song;
     if (!playable) return;
-    if (playable.url) this.streamUrlCache.delete(normalizeUrlCacheKey(playable.url));
-    if (playable.stream.playFromSource) delete playable.stream.url;
+    if (playable.url) {
+      const key = normalizeUrlCacheKey(playable.url);
+      this.streamUrlCache.delete(key);
+      this.streamUserAgents.delete(key);
+    }
+    if (playable.stream.playFromSource) {
+      if (playable.stream.url) this.streamUserAgents.delete(playable.stream.url);
+      delete playable.stream.url;
+    }
     this.refreshAfter.set(playable, Date.now() + retryDelayMs);
+  }
+
+  getStreamUserAgent(streamUrl?: string, sourceUrl?: string): string | undefined {
+    return (streamUrl ? this.streamUserAgents.get(streamUrl) : undefined)
+      ?? (sourceUrl ? this.streamUserAgents.get(normalizeUrlCacheKey(sourceUrl)) : undefined);
+  }
+
+  private rememberStreamUserAgent(info: YtDlpInfo, streamUrl?: string, sourceUrl?: string): void {
+    const userAgent = sanitizeUserAgent(info.http_headers);
+    if (!userAgent) return;
+    if (streamUrl) this.streamUserAgents.set(streamUrl, userAgent);
+    if (sourceUrl) this.streamUserAgents.set(normalizeUrlCacheKey(sourceUrl), userAgent);
   }
 
   async searchCandidates(query: string, limit = 5, source: SearchSource = 'youtube'): Promise<Song[]> {
@@ -456,6 +487,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
             candidate.stream.url = result.url;
             if (song.playlist) candidate.playlist = song.playlist;
             this.streamUrlCache.set(normalizeUrlCacheKey(canonical), result.url);
+            this.rememberStreamUserAgent(result, result.url, canonical);
             budget.throwIfAborted();
             return candidate;
           } catch (error) {
@@ -535,6 +567,7 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
   private async fetchStreamUrl(url: string, signal: AbortSignal, priority: ExtractionPriority): Promise<string> {
     const info = await this.fetchInfo(url, { format: 'ba/ba*', noPlaylist: true }, signal, priority);
     const streamUrl = toStringValue(info.url);
+    if (streamUrl) this.rememberStreamUserAgent(info, streamUrl, url);
 
     if (!streamUrl) {
       throw new Error(`yt-dlp did not return a playable stream URL for ${url}.`);
@@ -636,7 +669,10 @@ export class YtDlpSearchPlugin extends ExtractorPlugin {
             const canonical = getPlayableUrl(result);
             if (!canonical || hasEntries(result)) continue;
             if (candidate._type === 'url' && !matchesSearchQuery(query, result)) continue;
-            if (result.url && result.url !== canonical) this.streamUrlCache.set(normalizeUrlCacheKey(canonical), result.url);
+            if (result.url && result.url !== canonical) {
+              this.streamUrlCache.set(normalizeUrlCacheKey(canonical), result.url);
+              this.rememberStreamUserAgent(result, result.url, canonical);
+            }
             return { ...result, extractor: result.extractor ?? attempt.source };
           } catch (error) {
             lastError = error;

@@ -129,6 +129,8 @@ describe('player and queue regression', () => {
     expect(html).toContain(label);
     expect(html).toContain('aria-label="Canción actual"');
     expect(tag(html, 'button', 'aria-label', 'Siguiente canción').includes('disabled=""')).toBe(status === 'blocked' || status === 'idle');
+    const barHtml = renderToStaticMarkup(<PlayerBar playback={playback({ state: snapshot({ status, current }) })} onShowQueue={vi.fn()} />);
+    expect(tag(barHtml, 'button', 'aria-label', status === 'playing' ? 'Pausar reproducción' : 'Continuar reproducción').includes('disabled=""')).toBe(status === 'recovering' || status === 'idle');
     if (status === 'paused') expect(html).toContain('Continuar');
     if (status === 'idle') expect(html).toContain('now-card-idle');
   });

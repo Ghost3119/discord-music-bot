@@ -274,8 +274,25 @@ export function createMusicBridge(client: Client, history?: HistoryStore, option
             outcome = { recommendationsAdded: await recommendForQueue(distube, queue, plugin, member, action.amount ?? 5, signal, check, true) };
             break;
           }
-          case 'pause': await queue.pause(); break;
-          case 'resume': await queue.resume(); break;
+          case 'pause':
+            if (['recovering', 'alternative'].includes(getPlaybackState(queue)?.mode ?? '')) {
+              await queue._taskQueue.queuing(); queue._taskQueue.resolve();
+              throw controlError('QUEUE_BLOCKED', 'La recuperación de audio sigue en curso.');
+            }
+            if (!queue.paused) {
+              try { await queue.pause(); } catch (error) { if ((error as { errorCode?: string })?.errorCode !== 'PAUSED') throw error; }
+            } else { await queue._taskQueue.queuing(); queue._taskQueue.resolve(); }
+            break;
+          case 'resume':
+            if (getPlaybackState(queue)?.blocked) { await queue.resume(); break; }
+            if (['recovering', 'alternative'].includes(getPlaybackState(queue)?.mode ?? '')) {
+              await queue._taskQueue.queuing(); queue._taskQueue.resolve();
+              throw controlError('QUEUE_BLOCKED', 'La recuperación de audio sigue en curso.');
+            }
+            if (queue.paused) {
+              try { await queue.resume(); } catch (error) { if ((error as { errorCode?: string })?.errorCode !== 'RESUMED') throw error; }
+            } else { await queue._taskQueue.queuing(); queue._taskQueue.resolve(); }
+            break;
           case 'skip': await queue.skip(); break;
           case 'stop': await queue.stop(); break;
           case 'shuffle': await editQueue(distube, queue, { type: 'shuffle' }); break;
