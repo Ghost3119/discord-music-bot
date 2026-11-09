@@ -23,7 +23,8 @@
     "dev:check": "node scripts/dev-app.cjs --check",
     "dev:bot": "ts-node src/bootstrap.ts",
     "deploy": "ts-node src/deploy-commands.ts",
-    "deploy:check": "ts-node src/deploy-commands.ts --dry-run"
+    "deploy:check": "ts-node src/deploy-commands.ts --dry-run",
+    "db:migrate:postgres": "node dist/scripts/migrate-sqlite-to-postgres.js"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -43,12 +44,15 @@
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.12.7",
     "ffmpeg-static": "^5.3.0",
-    "libsodium-wrappers": "^0.8.4"
+    "libsodium-wrappers": "^0.8.4",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
     "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.9.0",
+    "@types/pg": "^8.23.1",
     "eslint": "^10.0.1",
     "globals": "^17.14.0",
     "prettier": "^3.9.10",

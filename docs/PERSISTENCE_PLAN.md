@@ -127,6 +127,14 @@ Antes de tocar código, fijar el comportamiento actual con una suite reutilizabl
 - **Copia de seguridad previa del `.db`** y del volumen; el archivo SQLite queda intacto como rollback.
 - Corte: detener bot → migrar → verificar → arrancar con `DATABASE_DRIVER=postgres`. Rollback: volver a `sqlite`.
 
+Implementado: `npm run db:migrate:postgres -- --source RUTA --dry-run` valida la fuente
+sin abrir el destino. Tras un backup consistente de SQLite y del volumen PostgreSQL,
+y con los escritores detenidos, omitir `--dry-run` copia y verifica todos los datos.
+`--batch-size 1..1000` ajusta los lotes (100 por defecto). El CLI usa SQLite en modo
+solo lectura y recibe `DATABASE_URL` del entorno; no carga `.env` ni imprime credenciales.
+Una diferencia de contenido en una clave existente aborta la transacción completa;
+los conteos y checksums se verifican antes del commit. La fuente queda como rollback.
+
 ## 4. Pista paralela: preparar el uso público
 
 Independiente de PostgreSQL; conviene planificarla aparte:
@@ -168,8 +176,8 @@ flowchart LR
 | F0 Pruebas de contrato | Hecho (pendiente de PR) | — |
 | F1 Puertos asíncronos y errores de dominio | Hecho (pendiente de PR) | — |
 | F2 Adaptador SQLite + inyección | Hecho (pendiente de PR) | — |
-| F3 Checkpoints e historial detrás de puertos | Pendiente | — |
-| F4 Migraciones por dialecto | Pendiente | — |
-| F5 Adaptador PostgreSQL | Pendiente | — |
-| F6 Configuración y Docker | Pendiente | — |
-| F7 Migración de datos | Pendiente | — |
+| F3 Checkpoints e historial detrás de puertos | Hecho (pendiente de PR) | — |
+| F4 Migraciones por dialecto | Hecho (pendiente de PR) | — |
+| F5 Adaptador PostgreSQL | Hecho (pendiente de PR) | — |
+| F6 Configuración y Docker | Hecho (pendiente de PR) | — |
+| F7 Migración de datos | Hecho (pendiente de PR) | — |

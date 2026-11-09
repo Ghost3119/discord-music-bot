@@ -155,7 +155,7 @@ export function openWebDatabase(filename: string): WebDatabase {
     sqlite.exec('CREATE TABLE IF NOT EXISTS web_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)');
     const applied = sqlite.prepare('SELECT version FROM web_migrations WHERE version = ?').get(1);
     if (!applied) sqlite.transaction(() => {
-      sqlite.exec(readFileSync(path.resolve(__dirname, '../../../migrations/0001_dashboard.sql'), 'utf8'));
+      sqlite.exec(readFileSync(path.resolve(__dirname, '../../../migrations/sqlite/0001_dashboard.sql'), 'utf8'));
       sqlite.prepare('INSERT INTO web_migrations(version, applied_at) VALUES (?, ?)').run(1, Date.now());
     })();
     return new WebDatabase(sqlite);

@@ -1,0 +1,33 @@
+name: PostgreSQL persistence contracts
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: sonora_test
+          POSTGRES_PASSWORD: sonora_test
+          POSTGRES_DB: sonora_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonora_test -d sonora_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build:bot
+      - run: node --test --test-timeout=60000 test/postgresRepositoriesContract.test.js test/sqliteToPostgresMigration.test.js
+        env:
+          SONORA_TEST_POSTGRES_URL: postgresql://sonora_test:sonora_test@localhost:5432/sonora_test

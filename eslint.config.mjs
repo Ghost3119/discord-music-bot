@@ -34,4 +34,26 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ['src/domain/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: ['drizzle-orm', 'better-sqlite3', 'pg', 'fastify', 'discord.js'],
+          patterns: [
+            'drizzle-orm/*',
+            '**/web',
+            '**/web/**',
+            '**/music',
+            '**/music/**',
+            '**/infrastructure',
+            '**/infrastructure/**',
+            '**/runtime',
+            '**/runtime/**',
+          ],
+        },
+      ],
+    },
+  },
 );

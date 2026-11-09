@@ -1,3 +1,5 @@
+import type { Repositories } from '../domain/persistence';
+import type { WebConfig } from '../web/config';
 import type { Client } from 'discord.js';
 import type { HistoryStore } from '../music/history';
 import { classifyMusicError } from '../music/errors';
@@ -38,6 +40,22 @@ export function createWebLifecycle(options: LifecycleOptions): { start(): Promis
   };
 }
 
+/** Composition root: only the selected driver is loaded. Caller owns the result. */
+export async function openWebRepositories(config: WebConfig): Promise<Repositories> {
+  if (config.databaseDriver === 'postgres') {
+    const [{ Pool }, { openPostgresDatabase }, { createPostgresRepositories }] = await Promise.all([
+      import('pg'), import('../infrastructure/postgres/database'), import('../infrastructure/postgres/repositories'),
+    ]);
+    const pool = new Pool({ connectionString: config.databaseUrl, max: 10, connectionTimeoutMillis: 10_000, statement_timeout: 15_000 });
+    pool.on('error', () => { console.warn('[Web] PostgreSQL connection error; no credentials are logged.'); });
+    return createPostgresRepositories(await openPostgresDatabase(pool));
+  }
+  const [{ openWebDatabase }, { createSqliteRepositories }] = await Promise.all([
+    import('../infrastructure/sqlite/database'), import('../infrastructure/sqlite/repositories'),
+  ]);
+  return createSqliteRepositories(openWebDatabase(config.databasePath));
+}
+
 export function createWebDashboard(client: Client, history: HistoryStore): ReturnType<typeof createWebLifecycle> {
   return createWebLifecycle({
     enabled: () => process.env['WEB_ENABLED'] === 'true',
@@ -48,9 +66,8 @@ export function createWebDashboard(client: Client, history: HistoryStore): Retur
       if (process.connected) process.send?.({ type: 'webStartupFailed' }, () => {});
     },
     open: async () => {
-      const [{ readWebConfig }, { createWebServer }, { createMusicBridge }, { openWebDatabase }, { createSqliteRepositories }] = await Promise.all([
+      const [{ readWebConfig }, { createWebServer }, { createMusicBridge }] = await Promise.all([
         import('../web/config'), import('../web/server'), import('../music/webBridge'),
-        import('../infrastructure/sqlite/database'), import('../infrastructure/sqlite/repositories'),
       ]);
       const config = readWebConfig();
       const bridge = createMusicBridge(client, history, {
@@ -59,7 +76,7 @@ export function createWebDashboard(client: Client, history: HistoryStore): Retur
         ...(config.adminUserIds ? { adminUserIds: config.adminUserIds } : {}),
         ...(config.membershipCacheTtlMs !== undefined ? { membershipCacheTtlMs: config.membershipCacheTtlMs } : {}),
       });
-      const repositories = createSqliteRepositories(openWebDatabase(config.databasePath));
+      const repositories = await openWebRepositories(config);
       let app: Awaited<ReturnType<typeof createWebServer>> | undefined;
       try {
         app = await createWebServer({ config, bridge, repositories });

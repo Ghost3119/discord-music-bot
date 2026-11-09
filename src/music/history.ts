@@ -1,32 +1,11 @@
+import { createJsonHistoryStorage } from '../infrastructure/json/history';
+import { publicMusicUrl, type HistoryEntry, type HistoryStorage } from '../domain/persistence/history';
+export { publicMusicUrl, type HistoryEntry } from '../domain/persistence/history';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import { Queue, Song } from 'distube';
 
-export interface HistoryEntry {
-  id: string; guildId: string; title: string; source: string; time: number;
-  result: 'completed' | 'skipped' | 'failed'; code: string; reference: string;
-  url: string | undefined; searchSource: 'youtube' | 'soundcloud'; alternative: string | undefined;
-}
 interface Request { id: string; original: Song; done: boolean; }
 const WEEK = 7 * 24 * 60 * 60_000;
-export function publicMusicUrl(input: string | undefined): string | undefined {
-  if (!input || input.length > 1000) return undefined;
-  try {
-    const url = new URL(input ?? '');
-    if (url.protocol !== 'https:' || url.username || url.password) return undefined;
-    const host = url.hostname.toLowerCase();
-    if (['youtube.com', 'www.youtube.com', 'music.youtube.com', 'youtu.be'].includes(host)) {
-      const id = host === 'youtu.be' ? url.pathname.slice(1) : url.searchParams.get('v');
-      return id && /^[\w-]{11}$/.test(id) ? `https://www.youtube.com/watch?v=${id}` : undefined;
-    }
-    if (['soundcloud.com', 'www.soundcloud.com'].includes(host) && /^\/[^/]+\/[^/]+\/?$/.test(url.pathname)) return `https://soundcloud.com${url.pathname}`;
-    if (host === 'open.spotify.com' && /^\/track\/[a-zA-Z0-9]+$/.test(url.pathname)) return `${url.origin}${url.pathname}`;
-    if (host === 'music.apple.com' && url.pathname.includes('/album/') && /^\d+$/.test(url.searchParams.get('i') ?? '')) return `${url.origin}${url.pathname}?i=${url.searchParams.get('i')}`;
-  } catch { /* Unusable sources stay visible without a retry button. */ }
-  return undefined;
-}
 
 export class HistoryStore {
   private entries: HistoryEntry[] = [];
@@ -38,22 +17,12 @@ export class HistoryStore {
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
   private closing: Promise<void> | undefined;
-  constructor(private readonly path?: string) {
-    if (!path) return;
-    try {
-      if (!existsSync(path)) return;
-      if (statSync(path).size > 3_000_000) throw new Error('Historial demasiado grande');
-      const input: unknown = JSON.parse(readFileSync(path, 'utf8'));
-      if (!Array.isArray(input)) throw new Error('Formato de historial inválido');
-      this.entries = input.slice(0, 2000).filter((e): e is HistoryEntry => Boolean(e && typeof e === 'object' &&
-        /^[a-f0-9]{16}$/.test(e.id) && /^\d{15,22}$/.test(e.guildId) && typeof e.title === 'string' && e.title.length <= 200 &&
-        typeof e.source === 'string' && e.source.length <= 60 && Number.isFinite(e.time) && e.time <= Date.now() &&
-        ['completed', 'skipped', 'failed'].includes(e.result) && typeof e.code === 'string' && /^[A-Z0-9_]{0,64}$/.test(e.code) &&
-        typeof e.reference === 'string' && /^[a-f0-9]{0,16}$/.test(e.reference) &&
-        (!e.url || publicMusicUrl(e.url) === e.url) && ['youtube', 'soundcloud'].includes(e.searchSource) &&
-        (!e.alternative || typeof e.alternative === 'string' && e.alternative.length <= 200)));
-      this.prune();
-    } catch (error) { console.error('[Historial] No se pudo leer; el bot continúa:', error); }
+  private readonly storage: HistoryStorage | undefined;
+  constructor(path?: string, storage?: HistoryStorage) {
+    this.storage = storage ?? (path ? createJsonHistoryStorage(path) : undefined);
+    if (!this.storage) return;
+    try { this.entries = this.storage.read(); this.prune(); }
+    catch (error) { console.error('[Historial] No se pudo leer; el bot continúa:', error); }
   }
   private book(queue: Queue): WeakMap<Song, Request> {
     let book = this.requests.get(queue);
@@ -104,7 +73,7 @@ export class HistoryStore {
     }).slice(0, 2000);
   }
   private save(): void {
-    if (!this.path || this.closed) return;
+    if (!this.storage || this.closed) return;
     this.dirty = true;
     void this.write();
   }
@@ -113,7 +82,7 @@ export class HistoryStore {
     this.retryTimer = undefined;
   }
   private scheduleRetry(): void {
-    if (!this.path || this.closed || !this.dirty || this.retryTimer) return;
+    if (!this.storage || this.closed || !this.dirty || this.retryTimer) return;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
       void this.write();
@@ -122,17 +91,15 @@ export class HistoryStore {
   }
   private write(force = false): Promise<void> | undefined {
     if (this.pending) return this.pending;
-    if (!this.path || !this.dirty || this.closed && !force) return undefined;
+    if (!this.storage || !this.dirty || this.closed && !force) return undefined;
     if (!force && Date.now() < this.retryAt) { this.scheduleRetry(); return undefined; }
     this.clearRetry();
     this.pending = (async () => {
       try {
-        await mkdir(dirname(this.path!), { recursive: true });
         while (this.dirty) {
           this.prune();
           this.dirty = false;
-          await writeFile(`${this.path}.tmp`, JSON.stringify(this.entries), { mode: 0o600 });
-          await rename(`${this.path}.tmp`, this.path!);
+          await this.storage!.write(this.entries);
         }
         this.retryAt = 0;
       } catch (error) {
