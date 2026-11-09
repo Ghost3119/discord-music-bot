@@ -170,6 +170,6 @@ flowchart LR
 | F2 Adaptador SQLite + inyección | Hecho (pendiente de PR) | — |
 | F3 Checkpoints e historial detrás de puertos | Hecho (pendiente de PR) | — |
 | F4 Migraciones por dialecto | Hecho (pendiente de PR) | — |
-| F5 Adaptador PostgreSQL | Pendiente | — |
+| F5 Adaptador PostgreSQL | Hecho (pendiente de PR) | — |
 | F6 Configuración y Docker | Pendiente | — |
 | F7 Migración de datos | Pendiente | — |
