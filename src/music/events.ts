@@ -129,7 +129,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
       const state = getPlaybackState(queue);
       return ownsQueue(queue) && !state?.blocked && !state?.busy && queue.songs[0] === song && queue.voice.stream === stream &&
         queue._manualUpdate === manual && (manual || !queue.voice.emittedError &&
-          !(state && ['recovering', 'alternative'].includes(state.mode) && !stream?.audioResource?.playbackDuration));
+          !(state && ['recovering', 'alternative'].includes(state.mode) && !stream?.audioResource?.playbackDuration && queue.voice.audioPlayer?.state.status !== 'idle'));
     };
     if (!eligible()) return;
     const existing = pendingFinishes.get(queue);
@@ -144,7 +144,14 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
             // Drain commands already waiting before delegating: native finish
             // captures the head before acquiring its own task lock.
             if (queue._taskQueue.remaining > 1) continue;
-            finishing = nativeFinish.call(distube.queues, queue);
+            // An empty stream can reach Idle without an FFmpeg error. Treat it
+            // as a playback failure, not as successful completion of the head.
+            // An explicit seek past the end legitimately produces no frames.
+            const empty = !manual && stream?.audioResource?.playbackDuration === 0 &&
+              !(song.duration > 0 && stream.seekTime >= song.duration);
+            finishing = empty
+              ? failSong(queue, Object.assign(new Error('El stream terminó sin producir audio'), { errorCode: 'AUDIO_STALLED' }), song)
+              : nativeFinish.call(distube.queues, queue);
           } finally { queue._taskQueue.resolve(); }
           await finishing;
           return;
