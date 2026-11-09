@@ -28,6 +28,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:bot
-      - run: node --test --test-timeout=60000 test/postgresRepositoriesContract.test.js
+      - run: node --test --test-timeout=60000 test/postgresRepositoriesContract.test.js test/sqliteToPostgresMigration.test.js
         env:
           SONORA_TEST_POSTGRES_URL: postgresql://sonora_test:sonora_test@localhost:5432/sonora_test
