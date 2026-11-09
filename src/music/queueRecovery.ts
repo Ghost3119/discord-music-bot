@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import type { SavedSong, SavedQueue, QueueCheckpointStore } from '../domain/persistence/checkpoints';
+import { createJsonQueueCheckpointStore } from '../infrastructure/json/checkpoints';
+import { resolve } from 'node:path';
 import { Client, ChannelType } from 'discord.js';
 import { DisTube, Events, Playlist, Queue, Song, SongInfo } from 'distube';
 import { guardedEvent } from '../runtime/safety';
@@ -7,37 +8,7 @@ import { getPlaybackState } from './playbackState';
 import { getPlaybackHealth } from './playbackHealth';
 import { registerCheckpoint } from './queueChanges';
 import { youtubeThumbnail } from './artwork';
-import { isPublicPlaybackUrl } from './mediaPolicy';
 import { sanitizeThumbnailUrl } from './artwork';
-
-interface SavedSong {
-  id: string;
-  source: string;
-  url: string;
-  name: string;
-  thumbnail?: string;
-  uploader: string;
-  duration: number;
-  ageRestricted: boolean;
-  playFromSource: boolean;
-  searchSource: 'youtube' | 'soundcloud';
-}
-
-interface SavedQueue {
-  blocked?: boolean;
-  probe?: boolean;
-  failures?: number[];
-  guildId: string;
-  voiceChannelId: string;
-  textChannelId?: string;
-  songs: SavedSong[];
-  position: number;
-  volume: number;
-  paused: boolean;
-  autoplay: boolean;
-  repeatMode: 0 | 1 | 2;
-  updatedAt: number;
-}
 
 interface RestoreAttempt {
   snapshot: SavedQueue;
@@ -50,27 +21,6 @@ function publicThumbnail(value: unknown): string | undefined {
   return sanitizeThumbnailUrl(value) ?? undefined;
 }
 
-function isSavedQueue(value: unknown): value is SavedQueue {
-  if (typeof value !== 'object' || value === null) return false;
-  const queue = value as SavedQueue;
-  const id = (value: unknown) => typeof value === 'string' && /^\d{15,22}$/.test(value);
-  return id(queue.guildId) && id(queue.voiceChannelId) && (queue.textChannelId === undefined || id(queue.textChannelId)) &&
-    (queue.blocked === undefined || typeof queue.blocked === 'boolean') &&
-    (queue.probe === undefined || typeof queue.probe === 'boolean') &&
-    (queue.failures === undefined || Array.isArray(queue.failures) && queue.failures.length <= 3 &&
-      queue.failures.every(time => Number.isFinite(time) && time >= 0)) &&
-    Number.isFinite(queue.position) && queue.position >= 0 && Number.isFinite(queue.volume) && queue.volume >= 0 && queue.volume <= 200 &&
-    typeof queue.paused === 'boolean' && typeof queue.autoplay === 'boolean' && [0, 1, 2].includes(queue.repeatMode) &&
-    Number.isFinite(queue.updatedAt) && Array.isArray(queue.songs) && queue.songs.length > 0 && queue.songs.length <= 500 &&
-    queue.songs.every((song) => song && typeof song.id === 'string' && typeof song.source === 'string' &&
-      (song.thumbnail === undefined || publicThumbnail(song.thumbnail) === song.thumbnail) &&
-      typeof song.name === 'string' && song.name.length <= 500 && typeof song.uploader === 'string' && song.uploader.length <= 500 &&
-      isPublicPlaybackUrl(song.url) &&
-      song.url.length <= 2_000 && Number.isFinite(song.duration) && song.duration >= 0 &&
-      typeof song.ageRestricted === 'boolean' && typeof song.playFromSource === 'boolean' &&
-      ['youtube', 'soundcloud'].includes(song.searchSource));
-}
-
 export class QueueRecovery {
   private readonly saved = new Map<string, SavedQueue>();
   private readonly restoring = new Map<string, RestoreAttempt>();
@@ -80,7 +30,9 @@ export class QueueRecovery {
   private readonly unregister: () => void;
   private readonly timer: ReturnType<typeof setInterval>;
 
-  constructor(private readonly client: Client, private readonly distube: DisTube, private readonly path = resolve('data/queues.json')) {
+  private readonly storage: QueueCheckpointStore;
+  constructor(private readonly client: Client, private readonly distube: DisTube, path = resolve('data/queues.json'), storage?: QueueCheckpointStore) {
+    this.storage = storage ?? createJsonQueueCheckpointStore(path);
     this.unregister = registerCheckpoint(distube, queue => this.capture(queue));
     this.load();
     const on = (event: Events.INIT_QUEUE | Events.PLAY_SONG | Events.ADD_SONG | Events.ADD_LIST | Events.FINISH_SONG | Events.DELETE_QUEUE,
@@ -127,13 +79,7 @@ export class QueueRecovery {
 
   private load(): void {
     try {
-      if (!existsSync(this.path)) return;
-      if (statSync(this.path).size > 5_000_000) throw new Error('El archivo de colas supera el tamaño máximo');
-      const data: unknown = JSON.parse(readFileSync(this.path, 'utf8'));
-      if (!Array.isArray(data)) throw new Error('Formato de colas inválido');
-      for (const item of data.slice(0, 100)) {
-        if (isSavedQueue(item) && Date.now() - item.updatedAt < 24 * 60 * 60 * 1_000) this.saved.set(item.guildId, item);
-      }
+      for (const item of this.storage.read()) this.saved.set(item.guildId, item);
     } catch (error) {
       console.error('No se pudieron leer las colas guardadas; el bot seguirá disponible:', error);
     }
@@ -142,9 +88,7 @@ export class QueueRecovery {
   private write(): void {
     if (this.suspended) return;
     try {
-      mkdirSync(dirname(this.path), { recursive: true });
-      writeFileSync(`${this.path}.tmp`, JSON.stringify([...this.saved.values()]), { mode: 0o600 });
-      renameSync(`${this.path}.tmp`, this.path);
+      this.storage.write([...this.saved.values()]);
     } catch (error) {
       console.error('No se pudo guardar la cola; la reproducción continúa:', error);
     }
