@@ -1,4 +1,5 @@
 import { DisTubeStream, DisTubeVoice } from 'distube';
+import { classifyMusicError } from './errors';
 
 const observedStreams = new WeakSet<DisTubeStream>();
 const diagnostics = new WeakMap<object, string[]>();
@@ -23,14 +24,33 @@ export function getStreamDiagnostics(error: unknown): readonly string[] {
   return typeof error === 'object' && error !== null ? diagnostics.get(error) ?? [] : [];
 }
 
+/** A voice EOF can precede FFmpeg's error event; preserve the stderr already seen. */
+export function emptyStreamError(stream: DisTubeStream | undefined): Error {
+  const tail = [...getStreamDiagnostics(stream)];
+  const code = classifyMusicError({ stderr: tail.join('\n') });
+  const error = Object.assign(new Error('El stream terminó sin producir audio'), { errorCode: code === 'UNKNOWN' ? 'AUDIO_STALLED' : code });
+  diagnostics.set(error, tail);
+  return error;
+}
+
 export function observeStreamErrors(stream: DisTubeStream): void {
   if (observedStreams.has(stream)) return;
   observedStreams.add(stream);
   const lines: string[] = [];
+  diagnostics.set(stream, lines);
   stream.on('debug', (message: string) => {
     // Exclude spawn commands: they contain signed audio URLs. Keep only a small
     // sanitized tail of FFmpeg stderr, rather than logging every progress line.
     const prefix = '[ffmpeg] log: ';
+    if (/^\[process\] exit: code=unknown signal=SIG(?:SEGV|ILL|BUS|ABRT|FPE)$/.test(message)) {
+      lines.push(message);
+      if (lines.length > 12) lines.shift();
+      const error = Object.assign(new Error('FFmpeg terminó por una señal fatal'), { errorCode: 'FFMPEG_EXITED' });
+      diagnostics.set(error, [...lines]);
+      // DisTube otherwise ignores a null exit code, including process crashes.
+      stream.emit('error', error);
+      return;
+    }
     if (!message.startsWith(prefix)) return;
     lines.push(sanitizeAudioLog(message.slice(prefix.length)));
     if (lines.length > 12) lines.shift();

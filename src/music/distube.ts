@@ -5,16 +5,17 @@ import ffmpeg from 'ffmpeg-static';
 import { YtDlpSearchPlugin } from './ytDlpSearchPlugin';
 
 export function createDisTube(client: Client): DisTube {
+  const ffmpegPath = process.env['FFMPEG_PATH'] || ffmpeg;
   const clientId = process.env['SPOTIFY_CLIENT_ID'];
   const clientSecret = process.env['SPOTIFY_CLIENT_SECRET'];
   const options: DisTubeOptions = {
     plugins: [new SpotifyArtworkPlugin(clientId && clientSecret ? { api: { clientId, clientSecret } } : {}), new YtDlpSearchPlugin()],
     emitNewSongOnly: true,
-    ffmpeg: { ...(ffmpeg ? { path: ffmpeg } : {}), args: { input: { protocol_whitelist: 'http,https,tcp,tls,crypto' } } },
+    ffmpeg: { ...(ffmpegPath ? { path: ffmpegPath } : {}), args: { input: { protocol_whitelist: 'http,https,tcp,tls,crypto' } } },
   };
 
-  if (ffmpeg) {
-    options.ffmpeg!.path = ffmpeg;
+  if (ffmpegPath) {
+    options.ffmpeg!.path = ffmpegPath;
   }
 
   const distube = new DisTube(client, options);

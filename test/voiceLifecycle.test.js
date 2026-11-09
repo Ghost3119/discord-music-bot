@@ -218,3 +218,15 @@ test('a late finish cannot fail a replacement that is still buffering during rec
   assert.equal(f.queue.songs[0].id, 'AAAAAAAAAAA');
   assert.equal(f.history.list(guildId).length, 0);
 });
+
+test('a silent EOF exposes sanitized FFmpeg stderr and keeps its specific HTTP failure code', async t => {
+  const f = await fixture(t); await f.queue.play();
+  f.voice.stream.emit('debug', '[ffmpeg] log: Opening https://audio.test/?token=never-log-this');
+  f.voice.stream.emit('debug', '[ffmpeg] log: HTTP error 403 Forbidden');
+  await f.distube.queues.handleSongFinish(f.queue);
+  assert.equal(f.state.lastError.code, 'SOURCE_BLOCKED');
+  const diagnostic = f.errors.find(args => args[0] === '[FFmpeg]');
+  assert.ok(diagnostic);
+  assert.match(diagnostic[1], /HTTP error 403 Forbidden/);
+  assert.doesNotMatch(JSON.stringify(diagnostic), /never-log-this|audio\.test/);
+});
