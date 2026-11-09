@@ -146,8 +146,87 @@ test('a finish from the old resource cannot end a song after native seek install
 
 test('duplicate native finish callbacks share one pending transition and advance only once', async t => {
   const f = await fixture(t); f.queue.songs.push(f.song('CCCCCCCCCCC')); await f.queue.play();
+  f.voice.stream.audioResource.playbackDuration = 200_000;
   await f.queue._taskQueue.queuing(); f.voice.emit('finish'); f.voice.emit('finish');
   f.queue._taskQueue.resolve(); await tick();
   assert.equal(f.queue.songs[0].id, 'BBBBBBBBBBB'); assert.equal(f.queue.songs.length, 2);
   assert.equal(f.history.list(guildId).length, 1); assert.equal(f.queue._taskQueue.remaining, 0);
+});
+
+test('a silent EOF before the first audio frame enters recovery instead of completing the song', async t => {
+  const f = await fixture(t); await f.queue.play(); const original = f.queue.songs[0];
+  assert.equal(f.voice.stream.audioResource.playbackDuration, 0);
+  await f.distube.queues.handleSongFinish(f.queue);
+  assert.equal(f.queue.songs[0], original);
+  assert.equal(f.state.attempt, 1);
+  assert.equal(f.history.list(guildId).length, 0);
+  assert.equal(f.queue._taskQueue.remaining, 0);
+});
+
+test('duplicate silent EOF callbacks share one recovery and cannot consume the following track', async t => {
+  const f = await fixture(t); await f.queue.play(); const original = f.queue.songs[0];
+  await f.queue._taskQueue.queuing();
+  const first = f.distube.queues.handleSongFinish(f.queue);
+  const duplicate = f.distube.queues.handleSongFinish(f.queue);
+  f.queue._taskQueue.resolve();
+  await Promise.all([first, duplicate]);
+  assert.equal(f.queue.songs[0], original);
+  assert.equal(f.queue.songs.length, 2);
+  assert.equal(f.state.attempt, 1);
+  assert.equal(f.history.list(guildId).length, 0);
+});
+
+test('a natural finish after audio frames still records completion and advances once', async t => {
+  const f = await fixture(t); await f.queue.play();
+  f.voice.stream.audioResource.playbackDuration = 200_000;
+  await f.distube.queues.handleSongFinish(f.queue);
+  assert.equal(f.queue.songs[0].id, 'BBBBBBBBBBB');
+  assert.equal(f.history.list(guildId)[0].result, 'completed');
+});
+
+test('an explicit seek to the end may finish without frames without retrying the track', async t => {
+  const f = await fixture(t); await f.queue.play();
+  await f.queue.seek(200);
+  assert.equal(f.voice.stream.audioResource.playbackDuration, 0);
+  await f.distube.queues.handleSongFinish(f.queue);
+  assert.equal(f.queue.songs[0].id, 'BBBBBBBBBBB');
+  assert.equal(f.state.attempt, 0);
+  assert.equal(f.history.list(guildId)[0].result, 'completed');
+});
+
+test('silent EOFs on retry resources use bounded recovery without depending on the watchdog', async t => {
+  const f = await fixture(t); await f.queue.play();
+  f.voice.audioPlayer = { state: { status: 'idle' } };
+  let alternatives = 0; f.plugin.findAlternative = async () => { alternatives++; return null; };
+  for (let i = 0; i < 3; i++) await f.distube.queues.handleSongFinish(f.queue);
+  assert.equal(alternatives, 1);
+  assert.equal(f.queue.songs[0].id, 'BBBBBBBBBBB');
+  assert.equal(f.history.list(guildId).length, 1);
+  assert.equal(f.history.list(guildId)[0].result, 'failed');
+  assert.equal(f.queue._taskQueue.remaining, 0);
+});
+
+test('a late finish cannot fail a replacement that is still buffering during recovery', async t => {
+  const f = await fixture(t); await f.queue.play();
+  f.voice.audioPlayer = { state: { status: 'idle' } };
+  await f.distube.queues.handleSongFinish(f.queue);
+  const replacement = f.voice.stream;
+  f.voice.audioPlayer.state.status = 'buffering';
+  await f.distube.queues.handleSongFinish(f.queue);
+  assert.equal(f.voice.stream, replacement);
+  assert.equal(f.state.attempt, 1);
+  assert.equal(f.queue.songs[0].id, 'AAAAAAAAAAA');
+  assert.equal(f.history.list(guildId).length, 0);
+});
+
+test('a silent EOF exposes sanitized FFmpeg stderr and keeps its specific HTTP failure code', async t => {
+  const f = await fixture(t); await f.queue.play();
+  f.voice.stream.emit('debug', '[ffmpeg] log: Opening https://audio.test/?token=never-log-this');
+  f.voice.stream.emit('debug', '[ffmpeg] log: HTTP error 403 Forbidden');
+  await f.distube.queues.handleSongFinish(f.queue);
+  assert.equal(f.state.lastError.code, 'SOURCE_BLOCKED');
+  const diagnostic = f.errors.find(args => args[0] === '[FFmpeg]');
+  assert.ok(diagnostic);
+  assert.match(diagnostic[1], /HTTP error 403 Forbidden/);
+  assert.doesNotMatch(JSON.stringify(diagnostic), /never-log-this|audio\.test/);
 });

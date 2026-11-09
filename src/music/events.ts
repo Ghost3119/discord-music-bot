@@ -3,7 +3,7 @@ import { EmbedBuilder } from 'discord.js';
 import { createAddQueueEmbed } from '../utils/embed';
 import { BotColors } from '../utils/colors';
 import { PLAYLIST_SEARCH_WARM_LIMIT, YtDlpSearchPlugin } from './ytDlpSearchPlugin';
-import { getStreamDiagnostics, observeStreamErrors, observeVoiceErrors } from './streamErrors';
+import { emptyStreamError, getStreamDiagnostics, observeStreamErrors, observeVoiceErrors } from './streamErrors';
 import { classifyMusicError, describeMusicError } from './errors';
 import { PlaybackRecovery } from './playbackRecovery';
 import { guardedEvent } from '../runtime/safety';
@@ -129,7 +129,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
       const state = getPlaybackState(queue);
       return ownsQueue(queue) && !state?.blocked && !state?.busy && queue.songs[0] === song && queue.voice.stream === stream &&
         queue._manualUpdate === manual && (manual || !queue.voice.emittedError &&
-          !(state && ['recovering', 'alternative'].includes(state.mode) && !stream?.audioResource?.playbackDuration));
+          !(state && ['recovering', 'alternative'].includes(state.mode) && !stream?.audioResource?.playbackDuration && queue.voice.audioPlayer?.state.status !== 'idle'));
     };
     if (!eligible()) return;
     const existing = pendingFinishes.get(queue);
@@ -144,7 +144,14 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
             // Drain commands already waiting before delegating: native finish
             // captures the head before acquiring its own task lock.
             if (queue._taskQueue.remaining > 1) continue;
-            finishing = nativeFinish.call(distube.queues, queue);
+            // An empty stream can reach Idle without an FFmpeg error. Treat it
+            // as a playback failure, not as successful completion of the head.
+            // An explicit seek past the end legitimately produces no frames.
+            const empty = !manual && stream?.audioResource?.playbackDuration === 0 &&
+              !(song.duration > 0 && stream.seekTime >= song.duration);
+            finishing = empty
+              ? failSong(queue, emptyStreamError(stream), song)
+              : nativeFinish.call(distube.queues, queue);
           } finally { queue._taskQueue.resolve(); }
           await finishing;
           return;
@@ -344,7 +351,7 @@ export function registerDisTubeEvents(distube: DisTube, history?: HistoryStore, 
   on(Events.ERROR, async (error, queue: Queue, song) => {
     console.error('DisTube Error:', classifyMusicError(error));
     const diagnostics = getStreamDiagnostics(error);
-    if (diagnostics.length) console.error('[FFmpeg]', classifyMusicError(error));
+    if (diagnostics.length) console.error('[FFmpeg]', diagnostics.join('\n'));
     if (!ownsQueue(queue)) return;
     // Must run before the first await: DisTube decides whether to stop immediately after emit.
     recovery.retry(queue, song, error, findSearchPlugin(distube));

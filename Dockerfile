@@ -35,10 +35,12 @@ FROM node:22-bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     ca-certificates \
+    ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
-    YTDLP_DISABLE_DOWNLOAD=1
+    YTDLP_DISABLE_DOWNLOAD=1 \
+    FFMPEG_PATH=/usr/bin/ffmpeg
 
 WORKDIR /app
 
@@ -53,8 +55,10 @@ COPY --chown=node:node migrations ./migrations
 
 USER node
 
-# Verify yt-dlp and ffmpeg-static work as non-root user without --update
-RUN node -e "const { execFileSync } = require('node:child_process'); const path = require('node:path'); const ffmpeg = require('ffmpeg-static'); const ytdlp = path.join(path.dirname(require.resolve('@distube/yt-dlp')), '..', 'bin', 'yt-dlp'); execFileSync(ffmpeg, ['-version'], { stdio: 'ignore' }); execFileSync(ytdlp, ['--version'], { stdio: 'ignore' });"
+# Verify yt-dlp and the Debian FFmpeg work as non-root user without --update
+RUN node -e "const { execFileSync } = require('node:child_process'); const path = require('node:path'); const ffmpeg = process.env.FFMPEG_PATH || require('ffmpeg-static'); const ytdlp = path.join(path.dirname(require.resolve('@distube/yt-dlp')), '..', 'bin', 'yt-dlp'); execFileSync(ffmpeg, ['-version'], { stdio: 'ignore' }); execFileSync(ytdlp, ['--version'], { stdio: 'ignore' });"
+
+RUN node scripts/check-ffmpeg.cjs
 
 EXPOSE 8080
 

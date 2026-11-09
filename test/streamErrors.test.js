@@ -47,3 +47,37 @@ test('late errors keep bounded diagnostics without signed URLs, cookies or autho
   assert.match(logs[0][0],/Error tardío/);
   assert.doesNotThrow(()=>stream.emit('error','non-Error payload'));
 });
+const { emptyStreamError } = require('../dist/music/streamErrors');
+const { classifyMusicError } = require('../dist/music/errors');
+test('silent EOF retains sanitized FFmpeg diagnostics and classifies the actual transport failure', () => {
+  const stream = new EventEmitter(); observeStreamErrors(stream);
+  stream.emit('debug', '[process] spawn: ffmpeg -i https://audio.test/?token=spawn-secret');
+  stream.emit('debug', '[ffmpeg] log: Opening https://audio.test/?token=url-secret');
+  stream.emit('debug', '[ffmpeg] log: Authorization: Bearer auth-secret');
+  stream.emit('debug', '[ffmpeg] log: HTTP error 403 Forbidden');
+  const failure = emptyStreamError(stream);
+  assert.equal(classifyMusicError(failure), 'SOURCE_BLOCKED');
+  assert.match(getStreamDiagnostics(failure).join('\n'), /HTTP error 403/);
+  assert.doesNotMatch(JSON.stringify(getStreamDiagnostics(failure)), /spawn-secret|url-secret|auth-secret|audio\.test/);
+  stream.emit('debug', '[ffmpeg] log: Later message');
+  assert.equal(getStreamDiagnostics(failure).length, 3, 'the failure freezes its own diagnostic snapshot');
+});
+test('silent EOF without useful stderr remains AUDIO_STALLED', () => {
+  assert.equal(classifyMusicError(emptyStreamError(undefined)), 'AUDIO_STALLED');
+});
+
+test('fatal FFmpeg signals become stream errors while intentional kills remain quiet', t => {
+  t.mock.method(console, 'error', () => {});
+  for (const signal of ['SIGSEGV', 'SIGILL', 'SIGBUS', 'SIGABRT', 'SIGFPE']) {
+    const stream = new EventEmitter(); observeStreamErrors(stream);
+    const failures = []; stream.on('error', error => failures.push(error));
+    stream.emit('debug', `[process] exit: code=unknown signal=${signal}`);
+    assert.equal(failures.length, 1);
+    assert.equal(classifyMusicError(failures[0]), 'FFMPEG_EXITED');
+    assert.match(getStreamDiagnostics(failures[0]).join('\n'), new RegExp(signal));
+  }
+  const stream = new EventEmitter(); observeStreamErrors(stream);
+  stream.on('error', () => assert.fail('normal cleanup must not start recovery'));
+  stream.emit('debug', '[process] exit: code=unknown signal=SIGKILL');
+  stream.emit('debug', '[process] exit: code=0 signal=unknown');
+});

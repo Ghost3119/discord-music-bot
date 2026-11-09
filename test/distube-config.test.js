@@ -45,3 +45,14 @@ test('the installed FFmpeg returns the decoded HTTP 403 exit tag for a real reje
   if(process.platform==='win32')assert.equal(classifyMusicError({errorCode:'FFMPEG_EXITED',message:`ffmpeg exited with code ${code}`}), 'SOURCE_BLOCKED');
   else assert.notEqual(code,0);
 });
+
+test('an explicit FFmpeg path overrides the bundled binary without changing the listener budget', async t => {
+  const previous = process.env.FFMPEG_PATH;
+  process.env.FFMPEG_PATH = 'configured-system-ffmpeg';
+  t.after(() => { if (previous === undefined) delete process.env.FFMPEG_PATH; else process.env.FFMPEG_PATH = previous; });
+  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+  t.after(() => client.destroy());
+  const distube = createDisTube(client);
+  assert.equal(distube.options.ffmpeg.path, 'configured-system-ffmpeg');
+  assert.equal(distube.getMaxListeners(), 10);
+});
