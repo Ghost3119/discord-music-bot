@@ -17,6 +17,8 @@ export interface WebConfig {
   adminUserIds?: string[];
   membershipCacheTtlMs?: number;
   databasePath: string;
+  databaseDriver?: 'sqlite' | 'postgres';
+  databaseUrl?: string;
   sessionTtlMs: number;
   secureCookies: boolean;
   staticRoot?: string;
@@ -50,6 +52,8 @@ export function readWebConfig(env: NodeJS.ProcessEnv = process.env): WebConfig {
     adminUserIds,
     membershipCacheTtlMs: Number(env['WEB_MEMBERSHIP_CACHE_TTL_MS'] ?? '5000'),
     databasePath: path.resolve(env['WEB_DATABASE_PATH'] ?? 'data/dashboard.sqlite'),
+    databaseDriver: (env['DATABASE_DRIVER'] ?? 'sqlite') as 'sqlite' | 'postgres',
+    ...(env['DATABASE_URL'] !== undefined ? { databaseUrl: env['DATABASE_URL'] } : {}),
     sessionTtlMs: Number(env['WEB_SESSION_TTL_HOURS'] ?? '24') * 3_600_000,
     secureCookies: origin.startsWith('https:'),
     staticRoot: path.resolve('frontend/dist'),
@@ -59,6 +63,14 @@ export function readWebConfig(env: NodeJS.ProcessEnv = process.env): WebConfig {
 }
 
 export function validateWebConfig(config: WebConfig): void {
+  const driver = config.databaseDriver ?? 'sqlite';
+  if (driver !== 'sqlite' && driver !== 'postgres') throw new Error('DATABASE_DRIVER must be sqlite or postgres');
+  if (driver === 'postgres') {
+    let valid = false;
+    try { valid = Boolean(config.databaseUrl && ['postgres:', 'postgresql:'].includes(new URL(config.databaseUrl).protocol)); }
+    catch { /* Do not expose URL parser inputs or credentials. */ }
+    if (!valid) throw new Error('DATABASE_URL must be a postgres: or postgresql: URL when DATABASE_DRIVER is postgres');
+  }
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) throw new Error('WEB_PORT must be 1–65535');
   if (!config.host.trim()) throw new Error('WEB_HOST is required');
   let origin: URL;
