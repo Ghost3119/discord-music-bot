@@ -51,7 +51,7 @@
     "@electric-sql/pglite": "^0.5.15",
     "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "^22.9.0",
+    "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
     "eslint": "^10.0.1",
     "globals": "^17.14.0",
